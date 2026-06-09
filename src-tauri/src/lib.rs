@@ -159,8 +159,16 @@ fn dismiss_all(shared: State<'_, Shared>) -> Result<SessionData, String> {
     watcher::dismiss_all(shared.inner())
 }
 
+/// Switch the drift baseline: "head", "trust-point", "merge-base", or any git
+/// rev. Persisted per repo; re-analyzes everything and returns the new session.
+#[tauri::command]
+fn set_baseline(shared: State<'_, Shared>, spec: String) -> Result<SessionData, String> {
+    watcher::set_baseline(shared.inner(), spec)
+}
+
 /// Approve (or revoke approval of) the current drift. Approval stores the drift
-/// fingerprint and auto-revokes when the drift changes.
+/// fingerprint, pins the trust point to the current HEAD, and auto-revokes when
+/// the drift changes.
 #[tauri::command]
 fn set_approved(
     shared: State<'_, Shared>,
@@ -238,6 +246,7 @@ pub fn run() {
             init_session,
             set_flag_dismissed,
             dismiss_all,
+            set_baseline,
             set_approved,
             export_report,
             e2e_config

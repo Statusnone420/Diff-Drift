@@ -12,6 +12,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Diff Drift report — {}\n\n", s.project));
     out.push_str(&format!("- **Branch:** `{}`\n", s.branch));
+    out.push_str(&format!("- **Baseline:** {}\n", s.baseline_label));
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
     out.push_str(&format!(
@@ -148,7 +149,7 @@ fn plural(n: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{analyze_all, assemble, fingerprint, meta};
+    use crate::session::{analyze_all, assemble, fingerprint, meta, Baseline};
     use crate::store::RepoState;
     use crate::test_fixture;
     use crate::git;
@@ -156,12 +157,12 @@ mod tests {
     fn fixture_data(state: &RepoState) -> SessionData {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
-        let results = analyze_all(&root);
+        let results = analyze_all(&root, &Baseline::default());
         let mut state = state.clone();
         if state.approved_fingerprint.as_deref() == Some("CURRENT") {
             state.approved_fingerprint = Some(fingerprint(&results));
         }
-        assemble(&results, &meta(&root), &state)
+        assemble(&results, &meta(&root, &Baseline::default()), &state)
     }
 
     #[test]
@@ -170,6 +171,7 @@ mod tests {
         assert!(md.contains("# Diff Drift report —"), "title: {md}");
         assert!(md.contains("- **Generated:** 2026-06-09 12:30"));
         assert!(md.contains("- **Branch:** `agent/refactor-token-validation`"));
+        assert!(md.contains("- **Baseline:** HEAD"));
         assert!(md.contains("- **Review:** not reviewed"));
         assert!(md.contains("### High severity"));
         assert!(md.contains("Loose regex pattern"));

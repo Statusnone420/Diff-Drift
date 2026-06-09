@@ -49,10 +49,19 @@ export async function dismissAll(): Promise<SessionData> {
   return invoke<SessionData>("dismiss_all");
 }
 
-/** Approve (or revoke approval of) the current drift; auto-revokes when drift changes. */
+/** Approve (or revoke approval of) the current drift; auto-revokes when drift changes.
+ * Approving also pins the trust point to the current HEAD commit. */
 export async function setApproved(approved: boolean, approvedAt: string | null): Promise<SessionData> {
   if (!isTauri) return browserSetApproved(approved, approvedAt);
   return invoke<SessionData>("set_approved", { approved, approvedAt });
+}
+
+/** Switch the baseline the drift is measured against ("head" | "trust-point" |
+ * "merge-base" | any git rev). Persisted per repo; rejects with a message when
+ * the choice can't resolve (e.g. unknown ref). */
+export async function setBaseline(spec: string): Promise<SessionData> {
+  if (!isTauri) return browserSetBaseline(spec);
+  return invoke<SessionData>("set_baseline", { spec });
 }
 
 /**
@@ -150,5 +159,24 @@ function browserSetApproved(approved: boolean, approvedAt: string | null): Sessi
   const d = browserData ?? browserMock();
   d.session.approved = approved;
   d.session.approvedAt = approved ? approvedAt ?? undefined : undefined;
+  if (approved) d.session.trustPoint = "ab12cd3"; // mock "pinned at HEAD"
+  return structuredClone(d);
+}
+
+function browserSetBaseline(spec: string): SessionData {
+  const d = browserData ?? browserMock();
+  if (spec === "trust-point" && !d.session.trustPoint) {
+    // Mirrors the Rust command's string rejection.
+    throw "No trust point yet — Mark reviewed pins one.";
+  }
+  d.session.baselineSpec = spec || "head";
+  d.session.baselineLabel =
+    spec === "trust-point"
+      ? `trust point @ ${d.session.trustPoint}`
+      : spec === "merge-base"
+        ? "merge-base @ ab12cd3"
+        : spec === "head" || spec === ""
+          ? "HEAD"
+          : `${spec} @ ab12cd3`;
   return structuredClone(d);
 }

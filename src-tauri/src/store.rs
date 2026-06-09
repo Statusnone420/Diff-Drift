@@ -12,11 +12,20 @@ pub struct RepoState {
     pub dismissed: HashSet<String>,
     pub approved_fingerprint: Option<String>,
     pub approved_at: Option<String>,
+    /// The user's baseline choice: `"head"` (or absent), `"trust-point"`,
+    /// `"merge-base"`, or any git rev string. Resolved per scan in `session.rs`.
+    pub baseline: Option<String>,
+    /// Last trusted commit SHA — pinned by "Mark reviewed". The drift "since the
+    /// agent started" is everything between this commit and the working tree.
+    pub trust_point: Option<String>,
 }
 
 impl RepoState {
     pub fn is_empty(&self) -> bool {
-        self.dismissed.is_empty() && self.approved_fingerprint.is_none()
+        self.dismissed.is_empty()
+            && self.approved_fingerprint.is_none()
+            && self.baseline.is_none()
+            && self.trust_point.is_none()
     }
 }
 

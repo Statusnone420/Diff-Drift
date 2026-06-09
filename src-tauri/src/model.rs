@@ -11,7 +11,7 @@ pub enum NodeState {
     Unchanged,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AstNode {
     pub id: String,
@@ -30,7 +30,7 @@ pub struct AstNode {
     pub children: Option<Vec<AstNode>>,
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone, Copy, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     High,
@@ -38,7 +38,7 @@ pub enum Severity {
     Low,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Flag {
     pub id: String,
@@ -53,7 +53,7 @@ pub struct Flag {
     pub dismissed: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub id: String,
@@ -65,12 +65,19 @@ pub struct FileEntry {
     pub nodes: Vec<AstNode>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub project: String,
     pub branch: String,
     pub repo_path: String,
+    /// The user's baseline choice: "head" | "trust-point" | "merge-base" | a rev.
+    pub baseline_spec: String,
+    /// Short human label for the resolved baseline, e.g. "HEAD", "trust point @ ab12cd3".
+    pub baseline_label: String,
+    /// Short SHA of the pinned trust point, when one exists (set by "Mark reviewed").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_point: Option<String>,
     pub changed_files: u32,
     pub risk_count: u32,
     pub file_count: u32,
@@ -86,7 +93,7 @@ pub struct Session {
 /// without the field (implicitly 1).
 pub const SCHEMA_VERSION: u32 = 2;
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionData {
     pub schema_version: u32,

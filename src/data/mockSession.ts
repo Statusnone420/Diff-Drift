@@ -10,6 +10,8 @@ export const mockSession: SessionData = {
     project: "payments-api",
     branch: "agent/refactor-token-validation",
     repoPath: "demo/payments-api",
+    baselineSpec: "head",
+    baselineLabel: "HEAD",
     changedFiles: 3,
     riskCount: 3,
     fileCount: 2,

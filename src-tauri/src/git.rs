@@ -48,7 +48,8 @@ fn is_changed(s: Status) -> bool {
     )
 }
 
-fn is_ts(p: &str) -> bool {
+/// Whether a changed path is parsed as AST drift (vs counted-only git drift).
+pub fn is_analyzable(p: &str) -> bool {
     (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts")
 }
 
@@ -76,17 +77,82 @@ pub fn changed_files(root: &Path) -> Vec<String> {
     files
 }
 
-/// Changed `.ts/.tsx` paths (repo-relative, forward slashes) for AST analysis.
-pub fn changed_ts_files(root: &Path) -> Vec<String> {
-    changed_files(root).into_iter().filter(|p| is_ts(p)).collect()
-}
-
 /// File contents at HEAD (the "before"). `None` if the path is new / not in HEAD.
 pub fn head_content(root: &Path, rel: &str) -> Option<String> {
+    content_at(root, "HEAD", rel)
+}
+
+/// File contents at an arbitrary commit-ish (the "before" for a chosen baseline).
+/// `None` if the path doesn't exist there.
+pub fn content_at(root: &Path, rev: &str, rel: &str) -> Option<String> {
     let repo = Repository::open(root).ok()?;
-    let obj = repo.revparse_single(&format!("HEAD:{rel}")).ok()?;
+    let obj = repo.revparse_single(&format!("{rev}:{rel}")).ok()?;
     let blob = obj.peel_to_blob().ok()?;
     Some(String::from_utf8_lossy(blob.content()).into_owned())
+}
+
+/// Full SHA of the current HEAD commit. `None` on an unborn branch.
+pub fn head_sha(root: &Path) -> Option<String> {
+    resolve_rev(root, "HEAD")
+}
+
+/// Resolve any rev (branch, tag, SHA prefix, `HEAD~2`, …) to a full commit SHA.
+pub fn resolve_rev(root: &Path, rev: &str) -> Option<String> {
+    let repo = Repository::open(root).ok()?;
+    let obj = repo.revparse_single(rev).ok()?;
+    let commit = obj.peel_to_commit().ok()?;
+    Some(commit.id().to_string())
+}
+
+/// Merge base of HEAD and the repo's default branch (`main`/`master`, local
+/// first, then `origin/…`) — "everything this branch added". `None` when no
+/// default branch exists or there is no common ancestor.
+pub fn merge_base_with_default(root: &Path) -> Option<String> {
+    let repo = Repository::open(root).ok()?;
+    let head = repo.head().ok()?.peel_to_commit().ok()?.id();
+    let default = ["main", "master", "origin/main", "origin/master"]
+        .iter()
+        .find_map(|name| {
+            let obj = repo.revparse_single(name).ok()?;
+            obj.peel_to_commit().ok().map(|c| c.id())
+        })?;
+    let base = repo.merge_base(head, default).ok()?;
+    Some(base.to_string())
+}
+
+/// Changed paths (repo-relative, forward slashes) between an arbitrary baseline
+/// commit and the working tree — committed AND uncommitted drift, plus untracked
+/// files. This is what makes drift visible after an agent commits its work.
+pub fn changed_files_vs(root: &Path, baseline_sha: &str) -> Vec<String> {
+    let Ok(repo) = Repository::open(root) else {
+        return Vec::new();
+    };
+    let Some(tree) = repo
+        .revparse_single(baseline_sha)
+        .ok()
+        .and_then(|obj| obj.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok())
+    else {
+        return Vec::new();
+    };
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_typechange(true);
+    let Ok(diff) = repo.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts)) else {
+        return Vec::new();
+    };
+    let mut files: Vec<String> = Vec::new();
+    for delta in diff.deltas() {
+        for file in [delta.old_file(), delta.new_file()] {
+            if let Some(p) = file.path().and_then(|p| p.to_str()) {
+                files.push(p.to_string());
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
 }
 
 /// Working-tree file contents (the "after"). `None` if deleted on disk.
@@ -192,15 +258,42 @@ mod tests {
     }
 
     #[test]
-    fn changed_ts_files_filters_to_analyzable_sources() {
+    fn changed_files_vs_sees_committed_and_uncommitted_drift() {
         let fixture = test_fixture::payments_api();
         let root = repo_root(&fixture.root).unwrap();
-        std::fs::write(root.join("notes.md"), "# notes\n").unwrap();
-        std::fs::write(root.join("types.d.ts"), "declare const x: number;\n").unwrap();
-        let files = changed_ts_files(&root);
-        assert!(files.iter().all(|f| !f.ends_with(".md")), "non-source files excluded");
-        assert!(files.iter().all(|f| !f.ends_with(".d.ts")), ".d.ts excluded");
-        assert!(files.contains(&"auth/validateToken.ts".to_string()));
+        let trusted = test_fixture::head_sha(&root);
+
+        // Against the current HEAD, the tree-diff agrees with the status walk.
+        assert_eq!(changed_files_vs(&root, &trusted), changed_files(&root));
+
+        // Agent commits two files, keeps editing a third, adds a brand-new one.
+        test_fixture::commit_all(&root, "agent commits");
+        std::fs::write(root.join("utils/logger.ts"), "const logger = createLogger({});\n").unwrap();
+        std::fs::write(root.join("utils/audit.ts"), "const audit = true;\n").unwrap();
+
+        let files = changed_files_vs(&root, &trusted);
+        assert!(files.contains(&"auth/validateToken.ts".to_string()), "committed drift visible");
+        assert!(files.contains(&"utils/logger.ts".to_string()), "uncommitted drift visible");
+        assert!(files.contains(&"utils/audit.ts".to_string()), "untracked file visible");
+
+        // content_at pins the "before" to the trusted commit, not the new HEAD.
+        let before = content_at(&root, &trusted, "auth/validateToken.ts").unwrap();
+        assert!(before.contains("sanitizeInput"), "trusted version is the before");
+        assert!(head_content(&root, "auth/validateToken.ts").unwrap().contains("jwt-tiny-decode"));
+
+        // Unknown baselines and revs degrade to empty/None, never panic.
+        assert!(changed_files_vs(&root, "not-a-rev").is_empty());
+        assert!(resolve_rev(&root, "not-a-rev").is_none());
+        assert_eq!(resolve_rev(&root, "HEAD"), head_sha(&root));
+    }
+
+    #[test]
+    fn is_analyzable_filters_to_parsable_sources() {
+        assert!(is_analyzable("auth/validateToken.ts"));
+        assert!(is_analyzable("src/App.tsx"));
+        assert!(!is_analyzable("types.d.ts"), ".d.ts excluded");
+        assert!(!is_analyzable("notes.md"), "non-source files excluded");
+        assert!(!is_analyzable("package.json"));
     }
 
     #[test]

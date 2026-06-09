@@ -44,6 +44,12 @@ export interface Session {
   project: string;
   branch: string;
   repoPath: string;
+  /** The baseline choice: "head" | "trust-point" | "merge-base" | a git rev. */
+  baselineSpec: string;
+  /** Short label for the resolved baseline, e.g. "HEAD", "trust point @ ab12cd3". */
+  baselineLabel: string;
+  /** Short SHA of the pinned trust point (set by "Mark reviewed"), if any. */
+  trustPoint?: string;
   changedFiles: number;
   riskCount: number;
   fileCount: number;

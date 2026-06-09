@@ -38,6 +38,14 @@ test.describe("Diff Drift browser-mode E2E", () => {
   test("triage, approval, and browser export feedback are interactive", async ({ page }) => {
     await openMockRepo(page);
 
+    // Baseline picker: defaults to HEAD; trust point is locked until a review pins one.
+    const baseline = page.getByLabel("Baseline to diff against");
+    await expect(baseline).toHaveValue("head");
+    await expect(baseline.locator("option[value='trust-point']")).toBeDisabled();
+    await baseline.selectOption("merge-base");
+    await expect(baseline).toHaveValue("merge-base");
+    await baseline.selectOption("head");
+
     await page.getByRole("button", { name: /Dismiss flag: Loose regex pattern/ }).click();
     await expect(page.getByText("Risk Flags").locator("..").getByText("2")).toBeVisible();
 
@@ -51,6 +59,11 @@ test.describe("Diff Drift browser-mode E2E", () => {
 
     await page.getByRole("button", { name: "Mark reviewed" }).click();
     await expect(page.getByText(/Reviewed at/)).toBeVisible();
+
+    // Mark reviewed pinned a trust point → the trust-point baseline unlocks.
+    await expect(baseline.locator("option[value='trust-point']")).toBeEnabled();
+    await baseline.selectOption("trust-point");
+    await expect(baseline).toHaveValue("trust-point");
 
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export report" }).click();
