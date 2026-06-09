@@ -1,7 +1,7 @@
 # Diff Drift
 
 <p align="center">
-  <img src="src-tauri/icons/128x128.png" alt="Diff Drift app icon" width="96" height="96">
+  <img src="src-tauri/icons/128x128.png" alt="Diff Drift app icon" width="72" height="72">
 </p>
 
 <p align="center">
@@ -19,145 +19,58 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#installer">Installer</a> ·
-  <a href="#automation">Automation</a> ·
+  <a href="docs/wiki/Development.md">Development</a> ·
+  <a href="docs/wiki/Architecture.md">Architecture</a> ·
   <a href="LICENSE">License</a>
 </p>
 
-![Diff Drift reviewing mock payments-api drift](docs/assets/diff-drift-mock-session.png)
+<p align="center">
+  <img src="docs/assets/diff-drift-mock-session.png" alt="Diff Drift reviewing mock payments-api drift" width="920">
+</p>
 
-The screenshot uses mock data from the browser-mode fallback. It does not expose a local machine path or private repository.
+Diff Drift is a local desktop reviewer for uncommitted TypeScript and TSX changes.
 
-## What It Does
+It is built for developers using AI coding agents who want a quick second pass over the working tree before committing.
 
-Diff Drift opens a git repository, compares the working tree against `HEAD`, and renders changed TypeScript/TSX as a structured AST diff instead of a raw text patch. It live-flags security-relevant drift such as widened validation regexes, removed sanitizers, hardcoded secrets, disabled TLS checks, broadened CORS, downgraded crypto verification, permissive logging, and undeclared imports. Flags come from heuristic pattern rules over changed code — they are review prompts, not verdicts.
+Use it when an agent made a broad edit, a refactor touched security-sensitive code, or a normal diff is too noisy to explain what structurally changed.
 
-A session is simply everything that changed since the last commit, which is exactly the review surface an AI coding agent leaves behind.
+- Shows structural AST drift against `HEAD`, not just a raw text patch.
+- Flags heuristic security concerns such as loosened validation, removed sanitization, disabled TLS checks, and undeclared imports.
+- Lets you dismiss flags, mark the current drift reviewed, and export a Markdown or JSON report.
 
-## Highlights
-
-- Native Windows desktop app built with Tauri 2, Rust, React, TypeScript, Vite, and WebView2. Windows 11 is the supported platform; a macOS build is experimental and currently unsigned (no signing or notarization is configured yet). The bundle identifier `io.github.statusnone420.diffdrift` is stable and must not change — macOS update and notarization continuity depend on it.
-- Rust core handles git access, tree-sitter parsing, AST diffing, rule evaluation, watching, triage state, approval fingerprints, and Markdown/JSON export.
-- Live watcher re-analyzes on save, preserves selection, and revokes approval when meaningful drift changes.
-- Triage supports per-flag dismiss/restore, dismiss all, dismissed sections, and per-repo persistence.
-- Export produces a Markdown report suitable for PR comments, handoff notes, or agent review loops.
-- Version is displayed subtly in the titlebar and injected from `package.json` during Vite builds.
-- Automated QA covers Rust unit tests, browser Playwright/axe checks, and native Tauri WebView2 E2E flows.
+Diff Drift runs locally. It does not send repository contents to a server or model API.
 
 ## Quick Start
 
-Prerequisites:
-
-- Node.js 18+ and npm
-- Rust stable with `x86_64-pc-windows-msvc`
-- Microsoft C++ Build Tools with "Desktop development with C++"
-- WebView2 runtime, included with Windows 11
-
-Run the native app:
+Prerequisites: Node.js 18+, Rust stable, Microsoft C++ Build Tools, and WebView2.
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-Run browser-mode mock data for fast UI iteration:
+For fast browser-only UI work:
 
 ```bash
 npm run dev
 ```
 
-Then open the local Vite URL and click **Open a repository**. In browser mode, that loads the mock session used by the README screenshot.
+## Status
 
-## Installer
+- Supported platform: Windows 11.
+- macOS: experimental and unsigned. Signing and notarization are not configured.
+- Current version: `0.1.1`.
+- License: [MIT](LICENSE).
 
-Build the Windows NSIS installer:
+## Docs
 
-```bash
-npm run tauri -- build --bundles nsis
-```
+- [User Guide](docs/wiki/User-Guide.md)
+- [Concepts](docs/wiki/Concepts.md)
+- [Rule Reference](docs/wiki/Rule-Reference.md)
+- [Architecture](docs/wiki/Architecture.md)
+- [Development](docs/wiki/Development.md)
+- [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md)
+- [Troubleshooting](docs/wiki/Troubleshooting.md)
+- [Questions and ideas](https://github.com/Statusnone420/Diff-Drift/discussions)
 
-The installer is written under:
-
-```text
-src-tauri/target/release/bundle/nsis/Diff Drift_0.1.1_x64-setup.exe
-```
-
-The bundled app icon is generated from `src-tauri/icons/icon-source.png` into the Tauri icon set, including `src-tauri/icons/icon.ico` for Windows shortcuts and installed-app listings.
-
-## Automation
-
-Useful commands:
-
-```bash
-npm run test:rust          # Rust core and report/rule tests
-npm run build              # TypeScript + Vite production build
-npm run test:e2e:web       # Browser Playwright + axe checks
-npm run test:e2e:tauri     # Native Tauri/WebView2 E2E
-npm run test:verify        # Rust + build + browser E2E
-npm run test:verify:native # Native E2E wrapper
-```
-
-Native E2E launches the built app with isolated environment variables:
-
-- `DIFF_DRIFT_E2E_REPO`
-- `DIFF_DRIFT_E2E_EXPORT_PATH`
-- `DIFF_DRIFT_E2E_STATE_FILE`
-- `DIFF_DRIFT_E2E_BIN` when a test needs a separate executable path
-
-That keeps automated runs away from the user's installed app, normal settings file, and native save dialogs.
-
-## How Analysis Works
-
-All analysis runs in `src-tauri/src`:
-
-1. `git.rs` discovers the repo, lists changed files, and reads `HEAD` versus working-tree contents.
-2. `parse.rs` builds TypeScript/TSX AST node trees with tree-sitter.
-3. `diff.rs` matches nodes by kind/name and marks added, removed, modified, and unchanged nodes.
-4. `rules.rs` evaluates CWE-mapped security predicates against changed AST nodes.
-5. `watcher.rs` debounces file-system changes and emits updated sessions to the frontend.
-6. `store.rs` persists dismissed flags and approval fingerprints per repo.
-7. `report.rs` renders Markdown or JSON exports.
-
-The exported report counts total git drift in the session summary. Its analyzed-file section lists only TypeScript/TSX files that Diff Drift parsed as AST nodes.
-
-## Data and Privacy
-
-Diff Drift runs locally. There is no Node sidecar, remote service, model API call, telemetry pipeline, or app-owned server receiving repository contents. Git access is handled in-process with `git2`/libgit2.
-
-Stored local state is limited to:
-
-- Last opened repository path.
-- Per-repo dismissed flag IDs.
-- Per-repo approval fingerprint and approval timestamp.
-
-## Project Structure
-
-```text
-src/
-  App.tsx                  App state, live updates, triage, approval, export
-  components/              TitleBar, Toolbar, Sidebar, Center, NodeCard, RightPanel
-  data/mockSession.ts      Browser-mode mock data
-  lib/session.ts           Tauri commands, mock fallback, E2E export seam
-  lib/version.ts           Build-injected app version
-  styles/                  Design tokens and app CSS
-
-src-tauri/src/
-  git.rs                   libgit2 repo access
-  parse.rs                 tree-sitter TypeScript parsing
-  diff.rs                  AST node diffing
-  rules.rs                 Security rule registry
-  watcher.rs               Live watch and session merging
-  store.rs                 Per-repo triage persistence
-  report.rs                Markdown/JSON report rendering
-  lib.rs                   Tauri commands and Windows chrome
-
-tests/
-  e2e-web/                 Browser-mode Playwright + axe tests
-  e2e-tauri/               Native Tauri/WebView2 E2E tests
-```
-
-## License
-
-Diff Drift is open source under the [MIT License](LICENSE).
-
-This project is not affiliated with Microsoft, GitHub, Tauri, or OpenAI.
+The `docs/wiki/` pages are the source copy for the GitHub wiki.

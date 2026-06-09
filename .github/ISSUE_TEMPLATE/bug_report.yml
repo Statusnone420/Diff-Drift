@@ -1,0 +1,57 @@
+name: Bug report
+description: Report incorrect behavior in Diff Drift.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include enough detail to reproduce the issue. Screenshots or exported reports help.
+  - type: input
+    id: version
+    attributes:
+      label: Diff Drift version
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - macOS experimental
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repo-context
+    attributes:
+      label: Repository context
+      description: Language/framework, repo shape, and file types changed.
+      placeholder: "React + TypeScript, changed .tsx and package.json"
+  - type: textarea
+    id: flag-context
+    attributes:
+      label: Flag or panel involved
+      description: Include flag type, severity, node name, or panel copy if relevant.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open repo...
+        2. Change file...
+        3. See...
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot, export, or logs
+      description: Paste relevant text or attach files if useful.

@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a focused improvement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or confusion does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Diff Drift do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UI clarity
+        - Rule heuristic
+        - Parser or diff
+        - Watcher or git state
+        - Export or reports
+        - Packaging or release
+        - Documentation
+        - Other
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What simpler approach would be enough?
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples
+      description: Include code shapes, screenshots, or similar tools if useful.
