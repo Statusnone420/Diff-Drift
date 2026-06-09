@@ -5,6 +5,7 @@
 import type { SessionData } from "../types";
 
 export const mockSession: SessionData = {
+  schemaVersion: 2,
   session: {
     project: "payments-api",
     branch: "agent/refactor-token-validation",

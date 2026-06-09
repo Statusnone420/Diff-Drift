@@ -203,6 +203,25 @@ fn snippet(node: Node, src: &[u8], max: usize) -> String {
     }
 }
 
+/// Source lines of a node, dedented so the block displays cleanly (the first
+/// line already starts at the node; later lines are stripped of the node's
+/// column-worth of leading whitespace).
+fn node_lines(node: Node, src: &[u8]) -> Vec<String> {
+    let t = text(node, src);
+    let col = node.start_position().column;
+    t.lines()
+        .enumerate()
+        .map(|(i, l)| {
+            if i == 0 {
+                l.to_string()
+            } else {
+                let leading = l.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+                l.chars().skip(leading.min(col)).collect()
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,23 +302,4 @@ export default router;
         let child_kinds: Vec<&str> = nodes[0].children.iter().map(|c| c.kind.as_str()).collect();
         assert_eq!(child_kinds, vec!["ReturnStatement"], "JSX body parses cleanly");
     }
-}
-
-/// Source lines of a node, dedented so the block displays cleanly (the first
-/// line already starts at the node; later lines are stripped of the node's
-/// column-worth of leading whitespace).
-fn node_lines(node: Node, src: &[u8]) -> Vec<String> {
-    let t = text(node, src);
-    let col = node.start_position().column;
-    t.lines()
-        .enumerate()
-        .map(|(i, l)| {
-            if i == 0 {
-                l.to_string()
-            } else {
-                let leading = l.chars().take_while(|c| *c == ' ' || *c == '\t').count();
-                l.chars().skip(leading.min(col)).collect()
-            }
-        })
-        .collect()
 }

@@ -53,6 +53,8 @@ export interface Session {
 }
 
 export interface SessionData {
+  /** Data-contract version. v0.1 exports had no field (implicitly 1). */
+  schemaVersion: number;
   session: Session;
   flags: Flag[];
   files: FileEntry[];

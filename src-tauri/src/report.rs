@@ -202,6 +202,7 @@ mod tests {
     fn json_report_is_valid_and_complete() {
         let json = render_json(&fixture_data(&RepoState::default()));
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["schemaVersion"], crate::model::SCHEMA_VERSION);
         assert_eq!(v["session"]["riskCount"], 6);
         assert_eq!(v["flags"].as_array().unwrap().len(), 6);
         assert_eq!(v["session"]["approved"], false);

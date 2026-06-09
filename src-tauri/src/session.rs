@@ -130,6 +130,7 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
         approved_at: if approved { state.approved_at.clone() } else { None },
     };
     SessionData {
+        schema_version: crate::model::SCHEMA_VERSION,
         session,
         flags,
         files,
@@ -295,6 +296,29 @@ mod tests {
     }
 
     #[test]
+    fn analyze_handles_an_agent_scale_sweep_of_100_files() {
+        let fixture = test_fixture::large_repo(100);
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+        let started = std::time::Instant::now();
+        let results = analyze_all(&root);
+        let data = assemble(&results, &meta(&root), &RepoState::default());
+        assert_eq!(data.session.changed_files, 101, "100 drifted + 1 new file");
+        assert_eq!(data.files.len(), 101, "every file analyzed");
+        // 100 removed-sanitize (validate call dropped) + 1 loose regex.
+        assert_eq!(data.flags.len(), 101);
+        assert!(matches!(data.flags[0].severity, Severity::High), "new file's High flag sorts first");
+        // Fingerprint must stay deterministic at this scale (sorted internals).
+        assert_eq!(fingerprint(&results), fingerprint(&analyze_all(&root)));
+        // Debug-build guardrail: a 100-file sweep is interactive work, not a batch
+        // job. Generous bound so slow CI runners don't flake.
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(60),
+            "100-file analysis took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn analyze_file_none_when_clean() {
         // session.ts is formatting-only → still drifted (whitespace differs), so Some.
         let fixture = test_fixture::payments_api();
@@ -397,9 +421,11 @@ mod tests {
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root);
 
-        let mut state = RepoState::default();
-        state.approved_fingerprint = Some(fingerprint(&results));
-        state.approved_at = Some("12:30".into());
+        let state = RepoState {
+            approved_fingerprint: Some(fingerprint(&results)),
+            approved_at: Some("12:30".into()),
+            ..Default::default()
+        };
         let data = assemble(&results, &meta(&root), &state);
         assert!(data.session.approved);
         assert_eq!(data.session.approved_at.as_deref(), Some("12:30"));
@@ -426,9 +452,11 @@ mod tests {
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root);
 
-        let mut state = RepoState::default();
-        state.approved_fingerprint = Some(fingerprint(&results));
-        state.approved_at = Some("12:30".into());
+        let state = RepoState {
+            approved_fingerprint: Some(fingerprint(&results)),
+            approved_at: Some("12:30".into()),
+            ..Default::default()
+        };
 
         std::fs::write(
             fixture.root.join("routes/session.ts"),

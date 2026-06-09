@@ -81,8 +81,15 @@ pub struct Session {
     pub approved_at: Option<String>,
 }
 
+/// Version of this data contract. Bump when the shape of `SessionData` changes
+/// in a way consumers (JSON export, headless check) could misread. v0.1 shipped
+/// without the field (implicitly 1).
+pub const SCHEMA_VERSION: u32 = 2;
+
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionData {
+    pub schema_version: u32,
     pub session: Session,
     pub flags: Vec<Flag>,
     pub files: Vec<FileEntry>,
