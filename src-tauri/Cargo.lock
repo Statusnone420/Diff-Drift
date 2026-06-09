@@ -695,6 +695,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff-drift"
+version = "0.2.0"
+dependencies = [
+ "git2",
+ "notify",
+ "notify-debouncer-full",
+ "regex",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tree-sitter",
+ "tree-sitter-javascript",
+ "tree-sitter-typescript",
+ "windows",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -793,26 +813,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "drift-inspector"
-version = "0.2.0"
-dependencies = [
- "git2",
- "notify",
- "notify-debouncer-full",
- "regex",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tree-sitter",
- "tree-sitter-javascript",
- "tree-sitter-typescript",
- "windows",
 ]
 
 [[package]]

@@ -12,8 +12,8 @@ fn main() {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
-    if let Some(code) = drift_inspector_lib::cli::try_run() {
+    if let Some(code) = diff_drift_lib::cli::try_run() {
         std::process::exit(code);
     }
-    drift_inspector_lib::run()
+    diff_drift_lib::run()
 }

@@ -43,7 +43,7 @@ export async function launchDiffDriftApp(
       "src-tauri",
       "target",
       "debug",
-      process.platform === "win32" ? "drift-inspector.exe" : "drift-inspector",
+      process.platform === "win32" ? "diff-drift.exe" : "diff-drift",
     );
   const cdpPort = await findFreePort();
   const tempRoot = await mkdtemp(path.join(tmpdir(), "diff-drift-e2e-"));
