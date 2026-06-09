@@ -797,7 +797,7 @@ dependencies = [
 
 [[package]]
 name = "drift-inspector"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "git2",
  "notify",
@@ -810,6 +810,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tree-sitter",
+ "tree-sitter-javascript",
  "tree-sitter-typescript",
  "windows",
 ]
@@ -4170,6 +4171,16 @@ dependencies = [
  "regex-syntax",
  "serde_json",
  "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-javascript"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68204f2abc0627a90bdf06e605f5c470aa26fdcb2081ea553a04bdad756693f5"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 

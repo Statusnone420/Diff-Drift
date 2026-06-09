@@ -144,6 +144,76 @@
   flex: 1;
 }
 
+/* baseline picker — what the drift is measured against */
+.crumb .baseline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.crumb .baseline-vs {
+  color: var(--text-mute);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.baseline-select {
+  appearance: none;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+  max-width: 210px;
+}
+.baseline-select:hover,
+.baseline-select:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+  outline: none;
+}
+.baseline-select:focus-visible {
+  border-color: var(--accent);
+}
+.baseline-ref {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  height: 24px;
+  padding: 0 8px;
+  width: 190px;
+}
+.baseline-ref::placeholder {
+  color: var(--text-mute);
+}
+
+.review-progress {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+.review-progress.done {
+  color: var(--added);
+  border-color: rgba(78, 196, 106, 0.28);
+  background: var(--added-bg);
+}
+
 .summary-pill {
   display: flex;
   align-items: center;
@@ -316,6 +386,15 @@
   align-items: center;
   gap: 8px;
 }
+.meta-wide {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.meta-wide .v {
+  margin-top: 0;
+}
 .meta-agent .av {
   width: 18px;
   height: 18px;
@@ -414,6 +493,15 @@
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text-mute);
+}
+.file-review {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-mute);
+}
+.file-review.done {
+  color: var(--added);
 }
 .file-badge {
   flex: none;
@@ -523,6 +611,14 @@
 }
 .legend .sw.r {
   background: var(--removed);
+}
+.legend .lg-review {
+  color: var(--text-mute);
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+}
+.legend .lg-review.done {
+  color: var(--added);
 }
 
 .tree {
@@ -687,6 +783,49 @@
 .state-badge.modified {
   background: var(--modified-bg);
   color: var(--modified);
+}
+
+/* per-node review toggle */
+.node-review {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 19px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.node-card:hover .node-review,
+.node-review:focus-visible,
+.node-review.on {
+  opacity: 1;
+}
+.node-review:hover,
+.node-review:focus-visible {
+  color: var(--text);
+  border-color: var(--border-strong);
+  outline: none;
+}
+.node-review.on {
+  color: var(--added);
+  border-color: rgba(78, 196, 106, 0.4);
+  background: var(--added-bg);
+}
+.node-review svg {
+  width: 12px;
+  height: 12px;
+}
+/* a reviewed change reads as "handled" — quieter, but still inspectable */
+.node-card.reviewed:not(.is-active) {
+  opacity: 0.62;
+}
+.node-card.reviewed:not(.is-active):hover {
+  opacity: 1;
 }
 
 .node-flagchip {

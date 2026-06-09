@@ -21,7 +21,7 @@ async function expectNoAxeViolations(page: Page) {
 test.describe("Diff Drift browser-mode E2E", () => {
   test("onboarding, loaded, and dismissed states pass automated axe checks", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("v0.1.1")).toBeVisible();
+    await expect(page.getByText("v0.2.0")).toBeVisible();
     await expect(page.getByRole("button", { name: /Open a repository/ })).toBeVisible();
     await expectNoAxeViolations(page);
 
@@ -38,6 +38,22 @@ test.describe("Diff Drift browser-mode E2E", () => {
   test("triage, approval, and browser export feedback are interactive", async ({ page }) => {
     await openMockRepo(page);
 
+    // Baseline picker: defaults to HEAD; trust point is locked until a review pins one.
+    const baseline = page.getByLabel("Baseline to diff against");
+    await expect(baseline).toHaveValue("head");
+    await expect(baseline.locator("option[value='trust-point']")).toBeDisabled();
+    await baseline.selectOption("merge-base");
+    await expect(baseline).toHaveValue("merge-base");
+    await baseline.selectOption("head");
+
+    // Review-at-scale: toggling one node updates the drift-wide progress.
+    await expect(page.getByText("0/6 reviewed")).toBeVisible();
+    await page.getByRole("button", { name: /Mark reviewed: VariableDeclaration pattern/ }).click();
+    await expect(page.getByText("1/6 reviewed")).toBeVisible();
+    await expect(page.getByText("1/5 reviewed")).toBeVisible(); // file-level legend
+    await page.getByRole("button", { name: /Mark unreviewed: VariableDeclaration pattern/ }).click();
+    await expect(page.getByText("0/6 reviewed")).toBeVisible();
+
     await page.getByRole("button", { name: /Dismiss flag: Loose regex pattern/ }).click();
     await expect(page.getByText("Risk Flags").locator("..").getByText("2")).toBeVisible();
 
@@ -49,8 +65,15 @@ test.describe("Diff Drift browser-mode E2E", () => {
     await expect(page.getByRole("button", { name: "Dismiss all" })).toBeDisabled();
     await expect(page.getByText("No active risk flags")).toBeVisible();
 
-    await page.getByRole("button", { name: "Mark reviewed" }).click();
+    await page.getByRole("button", { name: "Mark reviewed", exact: true }).click();
     await expect(page.getByText(/Reviewed at/)).toBeVisible();
+    // Reviewing the drift reviews every node.
+    await expect(page.getByText("6/6 reviewed")).toBeVisible();
+
+    // Mark reviewed pinned a trust point → the trust-point baseline unlocks.
+    await expect(baseline.locator("option[value='trust-point']")).toBeEnabled();
+    await baseline.selectOption("trust-point");
+    await expect(baseline).toHaveValue("trust-point");
 
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export report" }).click();

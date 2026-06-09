@@ -5,12 +5,12 @@
 </p>
 
 <p align="center">
-  <strong>AST-level security review for the uncommitted code drift left by AI coding agents.</strong>
+  <strong>AST-level security review for the code drift left by AI coding agents.</strong>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.1.1" src="https://img.shields.io/badge/version-0.1.1-e7a83e?style=for-the-badge">
+  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -28,17 +28,18 @@
   <img src="docs/assets/diff-drift-mock-session.png" alt="Diff Drift reviewing mock payments-api drift" width="920">
 </p>
 
-Diff Drift is a local desktop reviewer for uncommitted TypeScript and TSX changes.
+Diff Drift is a local desktop reviewer for TypeScript, TSX, JavaScript, and JSX drift — plus package.json dependency drift.
 
-It is built for developers using AI coding agents who want a quick second pass over the working tree before committing.
+It is built for developers using AI coding agents who want a deterministic second pass over what the agent changed before they trust it.
 
 Use it when an agent made a broad edit, a refactor touched security-sensitive code, or a normal diff is too noisy to explain what structurally changed.
 
-- Shows structural AST drift against `HEAD`, not just a raw text patch.
-- Flags heuristic security concerns such as loosened validation, removed sanitization, disabled TLS checks, and undeclared imports.
-- Lets you dismiss flags, mark the current drift reviewed, and export a Markdown or JSON report.
+- Shows structural AST drift against a baseline you choose: `HEAD`, the **trust point** pinned by your last review (drift stays visible after the agent commits), the merge-base with `main`, or any rev.
+- Flags heuristic security concerns such as loosened validation, removed sanitization, disabled TLS checks, undeclared imports, and dependencies the lockfile can't vouch for.
+- Lets you review changes node by node with progress tracking, dismiss flags, mark the drift reviewed, and export a Markdown or JSON report.
+- Doubles as a read-only gate for scripts and agents: `diff-drift check --json` exits with the highest active severity.
 
-Diff Drift runs locally. It does not send repository contents to a server or model API.
+Diff Drift runs locally and is deliberately not an LLM. It does not send repository contents to a server or model API — it's the reviewer in the loop that can't hallucinate or be prompt-injected.
 
 ## Quick Start
 
@@ -59,7 +60,7 @@ npm run dev
 
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned. Signing and notarization are not configured.
-- Current version: `0.1.1`.
+- Current version: `0.2.0`.
 - License: [MIT](LICENSE).
 
 ## Docs

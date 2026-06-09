@@ -6,9 +6,11 @@ This file is for AI agents and contributors working in this repo.
 
 ## Product Goal
 
-Diff Drift is a local desktop reviewer for uncommitted TypeScript/TSX drift. It compares a git working tree against `HEAD`, renders structural AST changes, and raises heuristic security flags for human review.
+Diff Drift is the deterministic verifier in the AI coding loop: a local desktop reviewer for the drift agents leave behind. It compares a git working tree against a selectable baseline (`HEAD`, the trust point pinned by "Mark reviewed", a merge-base, or any rev), renders structural AST changes for TS/TSX/JS/JSX plus package.json dependency drift, supports per-node review with progress, and raises heuristic security flags for human review. A read-only `diff-drift check` CLI exposes the same analysis with severity exit codes for scripts and agent hooks.
 
-It is not a full static analyzer, package auditor, or remote AI service.
+The product test every change must strengthen: *"After an AI agent changes my repo, Diff Drift shows me what changed structurally, what looks risky, and what I need to review before I trust it."*
+
+It is not a full static analyzer, package auditor, cloud service, or LLM reviewer — being deterministic and local IS the identity. No telemetry, no model calls, no rule marketplace.
 
 ## Start Here
 
@@ -36,32 +38,37 @@ npm run test:e2e:tauri
 
 ## Architecture Map
 
-- `src-tauri/src/git.rs`: repo discovery, changed files, file contents.
-- `src-tauri/src/parse.rs`: TypeScript/TSX parsing.
+- `src-tauri/src/git.rs`: repo discovery, changed files (vs HEAD or any baseline commit), file contents at any rev.
+- `src-tauri/src/parse.rs`: TS/TSX/JS/JSX parsing (`Lang`).
 - `src-tauri/src/diff.rs`: AST diffing and node IDs.
 - `src-tauri/src/rules.rs`: heuristic rule predicates.
 - `src-tauri/src/heuristics.rs`: rule walker and flag attachment.
-- `src-tauri/src/session.rs`: analysis orchestration and counts.
-- `src-tauri/src/watcher.rs`: live updates.
-- `src-tauri/src/store.rs`: dismissed flags and reviewed fingerprints.
+- `src-tauri/src/deps_diff.rs`: package.json dependency/script drift + lockfile rules.
+- `src-tauri/src/session.rs`: baseline resolution, analysis orchestration, review marking, counts.
+- `src-tauri/src/watcher.rs`: live updates and triage/baseline commands.
+- `src-tauri/src/store.rs`: per-repo state — dismissed flags, reviewed fingerprint, baseline choice, trust point, per-node review hashes.
 - `src-tauri/src/report.rs`: Markdown/JSON export.
+- `src-tauri/src/cli.rs`: read-only `diff-drift check` (JSON/MD + severity exit codes). Must stay read-only.
 - `src/App.tsx`: frontend state and command wiring.
 - `src/components/`: UI panels.
-- `src/types.ts` and `src-tauri/src/model.rs`: shared data contract.
+- `src/types.ts` and `src-tauri/src/model.rs`: shared data contract (`SCHEMA_VERSION` — bump on breaking shape changes).
 
 ## Working Rules
 
 - Make surgical changes. Do not refactor unrelated code.
 - Keep README short. Put details in `docs/wiki/`.
-- Keep UI wording honest about scope: changed `.ts` and `.tsx` drift.
+- Keep UI wording honest about scope: changed TS/TSX/JS/JSX drift plus package.json dependency drift.
 - Treat flags as review prompts, not vulnerability verdicts.
-- Add Rust tests for rule, parser, diff, git, watcher, or report changes.
+- Add Rust tests for rule, parser, diff, git, watcher, deps-diff, CLI, or report changes.
 - Update Playwright assertions when UI labels change.
+- Keep `SessionData` in sync across `model.rs`, `types.ts`, `mockSession.ts`, reports, and tests; bump `SCHEMA_VERSION` for breaking shape changes.
 - Do not add telemetry, remote model calls, or repository upload behavior.
+- Owner no-gos (do not propose): mini-SAST depth chasing, cloud/LLM review, team sync/accounts, plugin systems/rule marketplaces.
 
 ## Known Limitations
 
-- Analysis is heuristic and scoped to TypeScript/TSX drift.
+- Analysis is heuristic and scoped to TS/TSX/JS/JSX drift plus package.json dependency drift.
 - Unsupported changed files can count as git drift but are not parsed as AST nodes.
+- Committed-range baselines treat renames as removed + added (no rename detection yet).
 - macOS is experimental and unsigned.
 - Some watcher edge cases may require reopening the repo.

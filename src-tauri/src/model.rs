@@ -11,7 +11,7 @@ pub enum NodeState {
     Unchanged,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AstNode {
     pub id: String,
@@ -20,6 +20,9 @@ pub struct AstNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     pub state: NodeState,
+    /// Per-node review state (changed nodes only): true while the node's content
+    /// matches what the user last marked reviewed. Content drift resets it.
+    pub reviewed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flag_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -30,7 +33,7 @@ pub struct AstNode {
     pub children: Option<Vec<AstNode>>,
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone, Copy, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     High,
@@ -38,7 +41,7 @@ pub enum Severity {
     Low,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Flag {
     pub id: String,
@@ -53,7 +56,7 @@ pub struct Flag {
     pub dismissed: bool,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub id: String,
@@ -62,18 +65,32 @@ pub struct FileEntry {
     pub lang: String,
     pub risks: u32,
     pub summary: String,
+    /// Changed (added/modified/removed) nodes in this file, including children.
+    pub changed_nodes: u32,
+    /// How many of those the user has marked reviewed (content still matching).
+    pub reviewed_nodes: u32,
     pub nodes: Vec<AstNode>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub project: String,
     pub branch: String,
     pub repo_path: String,
+    /// The user's baseline choice: "head" | "trust-point" | "merge-base" | a rev.
+    pub baseline_spec: String,
+    /// Short human label for the resolved baseline, e.g. "HEAD", "trust point @ ab12cd3".
+    pub baseline_label: String,
+    /// Short SHA of the pinned trust point, when one exists (set by "Mark reviewed").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_point: Option<String>,
     pub changed_files: u32,
     pub risk_count: u32,
     pub file_count: u32,
+    /// Review progress across the whole drift: changed nodes vs reviewed nodes.
+    pub changed_nodes: u32,
+    pub reviewed_nodes: u32,
     /// True while the stored approval matches the current drift fingerprint —
     /// any change to the drift auto-revokes it.
     pub approved: bool,
@@ -81,8 +98,15 @@ pub struct Session {
     pub approved_at: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
+/// Version of this data contract. Bump when the shape of `SessionData` changes
+/// in a way consumers (JSON export, headless check) could misread. v0.1 shipped
+/// without the field (implicitly 1).
+pub const SCHEMA_VERSION: u32 = 2;
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionData {
+    pub schema_version: u32,
     pub session: Session,
     pub flags: Vec<Flag>,
     pub files: Vec<FileEntry>,

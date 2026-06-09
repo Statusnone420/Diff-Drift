@@ -95,6 +95,7 @@ fn node(
         name: p.name.clone(),
         signature: p.signature.clone(),
         state,
+        reviewed: false, // computed at assemble from the persisted review map
         flag_id: None,
         before,
         after,
@@ -142,6 +143,35 @@ fn slug(name: &str) -> String {
 /// Collapse all whitespace so two blocks that differ only in formatting compare equal.
 fn normalize(lines: &[String]) -> String {
     lines.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Longest common subsequence of the key sequences → matched (before_i, after_j) pairs.
+fn lcs_matches(a: &[(String, String)], b: &[(String, String)]) -> Vec<(usize, usize)> {
+    let (n, m) = (a.len(), b.len());
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if a[i] == b[j] {
+                dp[i + 1][j + 1] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0usize, 0usize);
+    let mut out = Vec::new();
+    while i < n && j < m {
+        if a[i] == b[j] {
+            out.push((i, j));
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -286,33 +316,4 @@ mod tests {
         let child = &nodes[0].children.as_ref().unwrap()[0];
         assert_eq!(child.id, "file:/run:ReturnStatement:return");
     }
-}
-
-/// Longest common subsequence of the key sequences → matched (before_i, after_j) pairs.
-fn lcs_matches(a: &[(String, String)], b: &[(String, String)]) -> Vec<(usize, usize)> {
-    let (n, m) = (a.len(), b.len());
-    let mut dp = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            dp[i][j] = if a[i] == b[j] {
-                dp[i + 1][j + 1] + 1
-            } else {
-                dp[i + 1][j].max(dp[i][j + 1])
-            };
-        }
-    }
-    let (mut i, mut j) = (0usize, 0usize);
-    let mut out = Vec::new();
-    while i < n && j < m {
-        if a[i] == b[j] {
-            out.push((i, j));
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    out
 }

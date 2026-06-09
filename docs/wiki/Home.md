@@ -1,6 +1,6 @@
 # Diff Drift Wiki
 
-Diff Drift is a local desktop reviewer for uncommitted TypeScript and TSX changes. It compares a git working tree against `HEAD`, renders changed code as an AST-level drift view, and raises heuristic security flags for human review.
+Diff Drift is a local desktop reviewer for the code drift AI coding agents leave behind. It compares a git working tree against a chosen baseline (`HEAD`, the pinned trust point, a merge-base, or any rev), renders changed TS/TSX/JS/JSX as an AST-level drift view plus package.json dependency drift, and raises heuristic security flags for human review. A read-only `diff-drift check` command exposes the same analysis to scripts and agents.
 
 This wiki is the handbook. The README stays short on purpose.
 
@@ -17,10 +17,10 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.1.1`.
+- Version: `0.2.0`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
-- Analysis scope: changed `.ts` and `.tsx` files.
+- Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs` files plus `package.json` dependency drift, against a selectable baseline.
 - Rule results are review prompts, not vulnerability verdicts.
 
 ## Source Copy

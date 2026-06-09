@@ -139,6 +139,98 @@ pub fn payments_api() -> FixtureRepo {
     FixtureRepo { root }
 }
 
+/// Build a repo with `n` committed TypeScript modules, then drift ALL of them in
+/// the working tree (plus one new risky file) — an agent-scale sweep. Used to
+/// prove the engine handles a ~100-file drift, not just the 3-file demo.
+pub fn large_repo(n: usize) -> FixtureRepo {
+    let root = std::env::temp_dir().join(format!(
+        "drift-fixture-large-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    force_remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("create fixture dir");
+
+    let before: Vec<(String, String)> = (0..n)
+        .map(|i| {
+            (
+                format!("src/mod{i:03}/handler.ts"),
+                format!(
+                    "function handler{i}(input: string): string {{\n  validateInput(input);\n  return input.trim();\n}}\n"
+                ),
+            )
+        })
+        .collect();
+    for (rel, content) in &before {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).expect("mkdir");
+        std::fs::write(p, content).expect("write file");
+    }
+
+    let repo = git2::Repository::init(&root).expect("git init");
+    let mut index = repo.index().expect("index");
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .expect("git add -A");
+    index.write().expect("index write");
+    let tree_id = index.write_tree().expect("write tree");
+    {
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        let sig = git2::Signature::now("Drift Demo", "demo@drift.local").expect("signature");
+        repo.commit(Some("HEAD"), &sig, &sig, "baseline large repo", &tree, &[])
+            .expect("commit");
+    }
+    drop(repo);
+
+    // Drift every file: body change (drops the validate call → one Low flag each).
+    for (i, (rel, _)) in before.iter().enumerate() {
+        std::fs::write(
+            root.join(rel),
+            format!("function handler{i}(input: string): string {{\n  return input.trim();\n}}\n"),
+        )
+        .expect("write drift");
+    }
+    // Plus one brand-new High-severity file.
+    std::fs::write(root.join("src/parser.ts"), "const parser = /.*/;\n").expect("write new file");
+    FixtureRepo { root }
+}
+
+/// Commit everything currently in the working tree (like `git add -A && git commit`)
+/// and return the new commit SHA. Lets tests simulate an agent that commits its work.
+pub fn commit_all(root: &Path, message: &str) -> String {
+    let repo = git2::Repository::open(root).expect("open repo");
+    let mut index = repo.index().expect("index");
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .expect("git add -A");
+    // `add_all` doesn't stage deletions; reconcile the index with the worktree.
+    index
+        .update_all(["*"].iter(), None)
+        .expect("git add -u");
+    index.write().expect("index write");
+    let tree_id = index.write_tree().expect("write tree");
+    let tree = repo.find_tree(tree_id).expect("find tree");
+    let sig = git2::Signature::now("Drift Demo", "demo@drift.local").expect("signature");
+    let parent = repo.head().expect("head").peel_to_commit().expect("commit");
+    let oid = repo
+        .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+        .expect("commit");
+    oid.to_string()
+}
+
+/// Current HEAD commit SHA of a fixture repo.
+pub fn head_sha(root: &Path) -> String {
+    let repo = git2::Repository::open(root).expect("open repo");
+    let sha = repo
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("commit")
+        .id()
+        .to_string();
+    sha
+}
+
 fn write_files(root: &Path, files: &[(&str, &str)]) {
     for (rel, content) in files {
         let p = root.join(rel);
@@ -156,6 +248,9 @@ fn force_remove_dir_all(p: &Path) {
         if let Ok(meta) = std::fs::symlink_metadata(p) {
             let mut perm = meta.permissions();
             if perm.readonly() {
+                // Test-only fixture teardown of a private temp dir — the Unix
+                // world-writable concern behind this lint doesn't apply.
+                #[allow(clippy::permissions_set_readonly_false)]
                 perm.set_readonly(false);
                 let _ = std::fs::set_permissions(p, perm);
             }

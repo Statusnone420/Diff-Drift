@@ -1,3 +1,5 @@
+pub mod cli;
+mod deps_diff;
 mod diff;
 mod git;
 mod heuristics;
@@ -159,8 +161,27 @@ fn dismiss_all(shared: State<'_, Shared>) -> Result<SessionData, String> {
     watcher::dismiss_all(shared.inner())
 }
 
+/// Mark a single changed node reviewed (or unreviewed). Persisted per repo;
+/// auto-resets if the node's content changes afterwards.
+#[tauri::command]
+fn set_node_reviewed(
+    shared: State<'_, Shared>,
+    node_id: String,
+    reviewed: bool,
+) -> Result<SessionData, String> {
+    watcher::set_node_reviewed(shared.inner(), node_id, reviewed)
+}
+
+/// Switch the drift baseline: "head", "trust-point", "merge-base", or any git
+/// rev. Persisted per repo; re-analyzes everything and returns the new session.
+#[tauri::command]
+fn set_baseline(shared: State<'_, Shared>, spec: String) -> Result<SessionData, String> {
+    watcher::set_baseline(shared.inner(), spec)
+}
+
 /// Approve (or revoke approval of) the current drift. Approval stores the drift
-/// fingerprint and auto-revokes when the drift changes.
+/// fingerprint, pins the trust point to the current HEAD, and auto-revokes when
+/// the drift changes.
 #[tauri::command]
 fn set_approved(
     shared: State<'_, Shared>,
@@ -238,6 +259,8 @@ pub fn run() {
             init_session,
             set_flag_dismissed,
             dismiss_all,
+            set_node_reviewed,
+            set_baseline,
             set_approved,
             export_report,
             e2e_config

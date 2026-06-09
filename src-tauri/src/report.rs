@@ -12,6 +12,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("# Diff Drift report — {}\n\n", s.project));
     out.push_str(&format!("- **Branch:** `{}`\n", s.branch));
+    out.push_str(&format!("- **Baseline:** {}\n", s.baseline_label));
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
     out.push_str(&format!(
@@ -58,12 +59,12 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
         out.push('\n');
     }
 
-    out.push_str("## Analyzed TypeScript/TSX files\n\n");
+    out.push_str("## Analyzed files\n\n");
     out.push_str(
-        "Total drift includes every git-changed file; this section lists only TypeScript/TSX files Diff Drift analyzed as AST nodes.\n\n",
+        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).\n\n",
     );
     if data.files.is_empty() {
-        out.push_str("No analyzable TypeScript/TSX drift.\n");
+        out.push_str("No analyzable drift.\n");
     } else {
         for file in &data.files {
             out.push_str(&format!(
@@ -148,7 +149,7 @@ fn plural(n: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{analyze_all, assemble, fingerprint, meta};
+    use crate::session::{analyze_all, assemble, fingerprint, meta, Baseline};
     use crate::store::RepoState;
     use crate::test_fixture;
     use crate::git;
@@ -156,12 +157,12 @@ mod tests {
     fn fixture_data(state: &RepoState) -> SessionData {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
-        let results = analyze_all(&root);
+        let results = analyze_all(&root, &Baseline::default());
         let mut state = state.clone();
         if state.approved_fingerprint.as_deref() == Some("CURRENT") {
             state.approved_fingerprint = Some(fingerprint(&results));
         }
-        assemble(&results, &meta(&root), &state)
+        assemble(&results, &meta(&root, &Baseline::default()), &state)
     }
 
     #[test]
@@ -170,15 +171,16 @@ mod tests {
         assert!(md.contains("# Diff Drift report —"), "title: {md}");
         assert!(md.contains("- **Generated:** 2026-06-09 12:30"));
         assert!(md.contains("- **Branch:** `agent/refactor-token-validation`"));
+        assert!(md.contains("- **Baseline:** HEAD"));
         assert!(md.contains("- **Review:** not reviewed"));
         assert!(md.contains("### High severity"));
         assert!(md.contains("Loose regex pattern"));
         assert!(md.contains("```diff"), "flagged nodes include before/after diff");
         assert!(md.contains("- const pattern ="), "before lines render as removals");
         assert!(md.contains("+ const pattern = /.*/;"), "after lines render as additions");
-        assert!(md.contains("## Analyzed TypeScript/TSX files"));
+        assert!(md.contains("## Analyzed files"));
         assert!(
-            md.contains("Total drift includes every git-changed file; this section lists only TypeScript/TSX files Diff Drift analyzed as AST nodes.")
+            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).")
         );
         assert!(md.contains("`routes/session.ts` — Formatting only"));
         assert!(!md.contains("## Dismissed"), "no dismissed section when nothing dismissed");
@@ -202,6 +204,7 @@ mod tests {
     fn json_report_is_valid_and_complete() {
         let json = render_json(&fixture_data(&RepoState::default()));
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["schemaVersion"], crate::model::SCHEMA_VERSION);
         assert_eq!(v["session"]["riskCount"], 6);
         assert_eq!(v["flags"].as_array().unwrap().len(), 6);
         assert_eq!(v["session"]["approved"], false);

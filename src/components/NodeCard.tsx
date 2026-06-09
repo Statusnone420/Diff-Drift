@@ -9,6 +9,7 @@ interface NodeCardProps {
   activeNodeId: string | null;
   pulseId: string | null;
   onToggleFlag: (flagId: string) => void;
+  onToggleReviewed: (nodeId: string, reviewed: boolean) => void;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
   defaultOpen?: boolean;
 }
@@ -19,6 +20,7 @@ export function NodeCard({
   activeNodeId,
   pulseId,
   onToggleFlag,
+  onToggleReviewed,
   registerRef,
   defaultOpen,
 }: NodeCardProps) {
@@ -47,6 +49,7 @@ export function NodeCard({
     open ? "open" : "",
     isActive ? "is-active" : "",
     isPulse ? "pulse" : "",
+    changed && node.reviewed ? "reviewed" : "",
   ].join(" ");
 
   const toggleOpen = () => setOpen((o) => !o);
@@ -96,6 +99,24 @@ export function NodeCard({
               {SEV_LABEL[flag.severity]}
             </button>
           )}
+          {changed && (
+            <button
+              className={"node-review" + (node.reviewed ? " on" : "")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleReviewed(node.id, !node.reviewed);
+              }}
+              aria-pressed={node.reviewed}
+              aria-label={`${node.reviewed ? "Mark unreviewed" : "Mark reviewed"}: ${node.kind} ${node.name}`}
+              title={
+                node.reviewed
+                  ? "Reviewed — clears automatically if this change drifts again"
+                  : "Mark this change reviewed"
+              }
+            >
+              {Ico.check}
+            </button>
+          )}
         </div>
 
         {changed && open && <DiffBody node={node} />}
@@ -111,6 +132,7 @@ export function NodeCard({
               activeNodeId={activeNodeId}
               pulseId={pulseId}
               onToggleFlag={onToggleFlag}
+              onToggleReviewed={onToggleReviewed}
               registerRef={registerRef}
             />
           ))}

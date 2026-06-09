@@ -15,7 +15,9 @@ import {
   openRepo,
   pickFolder,
   setApproved,
+  setBaseline,
   setFlagDismissed,
+  setNodeReviewed,
 } from "./lib/session";
 
 function hhmm(): string {
@@ -236,6 +238,29 @@ export default function App() {
     }
   }, [applyTriage, showNotice]);
 
+  const handleToggleReviewed = useCallback(
+    async (nodeId: string, reviewed: boolean) => {
+      try {
+        applyTriage(await setNodeReviewed(nodeId, reviewed));
+      } catch (e) {
+        showNotice(String(e));
+      }
+    },
+    [applyTriage, showNotice]
+  );
+
+  const handleSetBaseline = useCallback(
+    async (spec: string) => {
+      try {
+        // New baseline → new node ids; clear the selection rather than point at ghosts.
+        applyTriage(await setBaseline(spec), true);
+      } catch (e) {
+        showNotice(String(e));
+      }
+    },
+    [applyTriage, showNotice]
+  );
+
   const handleToggleApprove = useCallback(async () => {
     if (!data) return;
     try {
@@ -286,6 +311,7 @@ export default function App() {
         onSwitchRepo={pickAndOpen}
         onDismissAll={handleDismissAll}
         onToggleApprove={handleToggleApprove}
+        onSetBaseline={handleSetBaseline}
       />
       {notice && (
         <div className="app-notice" role="alert">
@@ -311,6 +337,7 @@ export default function App() {
           activeNodeId={activeNodeId}
           pulseId={pulseId}
           onToggleFlag={toggleFlagFromNode}
+          onToggleReviewed={handleToggleReviewed}
           registerRef={registerRef}
           scrollRef={scrollRef}
         />
