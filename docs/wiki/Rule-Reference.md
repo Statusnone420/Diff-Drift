@@ -1,6 +1,6 @@
 # Rule Reference
 
-Diff Drift rules are small heuristics over changed TypeScript/TSX AST nodes. They favor useful review prompts over complete static analysis.
+Diff Drift rules are small heuristics over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. They favor useful review prompts over complete static analysis.
 
 ## Severity
 
@@ -25,10 +25,23 @@ Diff Drift rules are small heuristics over changed TypeScript/TSX AST nodes. The
 | Removed sanitization | Low | Sanitization, escaping, or validation call removed | Can produce review prompts for renames or refactors. |
 | Permissive logging config | Low | Redaction emptied or log level lowered | Review before committing sensitive logging changes. |
 
+## Dependency Drift Rules (package.json)
+
+When a drifted `package.json` changes its dependency or script sections, each changed entry becomes a node with these rules:
+
+| Rule | Severity | Triggers On | Notes |
+| --- | --- | --- | --- |
+| Dependency not in lockfile | High | A dependency added to package.json whose name the lockfile can't vouch for | The slopsquatting guard: agents sometimes hallucinate package names. Only fires when a lockfile exists — no lockfile, no accusation. `package-lock.json` is parsed; `yarn.lock`/`pnpm-lock.yaml` are checked loosely as text. |
+| New dependency | Medium | A dependency added and present in the lockfile | Verify it's intended and vetted. |
+| Dependency version changed | Low | A version range changed | Confirm the bump is intentional. |
+| npm script changed | Medium | A script added or modified | Scripts run arbitrary shell commands during install and dev. |
+
+Removed dependencies and scripts are shown as drift nodes without flags.
+
 ## False Positives
 
 False positives are expected. Use dismiss when a flag is reviewed and not actionable. If a rule repeatedly flags normal code, open a GitHub Discussion or issue with the code shape and expected behavior.
 
 ## Adding Rules
 
-Rules live in `src-tauri/src/rules.rs`. The tree walker that attaches flags lives in `src-tauri/src/heuristics.rs`. Add focused Rust tests for every new rule and false-positive suppression.
+Source rules live in `src-tauri/src/rules.rs`. The tree walker that attaches flags lives in `src-tauri/src/heuristics.rs`. Dependency drift rules live in `src-tauri/src/deps_diff.rs`. Add focused Rust tests for every new rule and false-positive suppression.

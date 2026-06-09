@@ -50,6 +50,14 @@ Native E2E builds a debug Tauri app and launches it with isolated environment va
 - `DIFF_DRIFT_E2E_STATE_FILE`
 - `DIFF_DRIFT_E2E_BIN`
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push/PR: `cargo test` + `cargo clippy -- -D warnings` on Windows, and `npm run build` + the web E2E on Ubuntu. Keep clippy clean — warnings fail the build.
+
+## Headless Check
+
+The debug binary also serves the CLI: `cargo run -- check <path> --json` (or run the built `drift-inspector.exe check …`). It is read-only by design; see the User Guide for flags and exit codes.
+
 ## Fixtures
 
 Rust unit tests use `src-tauri/src/test_fixture.rs` to build temporary git repos with `git2`. They should not depend on `demo/` or a globally installed `git` binary.
