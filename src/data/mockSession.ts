@@ -1,0 +1,172 @@
+// Mock session data for Drift Inspector — ported verbatim from the handoff `data.jsx`.
+// This is the parser-output contract; Phase 2 replaces this module's data with the
+// real Rust/tree-sitter output behind the same `SessionData` type.
+
+import type { SessionData } from "../types";
+
+export const mockSession: SessionData = {
+  session: {
+    project: "payments-api",
+    branch: "agent/refactor-token-validation",
+    repoPath: "demo/payments-api",
+    changedFiles: 3,
+    riskCount: 3,
+    fileCount: 2,
+  },
+
+  // Risk flags, keyed by id. fileId + nodeId tie each flag to a node.
+  flags: [
+    {
+      id: "f1",
+      severity: "high",
+      type: "Loose regex pattern",
+      desc: "Token format check was widened to /.*/ — any string now passes validation.",
+      fileId: "auth",
+      filePath: "auth/validateToken.ts",
+      nodePath: "validateToken › pattern",
+      nodeId: "n_pattern",
+    },
+    {
+      id: "f2",
+      severity: "medium",
+      type: "Unvetted nested package",
+      desc: "New dependency “jwt-tiny-decode” has no audit trail and pulls 4 transitive packages.",
+      fileId: "auth",
+      filePath: "auth/validateToken.ts",
+      nodePath: "import › jwt-tiny-decode",
+      nodeId: "n_import",
+    },
+    {
+      id: "f3",
+      severity: "low",
+      type: "Permissive logging config",
+      desc: "Redaction list was emptied and level lowered to debug — tokens may reach log sinks.",
+      fileId: "logger",
+      filePath: "utils/logger.ts",
+      nodePath: "createLogger › config",
+      nodeId: "n_logger",
+    },
+  ],
+
+  files: [
+    {
+      id: "auth",
+      name: "validateToken.ts",
+      dir: "auth/",
+      lang: "TypeScript",
+      risks: 2,
+      summary: "1 added · 3 modified · 1 removed",
+      nodes: [
+        {
+          id: "n_import",
+          kind: "ImportDeclaration",
+          name: "jwt-tiny-decode",
+          state: "added",
+          flagId: "f2",
+          after: ['import { decode } from "jwt-tiny-decode";'],
+        },
+        {
+          id: "n_fn",
+          kind: "FunctionDeclaration",
+          name: "validateToken",
+          signature: "(token: string): boolean",
+          state: "unchanged",
+          children: [
+            {
+              id: "n_pattern",
+              kind: "VariableDeclaration",
+              name: "pattern",
+              state: "modified",
+              flagId: "f1",
+              before: ["const pattern = /^[A-Za-z0-9_\\-]{32,}$/;"],
+              after: ["const pattern = /.*/;"],
+            },
+            {
+              id: "n_guard",
+              kind: "IfStatement",
+              name: "guard",
+              state: "modified",
+              before: [
+                "if (!pattern.test(token)) {",
+                '  throw new Error("Malformed token");',
+                "}",
+              ],
+              after: ["if (false) {", '  throw new Error("Malformed token");', "}"],
+            },
+            {
+              id: "n_sanitize",
+              kind: "ExpressionStatement",
+              name: "sanitizeInput(token)",
+              state: "removed",
+              before: ["sanitizeInput(token);"],
+            },
+            {
+              id: "n_return",
+              kind: "ReturnStatement",
+              name: "return",
+              state: "modified",
+              before: ["return verify(token, PUBLIC_KEY);"],
+              after: ["return decode(token);"],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: "logger",
+      name: "logger.ts",
+      dir: "utils/",
+      lang: "TypeScript",
+      risks: 1,
+      summary: "1 modified",
+      nodes: [
+        {
+          id: "n_logger",
+          kind: "VariableDeclaration",
+          name: "createLogger",
+          signature: "config",
+          state: "modified",
+          flagId: "f3",
+          before: [
+            "const logger = createLogger({",
+            '  level: "info",',
+            '  redact: ["req.headers.authorization", "token"],',
+            "});",
+          ],
+          after: ["const logger = createLogger({", '  level: "debug",', "  redact: [],", "});"],
+        },
+        {
+          id: "n_log",
+          kind: "FunctionDeclaration",
+          name: "log",
+          signature: "(level: Level, msg: string): void",
+          state: "unchanged",
+        },
+      ],
+    },
+    {
+      id: "session",
+      name: "session.ts",
+      dir: "routes/",
+      lang: "TypeScript",
+      risks: 0,
+      summary: "Formatting only",
+      nodes: [
+        {
+          id: "n_handle",
+          kind: "FunctionDeclaration",
+          name: "handleSession",
+          signature: "(req: Request, res: Response)",
+          state: "unchanged",
+        },
+        {
+          id: "n_export",
+          kind: "ExportDeclaration",
+          name: "router",
+          signature: "default export",
+          state: "unchanged",
+        },
+      ],
+    },
+  ],
+};

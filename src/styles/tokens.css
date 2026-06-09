@@ -1,0 +1,92 @@
+/* Design tokens — ported verbatim from the Drift Inspector handoff (Windows 11).
+   Single source of truth for colors, type, and the window metrics. */
+:root {
+  --bg: #0b0c0f;
+  --bg-panel: #101116;
+  --bg-panel-2: #0d0e12;
+  --bg-elevated: #16181f;
+  --bg-hover: #181a22;
+  --bg-row-sel: #1b1e27;
+  --border: #20232b;
+  --border-soft: #191b22;
+  --border-strong: #2c303a;
+
+  --text: #e9ebef;
+  --text-dim: #9498a3;
+  --text-faint: #5c616d;
+  --text-mute: #474c57;
+
+  --added: #4ec46a;
+  --added-bg: rgba(78, 196, 106, 0.1);
+  --added-line: rgba(78, 196, 106, 0.07);
+  --removed: #f2604c;
+  --removed-bg: rgba(242, 96, 76, 0.1);
+  --removed-line: rgba(242, 96, 76, 0.07);
+  --modified: #e7a83e;
+  --modified-bg: rgba(231, 168, 62, 0.11);
+
+  --sev-high: #f2604c;
+  --sev-high-bg: rgba(242, 96, 76, 0.13);
+  --sev-med: #e7a83e;
+  --sev-med-bg: rgba(231, 168, 62, 0.13);
+  --sev-low: #6f8bc4;
+  --sev-low-bg: rgba(111, 139, 196, 0.13);
+
+  --accent: #e7a83e;
+  --live: #4ec46a;
+
+  --mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", ui-monospace, Consolas,
+    monospace;
+  --ui: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
+
+  --mica-1: rgba(40, 43, 51, 0.72);
+  --mica-2: rgba(22, 24, 30, 0.72);
+  --win-radius: 9px;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+#root {
+  height: 100vh;
+}
+::selection {
+  background: rgba(231, 168, 62, 0.28);
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #23262f;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #30343f;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
