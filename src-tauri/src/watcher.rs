@@ -367,7 +367,9 @@ fn classify_paths_with_git_dirs(
         let Some(rel) = relativize(root, &p) else {
             continue;
         };
-        if rel == "package.json" {
+        // package.json drift depends on the lockfile (phantom-dep flags), so a
+        // root-level change to either forces a full re-scan.
+        if rel == "package.json" || crate::deps_diff::LOCKFILE_NAMES.contains(&rel.as_str()) {
             change.full_scan = true;
         } else if git::is_analyzable(&rel) {
             change.rels.push(rel);
@@ -482,6 +484,23 @@ mod tests {
     fn package_json_forces_full_scan() {
         let change = classify_paths(&root(), Some(&git_dir()), vec![root().join("package.json")]);
         assert!(change.full_scan);
+        assert!(change.rels.is_empty());
+    }
+
+    #[test]
+    fn lockfile_paths_force_full_scan() {
+        for name in crate::deps_diff::LOCKFILE_NAMES {
+            let change = classify_paths(&root(), Some(&git_dir()), vec![root().join(name)]);
+            assert!(change.full_scan, "{name} should force a full scan");
+            assert!(change.rels.is_empty());
+        }
+        // Only the ROOT lockfile feeds the dependency diff — nested ones don't.
+        let change = classify_paths(
+            &root(),
+            Some(&git_dir()),
+            vec![root().join("packages").join("app").join("yarn.lock")],
+        );
+        assert!(!change.full_scan);
         assert!(change.rels.is_empty());
     }
 

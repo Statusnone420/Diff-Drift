@@ -17,13 +17,18 @@ const DEP_SECTIONS: [&str; 4] = [
     "optionalDependencies",
 ];
 
+/// Lockfiles the dependency analysis reads, npm first (matches the read order
+/// below). The watcher full-scans when any of these change — phantom-dep flags
+/// depend on lockfile content, not just package.json.
+pub const LOCKFILE_NAMES: [&str; 3] = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
+
 /// Names a lockfile can vouch for, or `None` when the repo has no lockfile.
 pub fn lockfile_names(root: &Path) -> Option<LockfileNames> {
-    let npm = root.join("package-lock.json");
+    let npm = root.join(LOCKFILE_NAMES[0]);
     if let Ok(text) = std::fs::read_to_string(&npm) {
         return Some(LockfileNames::Npm(npm_lock_names(&text)));
     }
-    for name in ["yarn.lock", "pnpm-lock.yaml"] {
+    for name in &LOCKFILE_NAMES[1..] {
         if let Ok(text) = std::fs::read_to_string(root.join(name)) {
             return Some(LockfileNames::Text(text));
         }
