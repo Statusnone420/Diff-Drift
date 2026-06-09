@@ -200,6 +200,69 @@ fn snippet(node: Node, src: &[u8], max: usize) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SRC: &str = r#"import { decode } from "jwt-tiny-decode";
+
+const pattern = /.*/;
+
+function validateToken(token: string): boolean {
+  if (!pattern.test(token)) {
+    throw new Error("nope");
+  }
+  return decode(token);
+}
+
+export default router;
+"#;
+
+    #[test]
+    fn maps_kinds_names_and_signatures() {
+        let nodes = parse_file(SRC);
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("ImportDeclaration", "jwt-tiny-decode"),
+                ("VariableDeclaration", "pattern"),
+                ("FunctionDeclaration", "validateToken"),
+                ("ExportDeclaration", "router"),
+            ]
+        );
+        let func = &nodes[2];
+        assert_eq!(func.signature.as_deref(), Some("(token: string): boolean"));
+    }
+
+    #[test]
+    fn function_bodies_surface_one_level_of_children() {
+        let nodes = parse_file(SRC);
+        let func = &nodes[2];
+        let child_kinds: Vec<&str> = func.children.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(child_kinds, vec!["IfStatement", "ReturnStatement"]);
+        assert_eq!(func.children[1].lines, vec!["return decode(token);"]);
+    }
+
+    #[test]
+    fn unparseable_or_empty_source_yields_no_nodes() {
+        assert!(parse_file("").is_empty());
+        // tree-sitter is error-tolerant; garbage shouldn't panic.
+        let _ = parse_file("@@@ ??? not typescript {{{");
+    }
+
+    #[test]
+    fn multiline_nodes_are_dedented() {
+        let src = "function f() {\n  const x = {\n    a: 1,\n  };\n}\n";
+        let nodes = parse_file(src);
+        let decl = &nodes[0].children[0];
+        assert_eq!(decl.lines, vec!["const x = {", "  a: 1,", "};"]);
+    }
+}
+
 /// Source lines of a node, dedented so the block displays cleanly (the first
 /// line already starts at the node; later lines are stripped of the node's
 /// column-worth of leading whitespace).

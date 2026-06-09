@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter};
 use crate::git;
 use crate::model::SessionData;
 use crate::session::{self, FileResult};
+use crate::store::{self, RepoState};
 
 type Deb = Debouncer<RecommendedWatcher, RecommendedCache>;
 
@@ -22,6 +23,9 @@ pub struct WatchState {
     root: PathBuf,
     deps: HashSet<String>,
     results: HashMap<String, FileResult>,
+    /// Per-repo triage (dismissed flags + approval), persisted at `state_file`.
+    repo_state: RepoState,
+    state_file: PathBuf,
 }
 
 pub type Shared = Arc<Mutex<WatchState>>;
@@ -30,11 +34,13 @@ pub fn new_shared() -> Shared {
     Arc::new(Mutex::new(WatchState::default()))
 }
 
-/// (Re)start watching `root`: full scan, install a debounced watcher, and return
-/// the assembled `SessionData` for the initial render.
-pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf) -> SessionData {
+/// (Re)start watching `root`: full scan, load the repo's persisted triage state,
+/// install a debounced watcher, and return the assembled `SessionData` for the
+/// initial render. `state_file` is where triage state persists (repo-state.json).
+pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBuf) -> SessionData {
     let deps = session::read_deps(&root);
     let results = session::analyze_all(&root);
+    let repo_state = store::load(&state_file, &repo_key(&root));
     let git_dirs = git_metadata_dirs(&root);
 
     let app2 = app.clone();
@@ -64,6 +70,8 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf) -> SessionData {
         g.root = root.clone();
         g.deps = deps;
         g.results = results;
+        g.repo_state = repo_state;
+        g.state_file = state_file;
         if let Some(mut d) = debouncer {
             if d.watch(&root, RecursiveMode::Recursive).is_ok() {
                 for dir in git_dirs.iter().filter(|dir| !dir.starts_with(&root)) {
@@ -75,13 +83,68 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf) -> SessionData {
     }
 
     let g = shared.lock().unwrap();
-    session::assemble(&g.results, &session::meta(&root))
+    session::assemble(&g.results, &session::meta(&root), &g.repo_state)
 }
 
-pub fn stop(shared: &Shared) {
-    if let Ok(mut g) = shared.lock() {
-        g.debouncer = None;
+/// Stable key for the persisted per-repo state.
+fn repo_key(root: &Path) -> String {
+    root.display().to_string()
+}
+
+/// Mutate the repo's triage state under the lock, persist it, and return the
+/// freshly assembled `SessionData`. Errors if no repository is open.
+fn update_triage(
+    shared: &Shared,
+    apply: impl FnOnce(&mut RepoState, &HashMap<String, FileResult>),
+) -> Result<SessionData, String> {
+    let mut g = shared.lock().unwrap();
+    if g.root.as_os_str().is_empty() {
+        return Err("No repository is open.".into());
     }
+    let results = std::mem::take(&mut g.results);
+    apply(&mut g.repo_state, &results);
+    g.results = results;
+    store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
+    Ok(session::assemble(&g.results, &session::meta(&g.root), &g.repo_state))
+}
+
+pub fn set_dismissed(shared: &Shared, flag_id: String, dismissed: bool) -> Result<SessionData, String> {
+    update_triage(shared, |state, _| {
+        if dismissed {
+            state.dismissed.insert(flag_id);
+        } else {
+            state.dismissed.remove(&flag_id);
+        }
+    })
+}
+
+pub fn dismiss_all(shared: &Shared) -> Result<SessionData, String> {
+    update_triage(shared, |state, results| {
+        state
+            .dismissed
+            .extend(results.values().flat_map(|r| r.flags.iter().map(|f| f.id.clone())));
+    })
+}
+
+pub fn set_approved(shared: &Shared, approved: bool, approved_at: Option<String>) -> Result<SessionData, String> {
+    update_triage(shared, |state, results| {
+        if approved {
+            state.approved_fingerprint = Some(session::fingerprint(results));
+            state.approved_at = approved_at;
+        } else {
+            state.approved_fingerprint = None;
+            state.approved_at = None;
+        }
+    })
+}
+
+/// Current session snapshot (for export). Errors if no repository is open.
+pub fn current_data(shared: &Shared) -> Result<SessionData, String> {
+    let g = shared.lock().unwrap();
+    if g.root.as_os_str().is_empty() {
+        return Err("No repository is open.".into());
+    }
+    Ok(session::assemble(&g.results, &session::meta(&g.root), &g.repo_state))
 }
 
 fn on_change(
@@ -96,13 +159,23 @@ fn on_change(
         return;
     }
 
-    if change.full_scan {
+    // Late event from a replaced watcher (repo was switched) → never merge old-repo
+    // results into the new repo's state.
+    if shared.lock().unwrap().root.as_path() != root {
+        return;
+    }
+
+    let data = if change.full_scan {
         // Git state and deps can change the whole session → full re-scan.
         let deps = session::read_deps(root);
         let results = session::analyze_all(root);
         let mut g = shared.lock().unwrap();
+        if g.root.as_path() != root {
+            return; // repo switched while we were scanning
+        }
         g.deps = deps;
         g.results = results;
+        session::assemble(&g.results, &session::meta(root), &g.repo_state)
     } else {
         let deps = { shared.lock().unwrap().deps.clone() };
         let updates: Vec<(String, Option<FileResult>)> = change
@@ -114,6 +187,9 @@ fn on_change(
             })
             .collect();
         let mut g = shared.lock().unwrap();
+        if g.root.as_path() != root {
+            return; // repo switched while we were analyzing
+        }
         for (rel, res) in updates {
             match res {
                 Some(r) => {
@@ -124,11 +200,7 @@ fn on_change(
                 }
             }
         }
-    }
-
-    let data = {
-        let g = shared.lock().unwrap();
-        session::assemble(&g.results, &session::meta(root))
+        session::assemble(&g.results, &session::meta(root), &g.repo_state)
     };
     let _ = app.emit("drift://updated", data);
 }

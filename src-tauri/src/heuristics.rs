@@ -29,6 +29,7 @@ pub fn scan_file(
                     None => node.name.clone(),
                 },
                 node_id: node.id.clone(),
+                dismissed: false, // applied later in `session::assemble` from the per-repo store
             });
         }
         if let Some(children) = node.children.as_mut() {

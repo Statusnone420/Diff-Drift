@@ -2,7 +2,7 @@
 //! `analyze_session` returns `SessionData`; the React app renders it unchanged.
 use serde::Serialize;
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeState {
     Added,
@@ -49,6 +49,8 @@ pub struct Flag {
     pub file_path: String,
     pub node_path: String,
     pub node_id: String,
+    /// Triage state: true when the user dismissed this flag (persisted per repo).
+    pub dismissed: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -72,6 +74,11 @@ pub struct Session {
     pub changed_files: u32,
     pub risk_count: u32,
     pub file_count: u32,
+    /// True while the stored approval matches the current drift fingerprint —
+    /// any change to the drift auto-revokes it.
+    pub approved: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<String>,
 }
 
 #[derive(Serialize, Clone)]

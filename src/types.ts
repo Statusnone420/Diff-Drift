@@ -26,6 +26,8 @@ export interface Flag {
   filePath: string;
   nodePath: string;
   nodeId: string;
+  /** Triage state: dismissed flags are excluded from all counts (persisted per repo). */
+  dismissed: boolean;
 }
 
 export interface FileEntry {
@@ -45,6 +47,9 @@ export interface Session {
   changedFiles: number;
   riskCount: number;
   fileCount: number;
+  /** True while the stored approval matches the current drift; auto-revokes on change. */
+  approved: boolean;
+  approvedAt?: string;
 }
 
 export interface SessionData {

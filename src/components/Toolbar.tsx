@@ -1,8 +1,16 @@
 import type { Session } from "../types";
 import { Ico } from "../lib/icons";
 
-export function Toolbar({ session, onSwitchRepo }: { session: Session; onSwitchRepo: () => void }) {
+interface ToolbarProps {
+  session: Session;
+  onSwitchRepo: () => void;
+  onDismissAll: () => void;
+  onToggleApprove: () => void;
+}
+
+export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove }: ToolbarProps) {
   const zero = session.riskCount === 0;
+  const noDrift = session.changedFiles === 0;
   return (
     <div className="toolbar">
       <div className="crumb">
@@ -17,11 +25,17 @@ export function Toolbar({ session, onSwitchRepo }: { session: Session; onSwitchR
         </span>
       </div>
       <div className="spacer" />
-      <div className={"summary-pill" + (zero ? " calm" : "")}>
+      <div className={"summary-pill" + (zero || session.approved ? " calm" : "")}>
         <span className="dot" />
         <span>
-          {zero ? (
-            session.changedFiles === 0 ? (
+          {session.approved ? (
+            <>
+              <b>Approved</b>
+              {session.approvedAt ? ` at ${session.approvedAt}` : ""} —{" "}
+              {zero ? "no active risks" : `${session.riskCount} active risks`}
+            </>
+          ) : zero ? (
+            noDrift ? (
               <>
                 <b>Clean</b> — no uncommitted changes
               </>
@@ -38,8 +52,29 @@ export function Toolbar({ session, onSwitchRepo }: { session: Session; onSwitchR
         </span>
       </div>
       <div className="toolbar-actions">
-        <button className="btn">Dismiss all</button>
-        <button className="btn primary">Approve session</button>
+        <button
+          className="btn"
+          onClick={onDismissAll}
+          disabled={zero}
+          title={zero ? "No active flags to dismiss" : "Dismiss every active flag (persisted for this repo)"}
+        >
+          Dismiss all
+        </button>
+        <button
+          className={"btn primary" + (session.approved ? " approved" : "")}
+          onClick={onToggleApprove}
+          disabled={noDrift}
+          aria-pressed={session.approved}
+          title={
+            noDrift
+              ? "Nothing to approve — the working tree is clean"
+              : session.approved
+                ? "Approved — click to revoke. Approval auto-revokes when the drift changes."
+                : "Mark this drift as reviewed and approved"
+          }
+        >
+          {session.approved ? <>{Ico.check} Approved</> : "Approve session"}
+        </button>
       </div>
     </div>
   );

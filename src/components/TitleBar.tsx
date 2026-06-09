@@ -24,14 +24,15 @@ export function TitleBar({ maximized }: { maximized: boolean }) {
         </span>
       </div>
       <div className="tb-caption">
-        <div className="cap-btn" title="Minimize" onClick={() => void minimize()}>
+        <button className="cap-btn" title="Minimize" aria-label="Minimize" onClick={() => void minimize()}>
           <svg width="10" height="10" viewBox="0 0 10 10">
             <path d="M0 5h10" stroke="currentColor" strokeWidth="1" />
           </svg>
-        </div>
-        <div
+        </button>
+        <button
           className="cap-btn"
           title={maximized ? "Restore" : "Maximize"}
+          aria-label={maximized ? "Restore" : "Maximize"}
           onClick={() => void toggleMaximize()}
         >
           {maximized ? (
@@ -48,12 +49,12 @@ export function TitleBar({ maximized }: { maximized: boolean }) {
               <rect x="0.5" y="0.5" width="9" height="9" rx="0.5" stroke="currentColor" strokeWidth="1" fill="none" />
             </svg>
           )}
-        </div>
-        <div className="cap-btn close" title="Close" onClick={() => void closeWindow()}>
+        </button>
+        <button className="cap-btn close" title="Close" aria-label="Close" onClick={() => void closeWindow()}>
           <svg width="10" height="10" viewBox="0 0 10 10">
             <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" />
           </svg>
-        </div>
+        </button>
       </div>
     </div>
   );

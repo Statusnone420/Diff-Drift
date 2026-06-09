@@ -7,7 +7,16 @@ import { Center } from "./components/Center";
 import { RightPanel } from "./components/RightPanel";
 import { EmptyState } from "./components/EmptyState";
 import { onMaximizeChange } from "./lib/window";
-import { initSession, onDrift, openRepo, pickFolder } from "./lib/session";
+import {
+  dismissAll,
+  exportReport,
+  initSession,
+  onDrift,
+  openRepo,
+  pickFolder,
+  setApproved,
+  setFlagDismissed,
+} from "./lib/session";
 
 function hhmm(): string {
   const d = new Date();
@@ -19,6 +28,7 @@ type Status = "init" | "onboarding" | "loading" | "loaded";
 export default function App() {
   const [status, setStatus] = useState<Status>("init");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [data, setData] = useState<SessionData | null>(null);
   const [watchingSince, setWatchingSince] = useState<string | null>(null);
 
@@ -33,6 +43,7 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updatedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flagsById = useMemo(() => {
     const m: Record<string, Flag> = {};
@@ -66,14 +77,23 @@ export default function App() {
     });
   }, []);
 
-  // First load of a repo: set the default selection (highest-severity flag) + scroll.
+  /** Transient, non-blocking message (e.g. a failed repo switch while a session is live). */
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 6000);
+  }, []);
+
+  // First load of a repo: set the default selection (highest-severity active flag) + scroll.
   const receiveInitial = useCallback(
     (d: SessionData) => {
+      nodeRefs.current = {};
       setData(d);
       setError(null);
+      setNotice(null);
       setWatchingSince(hhmm());
       setStatus("loaded");
-      const f0 = d.flags[0];
+      const f0 = d.flags.find((f) => !f.dismissed);
       if (f0) {
         setSelectedId(f0.fileId);
         setActiveNodeId(f0.nodeId);
@@ -90,16 +110,26 @@ export default function App() {
 
   const openPath = useCallback(
     async (path: string) => {
-      setStatus("loading");
-      setError(null);
+      // With a session already on screen, keep it visible while the new repo loads —
+      // and keep it if opening fails (a bad pick shouldn't destroy a live session).
+      const hadSession = data !== null;
+      if (!hadSession) {
+        setStatus("loading");
+        setError(null);
+      }
       try {
         receiveInitial(await openRepo(path));
       } catch (e) {
-        setStatus("onboarding");
-        setError(typeof e === "string" ? e : String(e));
+        const message = typeof e === "string" ? e : String(e);
+        if (hadSession) {
+          showNotice(message);
+        } else {
+          setStatus("onboarding");
+          setError(message);
+        }
       }
     },
-    [receiveInitial]
+    [data, receiveInitial, showNotice]
   );
 
   const pickAndOpen = useCallback(async () => {
@@ -132,9 +162,13 @@ export default function App() {
       setJustUpdated(true);
       if (updatedTimer.current) clearTimeout(updatedTimer.current);
       updatedTimer.current = setTimeout(() => setJustUpdated(false), 3000);
-    }).then((fn) => {
-      unlisten = fn;
-    });
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((e) => {
+        console.error("Drift listener failed to attach:", e);
+      });
     return () => {
       cancelled = true;
       unlisten?.();
@@ -171,6 +205,58 @@ export default function App() {
     setActiveFlagId(null);
   }, []);
 
+  // ---------- triage / approval / export ----------
+  const applyTriage = useCallback(
+    (next: SessionData, clearSelection?: boolean) => {
+      setData(next);
+      if (clearSelection) {
+        setActiveFlagId(null);
+        setActiveNodeId(null);
+      }
+    },
+    []
+  );
+
+  const handleDismissFlag = useCallback(
+    async (flagId: string, dismissed: boolean) => {
+      try {
+        applyTriage(await setFlagDismissed(flagId, dismissed), dismissed && flagId === activeFlagId);
+      } catch (e) {
+        showNotice(String(e));
+      }
+    },
+    [applyTriage, activeFlagId, showNotice]
+  );
+
+  const handleDismissAll = useCallback(async () => {
+    try {
+      applyTriage(await dismissAll(), true);
+    } catch (e) {
+      showNotice(String(e));
+    }
+  }, [applyTriage, showNotice]);
+
+  const handleToggleApprove = useCallback(async () => {
+    if (!data) return;
+    try {
+      const next = !data.session.approved;
+      applyTriage(await setApproved(next, next ? hhmm() : null));
+    } catch (e) {
+      showNotice(String(e));
+    }
+  }, [data, applyTriage, showNotice]);
+
+  const handleExport = useCallback(async (): Promise<boolean> => {
+    if (!data) return false;
+    try {
+      const path = await exportReport(data.session.project);
+      return path !== null; // null = user cancelled the save dialog
+    } catch (e) {
+      showNotice(String(e));
+      return false;
+    }
+  }, [data, showNotice]);
+
   const shell = (children: ReactNode) => (
     <div className={"window" + (maximized ? " maximized" : "")}>
       <TitleBar maximized={maximized} />
@@ -195,7 +281,20 @@ export default function App() {
 
   return shell(
     <>
-      <Toolbar session={session} onSwitchRepo={pickAndOpen} />
+      <Toolbar
+        session={session}
+        onSwitchRepo={pickAndOpen}
+        onDismissAll={handleDismissAll}
+        onToggleApprove={handleToggleApprove}
+      />
+      {notice && (
+        <div className="app-notice" role="alert">
+          {notice}
+          <button className="notice-close" aria-label="Dismiss message" onClick={() => setNotice(null)}>
+            ×
+          </button>
+        </div>
+      )}
       <div className="body">
         <Sidebar
           session={session}
@@ -215,7 +314,13 @@ export default function App() {
           registerRef={registerRef}
           scrollRef={scrollRef}
         />
-        <RightPanel flags={flags} activeFlagId={activeFlag?.id ?? null} onSelectFlag={selectFlag} />
+        <RightPanel
+          flags={flags}
+          activeFlagId={activeFlag?.id ?? null}
+          onSelectFlag={selectFlag}
+          onDismissFlag={handleDismissFlag}
+          onExport={handleExport}
+        />
       </div>
     </>
   );

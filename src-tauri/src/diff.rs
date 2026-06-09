@@ -131,6 +131,111 @@ fn normalize(lines: &[String]) -> String {
     lines.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(kind: &str, name: &str, lines: &[&str]) -> Parsed {
+        Parsed {
+            kind: kind.into(),
+            name: name.into(),
+            signature: None,
+            lines: lines.iter().map(|s| s.to_string()).collect(),
+            children: Vec::new(),
+        }
+    }
+
+    fn states(nodes: &[AstNode]) -> Vec<(String, NodeState)> {
+        nodes.iter().map(|n| (n.name.clone(), n.state)).collect()
+    }
+
+    #[test]
+    fn detects_added_removed_modified_unchanged() {
+        let before = vec![
+            p("VariableDeclaration", "kept", &["const kept = 1;"]),
+            p("VariableDeclaration", "gone", &["const gone = 2;"]),
+            p("VariableDeclaration", "edited", &["const edited = 3;"]),
+        ];
+        let after = vec![
+            p("VariableDeclaration", "kept", &["const kept = 1;"]),
+            p("VariableDeclaration", "edited", &["const edited = 99;"]),
+            p("VariableDeclaration", "fresh", &["const fresh = 4;"]),
+        ];
+        let out = diff_nodes(&before, &after);
+        assert_eq!(
+            states(&out),
+            vec![
+                ("kept".to_string(), NodeState::Unchanged),
+                ("gone".to_string(), NodeState::Removed),
+                ("edited".to_string(), NodeState::Modified),
+                ("fresh".to_string(), NodeState::Added),
+            ]
+        );
+        let edited = &out[2];
+        assert_eq!(edited.before.as_deref(), Some(&["const edited = 3;".to_string()][..]));
+        assert_eq!(edited.after.as_deref(), Some(&["const edited = 99;".to_string()][..]));
+        let gone = &out[1];
+        assert!(gone.before.is_some() && gone.after.is_none());
+        let fresh = &out[3];
+        assert!(fresh.before.is_none() && fresh.after.is_some());
+    }
+
+    #[test]
+    fn whitespace_only_difference_is_unchanged() {
+        let before = vec![p("VariableDeclaration", "x", &["const x = {", "  a: 1,", "};"])];
+        let after = vec![p("VariableDeclaration", "x", &["const x = {  a: 1, };"])];
+        let out = diff_nodes(&before, &after);
+        assert_eq!(out[0].state, NodeState::Unchanged);
+        assert!(out[0].before.is_none() && out[0].after.is_none());
+    }
+
+    #[test]
+    fn container_keeps_children_only_when_something_inside_changed() {
+        let mut fn_before = p("FunctionDeclaration", "run", &["function run() {}"]);
+        fn_before.children = vec![p("ReturnStatement", "return", &["return 1;"])];
+        let mut fn_after_same = fn_before.clone();
+        fn_after_same.lines = vec!["function run()  {}".into()]; // container text irrelevant
+        let out = diff_nodes(&[fn_before.clone()], &[fn_after_same]);
+        assert_eq!(out[0].state, NodeState::Unchanged);
+        assert!(out[0].children.is_none(), "calm container drops children");
+
+        let mut fn_after_edited = fn_before.clone();
+        fn_after_edited.children = vec![p("ReturnStatement", "return", &["return 2;"])];
+        let out = diff_nodes(&[fn_before], &[fn_after_edited]);
+        assert_eq!(out[0].state, NodeState::Unchanged, "container stays calm");
+        let children = out[0].children.as_ref().expect("children kept");
+        assert_eq!(children[0].state, NodeState::Modified);
+    }
+
+    #[test]
+    fn ids_are_stable_and_disambiguate_duplicates() {
+        let mut nodes = diff_nodes(
+            &[],
+            &[
+                p("VariableDeclaration", "unique", &["const unique = 1;"]),
+                p("ExpressionStatement", "doIt()", &["doIt();"]),
+                p("ExpressionStatement", "doIt()", &["doIt();"]),
+            ],
+        );
+        assign_ids(&mut nodes, "file", "");
+        assert_eq!(nodes[0].id, "file::VariableDeclaration:unique", "unique name → no index");
+        assert_eq!(nodes[1].id, "file::ExpressionStatement:doIt__#0");
+        assert_eq!(nodes[2].id, "file::ExpressionStatement:doIt__#1");
+    }
+
+    #[test]
+    fn child_ids_include_parent_path() {
+        let mut fn_node = p("FunctionDeclaration", "run", &["function run() {}"]);
+        fn_node.children = vec![p("ReturnStatement", "return", &["return 2;"])];
+        let mut prev = fn_node.clone();
+        prev.children = vec![p("ReturnStatement", "return", &["return 1;"])];
+        let mut nodes = diff_nodes(&[prev], &[fn_node]);
+        assign_ids(&mut nodes, "file", "");
+        let child = &nodes[0].children.as_ref().unwrap()[0];
+        assert_eq!(child.id, "file:/run:ReturnStatement:return");
+    }
+}
+
 /// Longest common subsequence of the key sequences → matched (before_i, after_j) pairs.
 fn lcs_matches(a: &[(String, String)], b: &[(String, String)]) -> Vec<(usize, usize)> {
     let (n, m) = (a.len(), b.len());

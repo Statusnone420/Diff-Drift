@@ -388,6 +388,7 @@
   flex: 1;
 }
 .file-name {
+  display: block;
   font-family: var(--mono);
   font-size: 12.5px;
   color: var(--text);
@@ -400,6 +401,7 @@
   color: var(--text-dim);
 }
 .file-dir {
+  display: block;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text-mute);
@@ -1115,6 +1117,173 @@
   color: var(--text-faint);
   max-width: 320px;
   line-height: 1.6;
+}
+
+/* ============ INTERACTION / A11Y ============ */
+
+/* Elements promoted from <div> to <button> keep the design's flat look. */
+.file-row,
+.cap-btn,
+.node-flagchip,
+.dismissed-toggle,
+.flag-dismiss {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  margin: 0;
+}
+.file-row {
+  width: 100%;
+  background: none;
+}
+.cap-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* Keyboard focus — visible ring on every interactive element, mouse clicks stay clean. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.btn:focus-visible,
+.flag:focus-visible,
+.file-row:focus-visible {
+  outline-offset: 1px;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* approved state — the primary button flips calm green */
+.btn.primary.approved {
+  background: rgba(78, 196, 106, 0.12);
+  color: #8fd3a0;
+  border-color: rgba(78, 196, 106, 0.38);
+}
+.btn.primary.approved:hover {
+  background: rgba(78, 196, 106, 0.18);
+  color: #aee3bb;
+}
+
+/* ============ FLAG TRIAGE ============ */
+
+/* per-flag dismiss / restore (visible on hover, focus, or when dismissed) */
+.flag-dismiss {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.flag:hover .flag-dismiss,
+.flag:focus-within .flag-dismiss,
+.flag.dismissed .flag-dismiss {
+  opacity: 1;
+}
+.flag-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+/* dismissed flags render muted */
+.flag.dismissed {
+  opacity: 0.62;
+}
+.flag.dismissed .flag-bar {
+  background: var(--text-mute);
+}
+.flag.dismissed .flag-type {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+  color: var(--text-dim);
+}
+.node-flagchip.muted {
+  opacity: 0.5;
+}
+
+/* collapsed "Dismissed (n)" section at the bottom of the flag list */
+.dismissed-section {
+  padding: 0 12px 12px;
+}
+.dismissed-section .flag-list {
+  padding: 10px 0 0;
+}
+.dismissed-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 4px;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.dismissed-toggle:hover {
+  color: var(--text-dim);
+}
+.dismissed-toggle .chev {
+  display: inline-flex;
+  transition: transform 0.18s;
+}
+.dismissed-toggle .chev.open {
+  transform: rotate(90deg);
+}
+.dismissed-toggle .tcount {
+  margin-left: 0;
+}
+
+/* ============ TRANSIENT NOTICE (floating toast under the toolbar) ============ */
+.app-notice {
+  position: absolute;
+  top: 94px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  padding: 9px 10px 9px 14px;
+  border-radius: 8px;
+  background: #1d1316;
+  border: 1px solid rgba(242, 96, 76, 0.38);
+  color: #f6a99c;
+  font-size: 12px;
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.8);
+}
+.notice-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.notice-close:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* right panel empty (0 flags) */

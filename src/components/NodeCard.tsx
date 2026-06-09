@@ -52,7 +52,24 @@ export function NodeCard({
   return (
     <div className="node">
       <div className={cls} style={hlStyle} ref={(el) => registerRef(node.id, el)}>
-        <div className="node-head" onClick={changed ? () => setOpen((o) => !o) : undefined}>
+        <div
+          className="node-head"
+          onClick={changed ? () => setOpen((o) => !o) : undefined}
+          role={changed ? "button" : undefined}
+          tabIndex={changed ? 0 : undefined}
+          aria-expanded={changed ? open : undefined}
+          aria-label={changed ? `${node.kind} ${node.name}: ${node.state}` : undefined}
+          onKeyDown={
+            changed
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setOpen((o) => !o);
+                  }
+                }
+              : undefined
+          }
+        >
           <span className="node-glyph">{GLYPH[node.kind] || "·"}</span>
           <span className="node-title">
             <span className="row1">
@@ -63,17 +80,18 @@ export function NodeCard({
           </span>
 
           {flag && (
-            <span
-              className={"node-flagchip " + flag.severity}
+            <button
+              className={"node-flagchip " + flag.severity + (flag.dismissed ? " muted" : "")}
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleFlag(flag.id);
               }}
-              title={flag.type}
+              title={flag.dismissed ? `${flag.type} (dismissed)` : flag.type}
+              aria-label={`Show flag: ${flag.type}`}
             >
               {Ico.warn}
               {SEV_LABEL[flag.severity]}
-            </span>
+            </button>
           )}
           {changed && <span className={"state-badge " + node.state}>{node.state}</span>}
           {changed && <span className="chev">{Ico.chevron}</span>}

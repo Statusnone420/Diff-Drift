@@ -124,6 +124,28 @@ export const Ico: Record<string, ReactNode> = {
       />
     </svg>
   ),
+  close: (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+      <path
+        d="M3.5 3.5l9 9M12.5 3.5l-9 9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  ),
+  undo: (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+      <path
+        d="M3 6.5h7a3.5 3.5 0 0 1 0 7H6M3 6.5L6 3.5M3 6.5l3 3"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  ),
 };
 
 export const GLYPH: Record<string, string> = {

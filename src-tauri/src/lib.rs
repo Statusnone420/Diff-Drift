@@ -3,9 +3,13 @@ mod git;
 mod heuristics;
 mod model;
 mod parse;
+mod report;
 mod rules;
 mod session;
+mod store;
 mod watcher;
+#[cfg(test)]
+mod test_fixture;
 
 use std::path::Path;
 
@@ -37,6 +41,14 @@ fn load_last_repo(app: &tauri::AppHandle) -> Option<String> {
         .map(String::from)
 }
 
+/// Where per-repo triage state (dismissed flags, approvals) persists.
+fn state_file(app: &tauri::AppHandle) -> std::path::PathBuf {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("repo-state.json"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("repo-state.json"))
+}
+
 // ---------- commands ----------
 /// Open a repo: validate it's a git repo, persist it, start watching, return the
 /// initial analysis. Errors (frontend shows it inline) if the folder isn't a repo.
@@ -45,7 +57,8 @@ fn open_repo(app: tauri::AppHandle, shared: State<'_, Shared>, path: String) -> 
     let root = git::repo_root(Path::new(&path))
         .ok_or_else(|| format!("\"{path}\" isn't a git repository."))?;
     save_last_repo(&app, &root.display().to_string());
-    Ok(watcher::start(&app, shared.inner(), root))
+    let state = state_file(&app);
+    Ok(watcher::start(&app, shared.inner(), root, state))
 }
 
 /// On launch: reopen the last repo if it still exists + is a git repo, else `None`
@@ -58,12 +71,48 @@ fn init_session(app: tauri::AppHandle, shared: State<'_, Shared>) -> Result<Opti
     let Some(root) = git::repo_root(Path::new(&saved)) else {
         return Ok(None);
     };
-    Ok(Some(watcher::start(&app, shared.inner(), root)))
+    let state = state_file(&app);
+    Ok(Some(watcher::start(&app, shared.inner(), root, state)))
 }
 
+/// Dismiss (or restore) a single flag. Persisted per repo; returns the updated session.
 #[tauri::command]
-fn stop_watching(shared: State<'_, Shared>) {
-    watcher::stop(shared.inner());
+fn set_flag_dismissed(
+    shared: State<'_, Shared>,
+    flag_id: String,
+    dismissed: bool,
+) -> Result<SessionData, String> {
+    watcher::set_dismissed(shared.inner(), flag_id, dismissed)
+}
+
+/// Dismiss every currently active flag.
+#[tauri::command]
+fn dismiss_all(shared: State<'_, Shared>) -> Result<SessionData, String> {
+    watcher::dismiss_all(shared.inner())
+}
+
+/// Approve (or revoke approval of) the current drift. Approval stores the drift
+/// fingerprint and auto-revokes when the drift changes.
+#[tauri::command]
+fn set_approved(
+    shared: State<'_, Shared>,
+    approved: bool,
+    approved_at: Option<String>,
+) -> Result<SessionData, String> {
+    watcher::set_approved(shared.inner(), approved, approved_at)
+}
+
+/// Write a report of the current session to `path` — JSON when the extension is
+/// `.json`, Markdown otherwise.
+#[tauri::command]
+fn export_report(shared: State<'_, Shared>, path: String, generated_at: String) -> Result<(), String> {
+    let data = watcher::current_data(shared.inner())?;
+    let content = if path.to_lowercase().ends_with(".json") {
+        report::render_json(&data)
+    } else {
+        report::render_markdown(&data, &generated_at)
+    };
+    std::fs::write(&path, content).map_err(|e| format!("Couldn't write \"{path}\": {e}"))
 }
 
 // ---------- Win11 chrome ----------
@@ -103,7 +152,14 @@ pub fn run() {
             let _ = app;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_repo, init_session, stop_watching])
+        .invoke_handler(tauri::generate_handler![
+            open_repo,
+            init_session,
+            set_flag_dismissed,
+            dismiss_all,
+            set_approved,
+            export_report
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

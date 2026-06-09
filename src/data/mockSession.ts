@@ -12,6 +12,7 @@ export const mockSession: SessionData = {
     changedFiles: 3,
     riskCount: 3,
     fileCount: 2,
+    approved: false,
   },
 
   // Risk flags, keyed by id. fileId + nodeId tie each flag to a node.
@@ -25,6 +26,7 @@ export const mockSession: SessionData = {
       filePath: "auth/validateToken.ts",
       nodePath: "validateToken › pattern",
       nodeId: "n_pattern",
+      dismissed: false,
     },
     {
       id: "f2",
@@ -35,6 +37,7 @@ export const mockSession: SessionData = {
       filePath: "auth/validateToken.ts",
       nodePath: "import › jwt-tiny-decode",
       nodeId: "n_import",
+      dismissed: false,
     },
     {
       id: "f3",
@@ -45,6 +48,7 @@ export const mockSession: SessionData = {
       filePath: "utils/logger.ts",
       nodePath: "createLogger › config",
       nodeId: "n_logger",
+      dismissed: false,
     },
   ],
 

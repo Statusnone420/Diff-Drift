@@ -10,6 +10,7 @@ use crate::heuristics::scan_file;
 use crate::model::{AstNode, FileEntry, Flag, NodeState, Session, SessionData, Severity};
 use crate::parse::parse_file;
 use crate::rules::{is_test_path, RuleCtx, RuleRegistry};
+use crate::store::RepoState;
 
 /// One file's analysis, cached so a save only re-analyzes the touched file(s).
 #[derive(Clone)]
@@ -80,10 +81,25 @@ pub fn analyze_all(root: &Path) -> HashMap<String, FileResult> {
     map
 }
 
-/// Build the `SessionData` from the cached per-file results.
-pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta) -> SessionData {
+/// Build the `SessionData` from the cached per-file results, applying the user's
+/// triage state: dismissed flags are marked (and excluded from every count) and
+/// the stored approval holds only while the drift fingerprint still matches.
+pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &RepoState) -> SessionData {
     let mut files: Vec<FileEntry> = results.values().map(|r| r.entry.clone()).collect();
     let mut flags: Vec<Flag> = results.values().flat_map(|r| r.flags.clone()).collect();
+
+    for f in flags.iter_mut() {
+        f.dismissed = state.dismissed.contains(&f.id);
+    }
+
+    // Per-file risk counts reflect ACTIVE (non-dismissed) flags only.
+    let mut active_by_file: HashMap<&str, u32> = HashMap::new();
+    for f in flags.iter().filter(|f| !f.dismissed) {
+        *active_by_file.entry(f.file_id.as_str()).or_insert(0) += 1;
+    }
+    for entry in files.iter_mut() {
+        entry.risks = active_by_file.get(entry.id.as_str()).copied().unwrap_or(0);
+    }
 
     files.sort_by(|a, b| {
         b.risks
@@ -91,26 +107,70 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta) -> SessionDa
             .then(a.dir.cmp(&b.dir))
             .then(a.name.cmp(&b.name))
     });
+    // Active flags first (by severity, then path); dismissed flags sort after.
     flags.sort_by(|a, b| {
-        sev_rank(a.severity)
-            .cmp(&sev_rank(b.severity))
+        a.dismissed
+            .cmp(&b.dismissed)
+            .then(sev_rank(a.severity).cmp(&sev_rank(b.severity)))
             .then(a.file_path.cmp(&b.file_path))
     });
 
+    let risk_count = flags.iter().filter(|f| !f.dismissed).count() as u32;
     let file_count = files.iter().filter(|f| f.risks > 0).count() as u32;
+    let approved = state.approved_fingerprint.as_deref() == Some(fingerprint(results).as_str());
     let session = Session {
         project: meta.project.clone(),
         branch: meta.branch.clone(),
         repo_path: meta.repo_path.clone(),
         changed_files: meta.changed_files,
-        risk_count: flags.len() as u32,
+        risk_count,
         file_count,
+        approved,
+        approved_at: if approved { state.approved_at.clone() } else { None },
     };
     SessionData {
         session,
         flags,
         files,
     }
+}
+
+/// Canonical fingerprint of the current drift: every flag id plus a content hash
+/// per file, sorted. Approving a session stores this string; ANY change to the
+/// drift (new flag, edited node body, file added/reverted) changes it, which
+/// auto-revokes the approval.
+pub fn fingerprint(results: &HashMap<String, FileResult>) -> String {
+    let mut flag_ids: Vec<&str> = results
+        .values()
+        .flat_map(|r| r.flags.iter().map(|f| f.id.as_str()))
+        .collect();
+    flag_ids.sort_unstable();
+    let mut file_parts: Vec<String> = results
+        .iter()
+        .map(|(rel, r)| format!("{rel}={:016x}", content_hash(&r.entry.nodes)))
+        .collect();
+    file_parts.sort_unstable();
+    format!("{}|{}", flag_ids.join(";"), file_parts.join(";"))
+}
+
+/// Deterministic hash of a file's diffed node tree (structure + before/after text).
+fn content_hash(nodes: &[AstNode]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn walk(ns: &[AstNode], h: &mut std::collections::hash_map::DefaultHasher) {
+        for n in ns {
+            n.kind.hash(h);
+            n.name.hash(h);
+            (n.state as u8).hash(h);
+            n.before.hash(h);
+            n.after.hash(h);
+            if let Some(c) = &n.children {
+                walk(c, h);
+            }
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    walk(nodes, &mut h);
+    h.finish()
 }
 
 /// Package names declared in the repo's package.json (deps of every kind).
@@ -212,28 +272,22 @@ fn repo_name(root: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn demo_repo() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("demo")
-            .join("payments-api")
-    }
+    use crate::test_fixture;
 
     #[test]
-    fn analyze_demo() {
-        let root = git::repo_root(&demo_repo()).expect("demo is a git repo");
-        let data = assemble(&analyze_all(&root), &meta(&root));
-        println!("{}", serde_json::to_string_pretty(&data).unwrap());
-        // 6 flags now: unvetted import (M), loose regex (H), if-guard (L), removed
+    fn analyze_fixture_repo() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+        let data = assemble(&analyze_all(&root), &meta(&root), &RepoState::default());
+        // 6 flags: unvetted import (M), loose regex (H), if-guard (L), removed
         // sanitize (L), verify→decode (M), permissive logging (L).
         assert_eq!(data.flags.len(), 6, "expected 6 flags");
         assert_eq!(data.session.changed_files, 3, "3 changed files (incl. formatting-only)");
+        assert_eq!(data.session.risk_count, 6);
         assert_eq!(data.session.file_count, 2, "2 files with risks");
-        assert_eq!(data.session.project, "payments-api");
         assert_eq!(data.session.branch, "agent/refactor-token-validation");
+        assert!(!data.session.approved);
         assert_eq!(data.flags[0].r#type, "Loose regex pattern", "highest severity first");
-        // flags severity-sorted
         let sevs: Vec<_> = data.flags.iter().map(|f| sev_rank(f.severity)).collect();
         assert!(sevs.windows(2).all(|w| w[0] <= w[1]), "flags severity-sorted");
     }
@@ -241,7 +295,8 @@ mod tests {
     #[test]
     fn analyze_file_none_when_clean() {
         // session.ts is formatting-only → still drifted (whitespace differs), so Some.
-        let root = git::repo_root(&demo_repo()).unwrap();
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
         let deps = read_deps(&root);
         let res = analyze_file(&root, "routes/session.ts", &deps);
         assert!(res.is_some());
@@ -256,8 +311,76 @@ mod tests {
             repo_path: "repo".into(),
             changed_files: 3,
         };
-        let data = assemble(&HashMap::new(), &meta);
+        let data = assemble(&HashMap::new(), &meta, &RepoState::default());
         assert_eq!(data.session.changed_files, 3);
         assert!(data.files.is_empty());
+    }
+
+    #[test]
+    fn dismissed_flags_are_marked_excluded_from_counts_and_sorted_last() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root);
+        let baseline = assemble(&results, &meta(&root), &RepoState::default());
+
+        // Dismiss the single high-severity flag (loose regex).
+        let high_id = baseline.flags[0].id.clone();
+        let mut state = RepoState::default();
+        state.dismissed.insert(high_id.clone());
+        let data = assemble(&results, &meta(&root), &state);
+
+        assert_eq!(data.session.risk_count, 5, "dismissed flag leaves the count");
+        assert_eq!(data.flags.len(), 6, "flag stays in the list, marked dismissed");
+        let last = data.flags.last().unwrap();
+        assert_eq!(last.id, high_id, "dismissed flags sort last");
+        assert!(last.dismissed);
+        assert!(data.flags.iter().take(5).all(|f| !f.dismissed));
+        // The file that owned it now reports one fewer active risk.
+        let file = data.files.iter().find(|f| f.id == last.file_id).unwrap();
+        let baseline_file = baseline.files.iter().find(|f| f.id == last.file_id).unwrap();
+        assert_eq!(file.risks, baseline_file.risks - 1);
+    }
+
+    #[test]
+    fn dismissing_every_flag_zeroes_counts() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root);
+        let all = assemble(&results, &meta(&root), &RepoState::default());
+        let mut state = RepoState::default();
+        state.dismissed.extend(all.flags.iter().map(|f| f.id.clone()));
+        let data = assemble(&results, &meta(&root), &state);
+        assert_eq!(data.session.risk_count, 0);
+        assert_eq!(data.session.file_count, 0);
+        assert!(data.files.iter().all(|f| f.risks == 0));
+    }
+
+    #[test]
+    fn approval_holds_until_the_drift_changes() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root);
+
+        let mut state = RepoState::default();
+        state.approved_fingerprint = Some(fingerprint(&results));
+        state.approved_at = Some("12:30".into());
+        let data = assemble(&results, &meta(&root), &state);
+        assert!(data.session.approved);
+        assert_eq!(data.session.approved_at.as_deref(), Some("12:30"));
+
+        // The agent edits a file → new drift → approval auto-revokes.
+        std::fs::write(
+            fixture.root.join("utils/logger.ts"),
+            "const logger = createLogger({ level: \"trace\", redact: [] });\n",
+        )
+        .unwrap();
+        let deps = read_deps(&root);
+        let mut changed = results.clone();
+        let updated = analyze_file(&root, "utils/logger.ts", &deps).expect("still drifted");
+        changed.insert("utils/logger.ts".into(), updated);
+        assert_ne!(fingerprint(&changed), fingerprint(&results), "fingerprint tracks content");
+        let data = assemble(&changed, &meta(&root), &state);
+        assert!(!data.session.approved, "approval revoked by drift change");
+        assert!(data.session.approved_at.is_none());
     }
 }

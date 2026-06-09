@@ -54,18 +54,20 @@ export function Sidebar({
         </div>
         <div className="file-list">
           {files.map((f) => (
-            <div
+            <button
               key={f.id}
               className={"file-row" + (f.id === selectedId ? " sel" : "")}
               onClick={() => onSelect(f.id)}
+              aria-current={f.id === selectedId || undefined}
+              aria-label={`${f.dir}${f.name}, ${f.risks} risk${f.risks === 1 ? "" : "s"}`}
             >
               <span className="file-ic">{Ico.file}</span>
               <span className="file-main">
-                <div className="file-name">{f.name}</div>
-                <div className="file-dir">{f.dir}</div>
+                <span className="file-name">{f.name}</span>
+                <span className="file-dir">{f.dir}</span>
               </span>
               <span className={"file-badge r" + (f.risks > 1 ? 2 : f.risks)}>{f.risks}</span>
-            </div>
+            </button>
           ))}
         </div>
       </div>

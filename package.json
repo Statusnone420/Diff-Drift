@@ -1,5 +1,5 @@
 {
-  "name": "drift-inspector",
+  "name": "diff-drift",
   "private": true,
   "version": "0.1.0",
   "type": "module",
