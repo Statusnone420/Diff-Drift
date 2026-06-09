@@ -1,3 +1,4 @@
+mod deps_diff;
 mod diff;
 mod git;
 mod heuristics;

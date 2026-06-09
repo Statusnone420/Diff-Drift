@@ -359,7 +359,7 @@ fn classify_paths_with_git_dirs(
         };
         if rel == "package.json" {
             change.full_scan = true;
-        } else if is_ts(&rel) {
+        } else if git::is_analyzable(&rel) {
             change.rels.push(rel);
         }
     }
@@ -425,10 +425,6 @@ fn relativize(root: &Path, p: &Path) -> Option<String> {
             .collect::<Vec<_>>()
             .join("/"),
     )
-}
-
-fn is_ts(rel: &str) -> bool {
-    (rel.ends_with(".ts") || rel.ends_with(".tsx")) && !rel.ends_with(".d.ts")
 }
 
 #[cfg(test)]

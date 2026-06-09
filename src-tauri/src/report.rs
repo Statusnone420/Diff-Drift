@@ -59,12 +59,12 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
         out.push('\n');
     }
 
-    out.push_str("## Analyzed TypeScript/TSX files\n\n");
+    out.push_str("## Analyzed files\n\n");
     out.push_str(
-        "Total drift includes every git-changed file; this section lists only TypeScript/TSX files Diff Drift analyzed as AST nodes.\n\n",
+        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).\n\n",
     );
     if data.files.is_empty() {
-        out.push_str("No analyzable TypeScript/TSX drift.\n");
+        out.push_str("No analyzable drift.\n");
     } else {
         for file in &data.files {
             out.push_str(&format!(
@@ -178,9 +178,9 @@ mod tests {
         assert!(md.contains("```diff"), "flagged nodes include before/after diff");
         assert!(md.contains("- const pattern ="), "before lines render as removals");
         assert!(md.contains("+ const pattern = /.*/;"), "after lines render as additions");
-        assert!(md.contains("## Analyzed TypeScript/TSX files"));
+        assert!(md.contains("## Analyzed files"));
         assert!(
-            md.contains("Total drift includes every git-changed file; this section lists only TypeScript/TSX files Diff Drift analyzed as AST nodes.")
+            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).")
         );
         assert!(md.contains("`routes/session.ts` — Formatting only"));
         assert!(!md.contains("## Dismissed"), "no dismissed section when nothing dismissed");

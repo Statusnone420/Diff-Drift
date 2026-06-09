@@ -50,7 +50,7 @@ fn is_changed(s: Status) -> bool {
 
 /// Whether a changed path is parsed as AST drift (vs counted-only git drift).
 pub fn is_analyzable(p: &str) -> bool {
-    (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts")
+    crate::parse::Lang::from_path(p).is_some()
 }
 
 /// Changed paths (repo-relative, forward slashes) — anything that differs from

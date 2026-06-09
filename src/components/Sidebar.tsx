@@ -54,8 +54,11 @@ export function Sidebar({
           </div>
         </div>
 
-        <div className="sb-section-label" title="Only TypeScript/TSX files are parsed and checked">
-          <span>TS/TSX analyzed</span>
+        <div
+          className="sb-section-label"
+          title="TypeScript, TSX, JavaScript, and JSX files are parsed as AST drift; package.json gets a dependency diff"
+        >
+          <span>Analyzed files</span>
           <span className="count">{files.length}</span>
         </div>
         <div className="file-list">

@@ -8,7 +8,7 @@ use crate::diff::{assign_ids, diff_nodes};
 use crate::git;
 use crate::heuristics::scan_file;
 use crate::model::{AstNode, FileEntry, Flag, NodeState, Session, SessionData, Severity};
-use crate::parse::parse_file;
+use crate::parse::{self, parse_file};
 use crate::rules::{is_test_path, RuleCtx, RuleRegistry};
 use crate::store::RepoState;
 
@@ -129,9 +129,9 @@ pub fn analyze_file(
         _ => {}
     }
 
-    let tsx = rel.to_ascii_lowercase().ends_with(".tsx");
-    let before = parse_file(before_src.as_deref().unwrap_or(""), tsx);
-    let after = parse_file(after_src.as_deref().unwrap_or(""), tsx);
+    let lang = parse::Lang::from_path(rel)?;
+    let before = parse_file(before_src.as_deref().unwrap_or(""), lang);
+    let after = parse_file(after_src.as_deref().unwrap_or(""), lang);
     let mut nodes = diff_nodes(&before, &after);
 
     let file_id = sanitize_id(rel);
@@ -152,7 +152,7 @@ pub fn analyze_file(
             id: file_id,
             name,
             dir,
-            lang: if tsx { "TSX" } else { "TypeScript" }.into(),
+            lang: lang.label().into(),
             risks: flags.len() as u32,
             summary,
             changed_nodes: 0, // computed at assemble (needs the review map)
@@ -163,14 +163,25 @@ pub fn analyze_file(
     })
 }
 
-/// Full scan of every changed `.ts/.tsx` file vs the baseline → results keyed by
-/// repo-relative path.
+/// Full scan of every changed analyzable file vs the baseline → results keyed
+/// by repo-relative path. A drifted package.json gets a dependency-diff entry.
 pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResult> {
     let deps = read_deps(root);
     let mut map = HashMap::new();
-    for rel in changed_paths(root, baseline).into_iter().filter(|p| git::is_analyzable(p)) {
-        if let Some(res) = analyze_file(root, &rel, &deps, baseline) {
-            map.insert(rel, res);
+    let changed = changed_paths(root, baseline);
+    for rel in changed.iter().filter(|p| git::is_analyzable(p)) {
+        if let Some(res) = analyze_file(root, rel, &deps, baseline) {
+            map.insert(rel.clone(), res);
+        }
+    }
+    if changed.iter().any(|p| p == "package.json") {
+        let before = before_content(root, baseline, "package.json");
+        let after = git::worktree_content(root, "package.json");
+        let lock = crate::deps_diff::lockfile_names(root);
+        if let Some(res) =
+            crate::deps_diff::analyze_package_json(before.as_deref(), after.as_deref(), lock.as_ref())
+        {
+            map.insert("package.json".into(), res);
         }
     }
     map
@@ -670,6 +681,44 @@ mod tests {
         assert_eq!(data.session.risk_count, 0);
         assert_eq!(data.session.file_count, 0);
         assert!(data.files.iter().all(|f| f.risks == 0));
+    }
+
+    #[test]
+    fn javascript_files_and_package_json_drift_are_analyzed() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+
+        // Agent drops a risky JS file and a package.json with a phantom dep.
+        std::fs::write(root.join("utils/shim.js"), "eval(payload);\n").unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "payments-api", "dependencies": { "jwt-tiny-decode": "^1.0.0" } }"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("package-lock.json"), r#"{ "packages": {} }"#).unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+
+        let js = data.files.iter().find(|f| f.name == "shim.js").expect("JS file analyzed");
+        assert_eq!(js.lang, "JavaScript");
+        assert!(
+            data.flags.iter().any(|f| f.file_path == "utils/shim.js" && f.r#type == "Dynamic code execution"),
+            "eval in new JS file is flagged: {:?}",
+            data.flags.iter().map(|f| (&f.file_path, &f.r#type)).collect::<Vec<_>>()
+        );
+
+        let pkg = data.files.iter().find(|f| f.name == "package.json").expect("dep diff analyzed");
+        assert_eq!(pkg.lang, "JSON");
+        let dep_flag = data
+            .flags
+            .iter()
+            .find(|f| f.r#type == "Dependency not in lockfile")
+            .expect("phantom dep flagged");
+        assert!(dep_flag.desc.contains("jwt-tiny-decode"));
+        // The declared-but-phantom dep ALSO stops being an "Undeclared import"
+        // (it's in package.json now) — the lockfile rule is what still catches it.
+        assert!(!data.flags.iter().any(|f| f.r#type == "Undeclared import"));
     }
 
     #[test]

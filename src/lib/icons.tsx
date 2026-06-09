@@ -156,6 +156,9 @@ export const GLYPH: Record<string, string> = {
   ExpressionStatement: "()",
   ReturnStatement: "ret",
   ExportDeclaration: "ex",
+  ClassDeclaration: "cls",
+  Dependency: "pkg",
+  Script: "sh",
 };
 
 export const SEV_LABEL: Record<Severity, string> = { high: "High", medium: "Medium", low: "Low" };

@@ -19,14 +19,55 @@ impl Parsed {
     }
 }
 
-/// Parse a TS/TSX source string into the top-level `Parsed` nodes. `tsx` selects
-/// the TSX grammar — JSX is a parse ERROR under the plain TypeScript grammar.
-pub fn parse_file(source: &str, tsx: bool) -> Vec<Parsed> {
+/// The source languages Diff Drift parses as AST drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lang {
+    Ts,
+    Tsx,
+    Js,
+    Jsx,
+}
+
+impl Lang {
+    /// Language for a repo-relative path, or `None` when the file isn't parsed
+    /// as AST drift (`.d.ts` and everything non-JS/TS).
+    pub fn from_path(rel: &str) -> Option<Lang> {
+        let p = rel.to_ascii_lowercase();
+        if p.ends_with(".d.ts") {
+            return None;
+        }
+        if p.ends_with(".ts") {
+            Some(Lang::Ts)
+        } else if p.ends_with(".tsx") {
+            Some(Lang::Tsx)
+        } else if p.ends_with(".jsx") {
+            Some(Lang::Jsx)
+        } else if p.ends_with(".js") || p.ends_with(".mjs") || p.ends_with(".cjs") {
+            Some(Lang::Js)
+        } else {
+            None
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Lang::Ts => "TypeScript",
+            Lang::Tsx => "TSX",
+            Lang::Js => "JavaScript",
+            Lang::Jsx => "JSX",
+        }
+    }
+}
+
+/// Parse a source string into the top-level `Parsed` nodes. The TSX grammar is
+/// selected for `.tsx` (JSX is a parse ERROR under plain TypeScript); the
+/// JavaScript grammar handles JSX natively for `.js/.jsx/.mjs/.cjs`.
+pub fn parse_file(source: &str, lang: Lang) -> Vec<Parsed> {
     let mut parser = Parser::new();
-    let language = if tsx {
-        tree_sitter_typescript::LANGUAGE_TSX
-    } else {
-        tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+    let language = match lang {
+        Lang::Ts => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+        Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX,
+        Lang::Js | Lang::Jsx => tree_sitter_javascript::LANGUAGE,
     };
     if parser.set_language(&language.into()).is_err() {
         return Vec::new();
@@ -242,7 +283,7 @@ export default router;
 
     #[test]
     fn maps_kinds_names_and_signatures() {
-        let nodes = parse_file(SRC, false);
+        let nodes = parse_file(SRC, Lang::Ts);
         let kinds: Vec<(&str, &str)> = nodes
             .iter()
             .map(|n| (n.kind.as_str(), n.name.as_str()))
@@ -262,7 +303,7 @@ export default router;
 
     #[test]
     fn function_bodies_surface_one_level_of_children() {
-        let nodes = parse_file(SRC, false);
+        let nodes = parse_file(SRC, Lang::Ts);
         let func = &nodes[2];
         let child_kinds: Vec<&str> = func.children.iter().map(|c| c.kind.as_str()).collect();
         assert_eq!(child_kinds, vec!["IfStatement", "ReturnStatement"]);
@@ -271,15 +312,15 @@ export default router;
 
     #[test]
     fn unparseable_or_empty_source_yields_no_nodes() {
-        assert!(parse_file("", false).is_empty());
+        assert!(parse_file("", Lang::Ts).is_empty());
         // tree-sitter is error-tolerant; garbage shouldn't panic.
-        let _ = parse_file("@@@ ??? not typescript {{{", false);
+        let _ = parse_file("@@@ ??? not typescript {{{", Lang::Ts);
     }
 
     #[test]
     fn multiline_nodes_are_dedented() {
         let src = "function f() {\n  const x = {\n    a: 1,\n  };\n}\n";
-        let nodes = parse_file(src, false);
+        let nodes = parse_file(src, Lang::Ts);
         let decl = &nodes[0].children[0];
         assert_eq!(decl.lines, vec!["const x = {", "  a: 1,", "};"]);
     }
@@ -292,7 +333,7 @@ export default router;
         // guarantee we want — JSX is valid syntax, not tolerated garbage — only
         // holds with the TSX grammar.
         let src = "function Badge({ label }: { label: string }) {\n  return <span className=\"badge\">{label}</span>;\n}\n\nconst App = () => <Badge label=\"hi\" />;\n";
-        let nodes = parse_file(src, true);
+        let nodes = parse_file(src, Lang::Tsx);
         let kinds: Vec<(&str, &str)> = nodes.iter().map(|n| (n.kind.as_str(), n.name.as_str())).collect();
         assert_eq!(
             kinds,
@@ -301,5 +342,41 @@ export default router;
         );
         let child_kinds: Vec<&str> = nodes[0].children.iter().map(|c| c.kind.as_str()).collect();
         assert_eq!(child_kinds, vec!["ReturnStatement"], "JSX body parses cleanly");
+    }
+
+    #[test]
+    fn javascript_and_jsx_parse_with_the_js_grammar() {
+        let src = "const config = { redact: [] };\n\nfunction handler(req, res) {\n  return res.json({ ok: true });\n}\n\nmodule.exports = handler;\n";
+        let nodes = parse_file(src, Lang::Js);
+        let kinds: Vec<(&str, &str)> = nodes.iter().map(|n| (n.kind.as_str(), n.name.as_str())).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("VariableDeclaration", "config"),
+                ("FunctionDeclaration", "handler"),
+                ("ExpressionStatement", "module.exports = handler"),
+            ]
+        );
+        assert_eq!(nodes[1].signature.as_deref(), Some("(req, res)"));
+
+        // JSX is native syntax in the JS grammar.
+        let jsx = "function Badge({ label }) {\n  return <span className=\"badge\">{label}</span>;\n}\n";
+        let nodes = parse_file(jsx, Lang::Jsx);
+        assert_eq!(nodes[0].kind, "FunctionDeclaration");
+        assert_eq!(nodes[0].name, "Badge");
+        assert_eq!(nodes[0].children[0].kind, "ReturnStatement");
+    }
+
+    #[test]
+    fn lang_from_path_covers_the_supported_extensions() {
+        assert_eq!(Lang::from_path("a.ts"), Some(Lang::Ts));
+        assert_eq!(Lang::from_path("a.tsx"), Some(Lang::Tsx));
+        assert_eq!(Lang::from_path("a.js"), Some(Lang::Js));
+        assert_eq!(Lang::from_path("a.jsx"), Some(Lang::Jsx));
+        assert_eq!(Lang::from_path("a.mjs"), Some(Lang::Js));
+        assert_eq!(Lang::from_path("a.cjs"), Some(Lang::Js));
+        assert_eq!(Lang::from_path("a.d.ts"), None);
+        assert_eq!(Lang::from_path("package.json"), None);
+        assert_eq!(Lang::from_path("README.md"), None);
     }
 }

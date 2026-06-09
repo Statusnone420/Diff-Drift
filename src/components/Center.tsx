@@ -37,7 +37,7 @@ export function Center({
           </div>
           <div className="center-clean-sub">
             {hasUnanalyzedChanges
-              ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are TypeScript or TSX files Diff Drift can inspect.`
+              ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are TypeScript, TSX, JavaScript, JSX, or package.json files Diff Drift can inspect.`
               : "The working tree is clean — nothing has changed since the last commit."}
           </div>
         </div>
