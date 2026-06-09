@@ -11,6 +11,19 @@ pub fn repo_root(path: &Path) -> Option<PathBuf> {
     repo.workdir().map(|w| w.to_path_buf())
 }
 
+/// Git metadata directory for this worktree. In linked worktrees this can live
+/// outside the working-tree root.
+pub(crate) fn git_dir(root: &Path) -> Option<PathBuf> {
+    let repo = Repository::open(root).ok()?;
+    Some(repo.path().to_path_buf())
+}
+
+/// Common git directory that owns shared refs for normal repos and worktrees.
+pub(crate) fn common_git_dir(root: &Path) -> Option<PathBuf> {
+    let repo = Repository::open(root).ok()?;
+    Some(repo.commondir().to_path_buf())
+}
+
 /// Current branch shorthand (e.g. `main`), or `HEAD` when detached/unborn.
 pub fn current_branch(root: &Path) -> String {
     Repository::open(root)
@@ -39,9 +52,9 @@ fn is_ts(p: &str) -> bool {
     (p.ends_with(".ts") || p.ends_with(".tsx")) && !p.ends_with(".d.ts")
 }
 
-/// Changed `.ts/.tsx` paths (repo-relative, forward slashes) — anything that
-/// differs from HEAD in the working tree or index, plus untracked files.
-pub fn changed_ts_files(root: &Path) -> Vec<String> {
+/// Changed paths (repo-relative, forward slashes) — anything that differs from
+/// HEAD in the working tree or index, plus untracked files.
+pub fn changed_files(root: &Path) -> Vec<String> {
     let Ok(repo) = Repository::open(root) else {
         return Vec::new();
     };
@@ -57,11 +70,15 @@ pub fn changed_ts_files(root: &Path) -> Vec<String> {
         .iter()
         .filter(|e| is_changed(e.status()))
         .filter_map(|e| e.path().ok().map(String::from))
-        .filter(|p| is_ts(p))
         .collect();
     files.sort();
     files.dedup();
     files
+}
+
+/// Changed `.ts/.tsx` paths (repo-relative, forward slashes) for AST analysis.
+pub fn changed_ts_files(root: &Path) -> Vec<String> {
+    changed_files(root).into_iter().filter(|p| is_ts(p)).collect()
 }
 
 /// File contents at HEAD (the "before"). `None` if the path is new / not in HEAD.

@@ -207,6 +207,7 @@ export default function App() {
         />
         <Center
           file={file}
+          changedFiles={session.changedFiles}
           flagsById={flagsById}
           activeNodeId={activeNodeId}
           pulseId={pulseId}

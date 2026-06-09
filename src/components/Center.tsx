@@ -5,6 +5,7 @@ import { NodeCard } from "./NodeCard";
 
 interface CenterProps {
   file: FileEntry | null;
+  changedFiles: number;
   flagsById: Record<string, Flag>;
   activeNodeId: string | null;
   pulseId: string | null;
@@ -15,6 +16,7 @@ interface CenterProps {
 
 export function Center({
   file,
+  changedFiles,
   flagsById,
   activeNodeId,
   pulseId,
@@ -22,15 +24,19 @@ export function Center({
   registerRef,
   scrollRef,
 }: CenterProps) {
-  // Clean working tree — no uncommitted changes at all.
   if (!file) {
+    const hasUnanalyzedChanges = changedFiles > 0;
     return (
       <div className="col center">
         <div className="center-clean">
           <span className="center-clean-ic">{Ico.shield}</span>
-          <div className="center-clean-title">No drift detected</div>
+          <div className="center-clean-title">
+            {hasUnanalyzedChanges ? "No analyzable drift detected" : "No drift detected"}
+          </div>
           <div className="center-clean-sub">
-            The working tree is clean — nothing has changed since the last commit.
+            {hasUnanalyzedChanges
+              ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are TypeScript or TSX files Diff Drift can inspect.`
+              : "The working tree is clean — nothing has changed since the last commit."}
           </div>
         </div>
       </div>

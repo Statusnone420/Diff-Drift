@@ -49,7 +49,7 @@ export function Sidebar({
         </div>
 
         <div className="sb-section-label">
-          <span>Files touched</span>
+          <span>Files analyzed</span>
           <span className="count">{files.length}</span>
         </div>
         <div className="file-list">

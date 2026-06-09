@@ -23,6 +23,7 @@ pub struct Meta {
     pub project: String,
     pub branch: String,
     pub repo_path: String,
+    pub changed_files: u32,
 }
 
 /// Analyze ONE path. `None` if it isn't actually drifted from HEAD (byte-identical
@@ -101,7 +102,7 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta) -> SessionDa
         project: meta.project.clone(),
         branch: meta.branch.clone(),
         repo_path: meta.repo_path.clone(),
-        changed_files: files.len() as u32,
+        changed_files: meta.changed_files,
         risk_count: flags.len() as u32,
         file_count,
     };
@@ -139,6 +140,7 @@ pub fn meta(root: &Path) -> Meta {
         project: repo_name(root),
         branch: git::current_branch(root),
         repo_path: root.display().to_string(),
+        changed_files: git::changed_files(root).len() as u32,
     }
 }
 
@@ -244,5 +246,18 @@ mod tests {
         let res = analyze_file(&root, "routes/session.ts", &deps);
         assert!(res.is_some());
         assert_eq!(res.unwrap().flags.len(), 0, "formatting-only file has no flags");
+    }
+
+    #[test]
+    fn assemble_preserves_git_changed_count_when_no_files_are_analyzed() {
+        let meta = Meta {
+            project: "repo".into(),
+            branch: "main".into(),
+            repo_path: "repo".into(),
+            changed_files: 3,
+        };
+        let data = assemble(&HashMap::new(), &meta);
+        assert_eq!(data.session.changed_files, 3);
+        assert!(data.files.is_empty());
     }
 }
