@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import pkg from "./package.json";
@@ -10,6 +11,14 @@ export default defineConfig(async () => ({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+
+  // Component/unit tests (vitest): `npm run test:unit`.
+  test: {
+    environment: "jsdom",
+    setupFiles: ["tests/unit/setup.ts"],
+    include: ["tests/unit/**/*.test.{ts,tsx}"],
+    css: false,
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
