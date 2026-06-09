@@ -49,36 +49,39 @@ export function NodeCard({
     isPulse ? "pulse" : "",
   ].join(" ");
 
+  const toggleOpen = () => setOpen((o) => !o);
+  const headerContent = (
+    <>
+      <span className="node-glyph">{GLYPH[node.kind] || "·"}</span>
+      <span className="node-title">
+        <span className="row1">
+          <span className="node-name">{node.name}</span>
+          {node.signature && <span className="node-sig">{node.signature}</span>}
+        </span>
+        <span className="node-kind">{node.kind}</span>
+      </span>
+      {changed && <span className={"state-badge " + node.state}>{node.state}</span>}
+      {changed && <span className="chev">{Ico.chevron}</span>}
+    </>
+  );
+
   return (
     <div className="node">
       <div className={cls} style={hlStyle} ref={(el) => registerRef(node.id, el)}>
-        <div
-          className="node-head"
-          onClick={changed ? () => setOpen((o) => !o) : undefined}
-          role={changed ? "button" : undefined}
-          tabIndex={changed ? 0 : undefined}
-          aria-expanded={changed ? open : undefined}
-          aria-label={changed ? `${node.kind} ${node.name}: ${node.state}` : undefined}
-          onKeyDown={
-            changed
-              ? (e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setOpen((o) => !o);
-                  }
-                }
-              : undefined
-          }
-        >
-          <span className="node-glyph">{GLYPH[node.kind] || "·"}</span>
-          <span className="node-title">
-            <span className="row1">
-              <span className="node-name">{node.name}</span>
-              {node.signature && <span className="node-sig">{node.signature}</span>}
-            </span>
-            <span className="node-kind">{node.kind}</span>
-          </span>
-
+        <div className="node-head">
+          {changed ? (
+            <button
+              type="button"
+              className="node-main"
+              onClick={toggleOpen}
+              aria-expanded={open}
+              aria-label={`${node.kind} ${node.name}: ${node.state}`}
+            >
+              {headerContent}
+            </button>
+          ) : (
+            <div className="node-main">{headerContent}</div>
+          )}
           {flag && (
             <button
               className={"node-flagchip " + flag.severity + (flag.dismissed ? " muted" : "")}
@@ -93,8 +96,6 @@ export function NodeCard({
               {SEV_LABEL[flag.severity]}
             </button>
           )}
-          {changed && <span className={"state-badge " + node.state}>{node.state}</span>}
-          {changed && <span className="chev">{Ico.chevron}</span>}
         </div>
 
         {changed && open && <DiffBody node={node} />}

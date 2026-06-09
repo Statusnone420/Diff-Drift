@@ -48,13 +48,26 @@ pub fn diff_nodes(before: &[Parsed], after: &[Parsed]) -> Vec<AstNode> {
 
 fn matched(b: &Parsed, a: &Parsed) -> AstNode {
     let has_children = !b.children.is_empty() || !a.children.is_empty();
+    let lines_changed = normalize(&b.lines) != normalize(&a.lines);
     if has_children {
-        // Container (e.g. a function): hold the diffed children but stay calm; drop
-        // them entirely if nothing inside changed so it renders as a plain card.
+        // Containers (e.g. functions) can change at the header/signature and/or
+        // inside the body. Keep unchanged children hidden so a signature-only edit
+        // still renders as one focused modified card.
         let children = diff_nodes(&b.children, &a.children);
         let any_changed = children.iter().any(|c| c.state != NodeState::Unchanged);
-        node(a, NodeState::Unchanged, None, None, if any_changed { Some(children) } else { None })
-    } else if normalize(&b.lines) != normalize(&a.lines) {
+        let signature_changed = b.signature != a.signature && (b.signature.is_some() || a.signature.is_some());
+        node(
+            a,
+            if signature_changed {
+                NodeState::Modified
+            } else {
+                NodeState::Unchanged
+            },
+            if signature_changed { Some(b.lines.clone()) } else { None },
+            if signature_changed { Some(a.lines.clone()) } else { None },
+            if any_changed { Some(children) } else { None },
+        )
+    } else if lines_changed {
         node(a, NodeState::Modified, Some(b.lines.clone()), Some(a.lines.clone()), None)
     } else {
         node(a, NodeState::Unchanged, None, None, None)
@@ -205,6 +218,45 @@ mod tests {
         assert_eq!(out[0].state, NodeState::Unchanged, "container stays calm");
         let children = out[0].children.as_ref().expect("children kept");
         assert_eq!(children[0].state, NodeState::Modified);
+    }
+
+    #[test]
+    fn container_signature_only_change_marks_container_modified() {
+        let mut fn_before = p(
+            "FunctionDeclaration",
+            "run",
+            &["function run() {", "  return 1;", "}"],
+        );
+        fn_before.signature = Some("()".into());
+        fn_before.children = vec![p("ReturnStatement", "return", &["return 1;"])];
+
+        let mut fn_after = p(
+            "FunctionDeclaration",
+            "run",
+            &["function run(param: any) {", "  return 1;", "}"],
+        );
+        fn_after.signature = Some("(param: any)".into());
+        fn_after.children = vec![p("ReturnStatement", "return", &["return 1;"])];
+
+        let out = diff_nodes(&[fn_before], &[fn_after]);
+        assert_eq!(out[0].state, NodeState::Modified);
+        assert_eq!(
+            out[0].before.as_deref(),
+            Some(&[
+                "function run() {".to_string(),
+                "  return 1;".to_string(),
+                "}".to_string()
+            ][..])
+        );
+        assert_eq!(
+            out[0].after.as_deref(),
+            Some(&[
+                "function run(param: any) {".to_string(),
+                "  return 1;".to_string(),
+                "}".to_string()
+            ][..])
+        );
+        assert!(out[0].children.is_none(), "unchanged body stays visually calm");
     }
 
     #[test]

@@ -11,14 +11,64 @@ mod watcher;
 #[cfg(test)]
 mod test_fixture;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use tauri::{Manager, State};
 
 use model::SessionData;
 use watcher::Shared;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct E2eConfig {
+    repo_path: Option<String>,
+    export_path: Option<String>,
+}
+
 // ---------- persistence (last-opened repo) ----------
+fn e2e_env(name: &str) -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn e2e_enabled() -> bool {
+    cfg!(debug_assertions)
+        && [
+            "DIFF_DRIFT_E2E_REPO",
+            "DIFF_DRIFT_E2E_EXPORT_PATH",
+            "DIFF_DRIFT_E2E_STATE_FILE",
+        ]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+}
+
+fn e2e_repo_path() -> Option<String> {
+    e2e_env("DIFF_DRIFT_E2E_REPO")
+}
+
+fn e2e_export_path() -> Option<String> {
+    e2e_env("DIFF_DRIFT_E2E_EXPORT_PATH")
+}
+
+fn e2e_state_file() -> Option<PathBuf> {
+    if !e2e_enabled() {
+        return None;
+    }
+    if let Some(path) = e2e_env("DIFF_DRIFT_E2E_STATE_FILE") {
+        return Some(PathBuf::from(path));
+    }
+    Some(std::env::temp_dir().join(format!(
+        "diff-drift-e2e-state-{}.json",
+        std::process::id()
+    )))
+}
+
 fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
     let _ = std::fs::create_dir_all(&dir);
@@ -26,6 +76,9 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 }
 
 fn save_last_repo(app: &tauri::AppHandle, path: &str) {
+    if e2e_enabled() {
+        return;
+    }
     if let Some(file) = settings_file(app) {
         let json = serde_json::json!({ "lastRepoPath": path });
         let _ = std::fs::write(file, serde_json::to_string_pretty(&json).unwrap_or_default());
@@ -33,6 +86,9 @@ fn save_last_repo(app: &tauri::AppHandle, path: &str) {
 }
 
 fn load_last_repo(app: &tauri::AppHandle) -> Option<String> {
+    if e2e_enabled() {
+        return None;
+    }
     let file = settings_file(app)?;
     let text = std::fs::read_to_string(file).ok()?;
     let json: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -43,6 +99,12 @@ fn load_last_repo(app: &tauri::AppHandle) -> Option<String> {
 
 /// Where per-repo triage state (dismissed flags, approvals) persists.
 fn state_file(app: &tauri::AppHandle) -> std::path::PathBuf {
+    if let Some(file) = e2e_state_file() {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        return file;
+    }
     app.path()
         .app_config_dir()
         .map(|dir| dir.join("repo-state.json"))
@@ -65,6 +127,12 @@ fn open_repo(app: tauri::AppHandle, shared: State<'_, Shared>, path: String) -> 
 /// (the frontend shows onboarding).
 #[tauri::command]
 fn init_session(app: tauri::AppHandle, shared: State<'_, Shared>) -> Result<Option<SessionData>, String> {
+    if let Some(path) = e2e_repo_path() {
+        let root = git::repo_root(Path::new(&path))
+            .ok_or_else(|| format!("\"{path}\" isn't a git repository."))?;
+        let state = state_file(&app);
+        return Ok(Some(watcher::start(&app, shared.inner(), root, state)));
+    }
     let Some(saved) = load_last_repo(&app) else {
         return Ok(None);
     };
@@ -115,6 +183,19 @@ fn export_report(shared: State<'_, Shared>, path: String, generated_at: String) 
     std::fs::write(&path, content).map_err(|e| format!("Couldn't write \"{path}\": {e}"))
 }
 
+/// Debug-build-only E2E config. Production releases return `None` even if these
+/// environment variables exist.
+#[tauri::command]
+fn e2e_config() -> Option<E2eConfig> {
+    if !e2e_enabled() {
+        return None;
+    }
+    Some(E2eConfig {
+        repo_path: e2e_repo_path(),
+        export_path: e2e_export_path(),
+    })
+}
+
 // ---------- Win11 chrome ----------
 // Round the undecorated window's corners + restore the native drop shadow via DWM.
 #[cfg(target_os = "windows")]
@@ -158,7 +239,8 @@ pub fn run() {
             set_flag_dismissed,
             dismiss_all,
             set_approved,
-            export_report
+            export_report,
+            e2e_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

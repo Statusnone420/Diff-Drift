@@ -64,6 +64,15 @@
   color: #dfe2e8;
   letter-spacing: 0.1px;
 }
+.tb-version {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-mute);
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+}
 
 .tb-caption {
   display: flex;
@@ -566,7 +575,20 @@
   padding: 9px 12px;
   cursor: default;
 }
-.node-card.changed > .node-head {
+.node-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+}
+.node-card.changed .node-main {
   cursor: pointer;
 }
 .node-card.changed > .node-head:hover {
@@ -832,11 +854,11 @@
   gap: 11px;
 }
 .flag {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-panel);
   overflow: hidden;
-  cursor: pointer;
   transition: border-color 0.14s, box-shadow 0.14s, background 0.14s;
 }
 .flag:hover {
@@ -874,6 +896,16 @@
 
 .flag-in {
   padding: 12px 13px 13px;
+}
+.flag-select {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding-right: 42px;
 }
 .flag-top {
   display: flex;
@@ -1124,8 +1156,10 @@
 /* Elements promoted from <div> to <button> keep the design's flat look. */
 .file-row,
 .cap-btn,
+.node-main,
 .node-flagchip,
 .dismissed-toggle,
+.flag-select,
 .flag-dismiss {
   font: inherit;
   color: inherit;
@@ -1149,7 +1183,8 @@
   border-radius: 6px;
 }
 .btn:focus-visible,
-.flag:focus-visible,
+.flag-select:focus-visible,
+.node-main:focus-visible,
 .file-row:focus-visible {
   outline-offset: 1px;
 }
@@ -1174,6 +1209,9 @@
 
 /* per-flag dismiss / restore (visible on hover, focus, or when dismissed) */
 .flag-dismiss {
+  position: absolute;
+  top: 15px;
+  right: 12px;
   flex: none;
   width: 20px;
   height: 20px;
@@ -1210,7 +1248,9 @@
   color: var(--text-dim);
 }
 .node-flagchip.muted {
-  opacity: 0.5;
+  background: #20232b;
+  color: var(--text-dim);
+  border-color: var(--border-strong);
 }
 
 /* collapsed "Dismissed (n)" section at the bottom of the flag list */

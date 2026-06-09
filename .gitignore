@@ -17,6 +17,9 @@ dist-ssr
 
 # Verification scratch
 /.shots/
+/.test-results/
+/test-results/
+/playwright-report/
 
 # Editor directories and files
 .vscode/*

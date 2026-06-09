@@ -7,6 +7,11 @@ import type { SessionData } from "../types";
 import { mockSession } from "../data/mockSession";
 import { isTauri } from "./window";
 
+interface E2eConfig {
+  repoPath?: string;
+  exportPath?: string;
+}
+
 /** Native folder picker → chosen directory path, or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!isTauri) return "demo"; // browser: pretend a folder was picked → loads mock
@@ -27,6 +32,8 @@ export async function openRepo(path: string): Promise<SessionData> {
 /** On launch: the persisted repo's analysis, or null → show onboarding. */
 export async function initSession(): Promise<SessionData | null> {
   if (!isTauri) return null; // browser: start on onboarding so it's testable
+  const cfg = await e2eConfig();
+  if (cfg?.repoPath) return invoke<SessionData>("open_repo", { path: cfg.repoPath });
   return invoke<SessionData | null>("init_session");
 }
 
@@ -66,6 +73,11 @@ export async function exportReport(project: string): Promise<string | null> {
     URL.revokeObjectURL(a.href);
     return a.download;
   }
+  const cfg = await e2eConfig();
+  if (cfg?.exportPath) {
+    await invoke("export_report", { path: cfg.exportPath, generatedAt });
+    return cfg.exportPath;
+  }
   const path = await save({
     title: "Export report",
     defaultPath: `diff-drift-${project}.md`,
@@ -83,6 +95,19 @@ export async function exportReport(project: string): Promise<string | null> {
 export function onDrift(cb: (data: SessionData) => void): Promise<UnlistenFn> {
   if (!isTauri) return Promise.resolve(() => {});
   return listen<SessionData>("drift://updated", (e) => cb(e.payload));
+}
+
+let e2eConfigCache: E2eConfig | null | undefined;
+
+async function e2eConfig(): Promise<E2eConfig | null> {
+  if (!isTauri) return null;
+  if (e2eConfigCache !== undefined) return e2eConfigCache;
+  try {
+    e2eConfigCache = await invoke<E2eConfig | null>("e2e_config");
+  } catch {
+    e2eConfigCache = null;
+  }
+  return e2eConfigCache;
 }
 
 // ---------- browser (npm run dev) triage shim ----------

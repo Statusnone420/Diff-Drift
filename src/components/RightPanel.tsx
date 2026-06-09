@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Flag } from "../types";
 import { Ico, SEV_LABEL } from "../lib/icons";
 
@@ -22,42 +22,25 @@ function FlagCard({
   onSelect: () => void;
   onDismiss: () => void;
 }) {
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onSelect();
-    }
-  };
   return (
     <div
       className={
         "flag " + flag.severity + (active ? " active" : "") + (flag.dismissed ? " dismissed" : "")
       }
-      role="button"
-      tabIndex={0}
-      aria-label={`${SEV_LABEL[flag.severity]} severity: ${flag.type} in ${flag.filePath}`}
-      onClick={onSelect}
-      onKeyDown={onKeyDown}
     >
       <div className="flag-bar" />
-      <div className="flag-in">
+      <button
+        type="button"
+        className="flag-in flag-select"
+        aria-label={`${SEV_LABEL[flag.severity]} severity: ${flag.type} in ${flag.filePath}`}
+        onClick={onSelect}
+      >
         <div className="flag-top">
           <span className="sev-badge">
             <span className="ic">{Ico.warn}</span>
             {SEV_LABEL[flag.severity]}
           </span>
           <span className="flag-type">{flag.type}</span>
-          <button
-            className="flag-dismiss"
-            aria-label={flag.dismissed ? `Restore flag: ${flag.type}` : `Dismiss flag: ${flag.type}`}
-            title={flag.dismissed ? "Restore this flag" : "Dismiss this flag (persisted for this repo)"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDismiss();
-            }}
-          >
-            {flag.dismissed ? Ico.undo : Ico.close}
-          </button>
         </div>
         <div className="flag-desc">{flag.desc}</div>
         <div className="flag-map">
@@ -66,7 +49,15 @@ function FlagCard({
           </span>
           <span className="flag-jump">{Ico.jump} node</span>
         </div>
-      </div>
+      </button>
+      <button
+        className="flag-dismiss"
+        aria-label={flag.dismissed ? `Restore flag: ${flag.type}` : `Dismiss flag: ${flag.type}`}
+        title={flag.dismissed ? "Restore this flag" : "Dismiss this flag (persisted for this repo)"}
+        onClick={onDismiss}
+      >
+        {flag.dismissed ? Ico.undo : Ico.close}
+      </button>
     </div>
   );
 }

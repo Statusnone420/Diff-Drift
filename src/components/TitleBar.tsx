@@ -1,4 +1,5 @@
 import { minimize, toggleMaximize, closeWindow } from "../lib/window";
+import { APP_VERSION } from "../lib/version";
 
 // Mica title bar with a custom drag region + caption buttons wired to the Tauri
 // window API. `data-tauri-drag-region` is applied to the bar and the left cluster
@@ -21,6 +22,9 @@ export function TitleBar({ maximized }: { maximized: boolean }) {
         </span>
         <span className="tb-title" data-tauri-drag-region>
           Diff Drift
+        </span>
+        <span className="tb-version" data-tauri-drag-region>
+          v{APP_VERSION}
         </span>
       </div>
       <div className="tb-caption">

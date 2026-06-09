@@ -1,6 +1,6 @@
 [package]
 name = "drift-inspector"
-version = "0.1.0"
+version = "0.1.1"
 description = "Diff Drift — AST-level security inspector for a git repo's uncommitted drift"
 edition = "2021"
 
@@ -31,4 +31,3 @@ tauri-plugin-dialog = "2.7.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
-

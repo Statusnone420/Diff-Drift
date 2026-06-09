@@ -177,12 +177,12 @@ impl Rule for ChildProcess {
     fn id(&self) -> &'static str {
         "child-process"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
-        if !added_or_modified(node.state) {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if ctx.is_test_file || !added_or_modified(node.state) {
             return None;
         }
         static IMPORT: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r#"(require\s*\(\s*['"]child_process['"]|from\s+['"]child_process['"])"#).unwrap()
+            Regex::new(r#"(require\s*\(\s*['"](?:node:)?child_process['"]|from\s+['"](?:node:)?child_process['"])"#).unwrap()
         });
         static CALL: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"\.(exec|execSync|spawn|spawnSync)\s*\(").unwrap());
@@ -354,13 +354,13 @@ impl Rule for LooseRegex {
         "loose-regex"
     }
     fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
-        if node.state != NodeState::Modified || node.kind != "VariableDeclaration" {
+        if !added_or_modified(node.state) || node.kind != "VariableDeclaration" {
             return None;
         }
         let after = joined(&node.after);
         let before = joined(&node.before);
         if let Some(rx) = permissive_regex(&after) {
-            if !before.is_empty() && permissive_regex(&before).is_none() {
+            if before.is_empty() || permissive_regex(&before).is_none() {
                 return finding(
                     Severity::High,
                     "Loose regex pattern",
@@ -494,6 +494,9 @@ impl Rule for UnvettedPackage {
         if module.is_empty() || module.starts_with('.') || module.starts_with('/') {
             return None; // relative/local import, not a dependency
         }
+        if is_node_builtin(module) {
+            return None; // Node standard library import, not an npm package.
+        }
         // Bare specifiers may be scoped or sub-pathed: `@scope/pkg/x` → `@scope/pkg`, `pkg/x` → `pkg`.
         let pkg = package_name(module);
         if ctx.deps.contains(&pkg) {
@@ -505,6 +508,40 @@ impl Rule for UnvettedPackage {
             format!("Imports `{module}`, which isn't declared in package.json — no audit trail."),
         )
     }
+}
+
+fn is_node_builtin(module: &str) -> bool {
+    let module = module.strip_prefix("node:").unwrap_or(module);
+    let base = module.split('/').next().unwrap_or(module);
+    matches!(
+        base,
+        "assert"
+            | "async_hooks"
+            | "buffer"
+            | "child_process"
+            | "console"
+            | "crypto"
+            | "dns"
+            | "events"
+            | "fs"
+            | "http"
+            | "https"
+            | "net"
+            | "os"
+            | "path"
+            | "process"
+            | "readline"
+            | "stream"
+            | "string_decoder"
+            | "timers"
+            | "tls"
+            | "tty"
+            | "url"
+            | "util"
+            | "vm"
+            | "worker_threads"
+            | "zlib"
+    )
 }
 
 fn package_name(module: &str) -> String {
@@ -531,12 +568,15 @@ fn permissive_regex(s: &str) -> Option<String> {
 }
 
 pub fn is_test_path(path: &str) -> bool {
-    let p = path.to_lowercase();
+    let p = path.replace('\\', "/").to_lowercase();
     p.contains(".test.")
         || p.contains(".spec.")
         || p.contains("__tests__")
         || p.contains("__mocks__")
         || p.contains(".stories.")
+        || p.starts_with("test/")
+        || p.starts_with("tests/")
+        || p.starts_with("fixtures/")
         || p.contains("/test/")
         || p.contains("/tests/")
         || p.contains("/fixtures/")
@@ -668,6 +708,12 @@ mod tests {
         assert!(LooseRegex
             .check(&node("VariableDeclaration", NodeState::Modified, &["const p = /^[A-Z]{3}$/;"], &["const p = /.*/;"]), &ctx())
             .is_some());
+        assert!(LooseRegex
+            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const parser = /.*/;"]), &ctx())
+            .is_some());
+        assert!(LooseRegex
+            .check(&node("VariableDeclaration", NodeState::Modified, &["const p = /.*/;"], &["const p = /^.*$/;"]), &ctx())
+            .is_none());
         assert!(RemovedIfGuard
             .check(&node("IfStatement", NodeState::Modified, &["if (ok) {"], &["if (false) {"]), &ctx())
             .is_some());
@@ -701,6 +747,56 @@ mod tests {
 
         import.name = "./local".into();
         assert!(UnvettedPackage.check(&import, &with_deps).is_none(), "relative import not flagged");
+    }
+
+    #[test]
+    fn unvetted_package_ignores_node_builtins() {
+        let with_deps = RuleCtx { deps: HashSet::new(), is_test_file: false };
+        let mut import = node("ImportDeclaration", NodeState::Added, &[], &["import path from \"node:path\";"]);
+
+        for module in ["node:fs/promises", "node:path", "node:net", "fs", "path", "net", "os", "util"] {
+            import.name = module.into();
+            assert!(
+                UnvettedPackage.check(&import, &with_deps).is_none(),
+                "Node builtin `{module}` is not an npm package"
+            );
+        }
+
+        import.name = "jwt-tiny-decode".into();
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_some(),
+            "true undeclared third-party import still flagged"
+        );
+    }
+
+    #[test]
+    fn child_process_handles_node_protocol_and_suppresses_tests() {
+        let prod = ctx();
+        let test = test_ctx();
+        let import = node("ImportDeclaration", NodeState::Added, &[], &["import { spawn } from \"node:child_process\";"]);
+
+        assert!(
+            ChildProcess.check(&import, &prod).is_some(),
+            "production node:child_process import is a subprocess risk"
+        );
+        assert!(
+            ChildProcess.check(&import, &test).is_none(),
+            "test harness node:child_process import is suppressed"
+        );
+    }
+
+    #[test]
+    fn test_path_detection_includes_root_level_test_dirs() {
+        for path in [
+            "tests/e2e-tauri/tauriApp.ts",
+            "test/helpers/app.ts",
+            "fixtures/sample.ts",
+            "src/auth/login.spec.ts",
+            "src/auth/login.test.ts",
+        ] {
+            assert!(is_test_path(path), "`{path}` should be classified as test-like");
+        }
+        assert!(!is_test_path("src/runtime/app.ts"));
     }
 
     #[test]

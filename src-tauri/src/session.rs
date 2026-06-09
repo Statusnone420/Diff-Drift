@@ -160,6 +160,7 @@ fn content_hash(nodes: &[AstNode]) -> u64 {
         for n in ns {
             n.kind.hash(h);
             n.name.hash(h);
+            n.signature.hash(h);
             (n.state as u8).hash(h);
             n.before.hash(h);
             n.after.hash(h);
@@ -304,6 +305,20 @@ mod tests {
     }
 
     #[test]
+    fn analyze_new_loose_regex_file_flags_high() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let new_file = fixture.root.join("auth/parser.ts");
+        std::fs::write(new_file, "const parser = /.*/;\n").unwrap();
+
+        let deps = read_deps(&root);
+        let res = analyze_file(&root, "auth/parser.ts", &deps).expect("new ts file is drift");
+        assert_eq!(res.flags.len(), 1);
+        assert!(matches!(res.flags[0].severity, Severity::High));
+        assert_eq!(res.flags[0].r#type, "Loose regex pattern");
+    }
+
+    #[test]
     fn assemble_preserves_git_changed_count_when_no_files_are_analyzed() {
         let meta = Meta {
             project: "repo".into(),
@@ -381,6 +396,43 @@ mod tests {
         assert_ne!(fingerprint(&changed), fingerprint(&results), "fingerprint tracks content");
         let data = assemble(&changed, &meta(&root), &state);
         assert!(!data.session.approved, "approval revoked by drift change");
+        assert!(data.session.approved_at.is_none());
+    }
+
+    #[test]
+    fn approval_revokes_on_signature_only_drift() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root);
+
+        let mut state = RepoState::default();
+        state.approved_fingerprint = Some(fingerprint(&results));
+        state.approved_at = Some("12:30".into());
+
+        std::fs::write(
+            fixture.root.join("routes/session.ts"),
+            r#"function handleSession(req: Request, res: Response, param: any) {
+  return res.json({ ok: true });
+}
+
+export default router;
+"#,
+        )
+        .unwrap();
+
+        let deps = read_deps(&root);
+        let mut changed = results.clone();
+        let updated = analyze_file(&root, "routes/session.ts", &deps).expect("signature drift");
+        assert_eq!(updated.entry.summary, "1 modified");
+        changed.insert("routes/session.ts".into(), updated);
+
+        assert_ne!(
+            fingerprint(&changed),
+            fingerprint(&results),
+            "signature-only drift changes the approval fingerprint"
+        );
+        let data = assemble(&changed, &meta(&root), &state);
+        assert!(!data.session.approved, "approval revoked by signature-only drift");
         assert!(data.session.approved_at.is_none());
     }
 }
