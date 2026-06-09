@@ -190,7 +190,7 @@ mod tests {
     fn markdown_report_shows_dismissed_and_approval() {
         let base = fixture_data(&RepoState::default());
         let mut state = RepoState::default();
-        state.dismissed.insert(base.flags[0].id.clone());
+        state.dismissed.insert(base.flags[0].id.clone(), String::new());
         state.approved_fingerprint = Some("CURRENT".into());
         state.approved_at = Some("12:30".into());
         let md = render_markdown(&fixture_data(&state), "now");

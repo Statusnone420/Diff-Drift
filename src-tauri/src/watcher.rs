@@ -41,9 +41,14 @@ pub fn new_shared() -> Shared {
 /// initial render. `state_file` is where triage state persists (repo-state.json).
 pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBuf) -> SessionData {
     let deps = session::read_deps(&root);
-    let repo_state = store::load(&state_file, &repo_key(&root));
+    let mut repo_state = store::load(&state_file, &repo_key(&root));
     let baseline = session::resolve_baseline(&root, &repo_state);
     let results = session::analyze_all(&root, &baseline);
+    // Pre-hash dismissals get pinned to current content the first time the
+    // repo opens after an update — from here on they reset on change.
+    if session::adopt_legacy_dismissals(&mut repo_state, &results) {
+        store::save(&state_file, &repo_key(&root), &repo_state);
+    }
     let git_dirs = git_metadata_dirs(&root);
 
     let app2 = app.clone();
@@ -114,9 +119,19 @@ fn update_triage(
 }
 
 pub fn set_dismissed(shared: &Shared, flag_id: String, dismissed: bool) -> Result<SessionData, String> {
-    update_triage(shared, |state, _| {
+    update_triage(shared, |state, results| {
         if dismissed {
-            state.dismissed.insert(flag_id);
+            // Pin the flagged node's current content: a node that changes
+            // meaningfully later resurfaces its flag. Unknown flag ids are a
+            // no-op, not an error (live updates can race a click).
+            if let Some(hash) = results.values().find_map(|r| {
+                r.flags
+                    .iter()
+                    .find(|f| f.id == flag_id)
+                    .and_then(|f| session::find_node_hash(&r.entry.nodes, &f.node_id))
+            }) {
+                state.dismissed.insert(flag_id, hash);
+            }
         } else {
             state.dismissed.remove(&flag_id);
         }
@@ -142,9 +157,11 @@ pub fn set_node_reviewed(shared: &Shared, node_id: String, reviewed: bool) -> Re
 
 pub fn dismiss_all(shared: &Shared) -> Result<SessionData, String> {
     update_triage(shared, |state, results| {
-        state
-            .dismissed
-            .extend(results.values().flat_map(|r| r.flags.iter().map(|f| f.id.clone())));
+        state.dismissed.extend(results.values().flat_map(|r| {
+            r.flags.iter().filter_map(|f| {
+                session::find_node_hash(&r.entry.nodes, &f.node_id).map(|hash| (f.id.clone(), hash))
+            })
+        }));
     })
 }
 

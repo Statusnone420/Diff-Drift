@@ -231,8 +231,13 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
     let mut files: Vec<FileEntry> = results.values().map(|r| r.entry.clone()).collect();
     let mut flags: Vec<Flag> = results.values().flat_map(|r| r.flags.clone()).collect();
 
+    // A dismissal is pinned to the node's content at dismissal time: if the
+    // node changed meaningfully since, the flag resurfaces. The empty hash is
+    // the legacy match-anything form (pinned by the GUI on next open).
     for f in flags.iter_mut() {
-        f.dismissed = state.dismissed.contains(&f.id);
+        f.dismissed = state.dismissed.get(&f.id).is_some_and(|h| {
+            h.is_empty() || flag_node_hash(results, f).as_deref() == Some(h.as_str())
+        });
     }
 
     // Per-file risk counts reflect ACTIVE (non-dismissed) flags only.
@@ -340,6 +345,37 @@ pub fn node_hash(n: &AstNode) -> String {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     hash_nodes_into(std::slice::from_ref(n), &mut h);
     format!("{:016x}", std::hash::Hasher::finish(&h))
+}
+
+/// Content hash of the node a flag points at, or `None` if the flag's file or
+/// node is no longer part of the drift.
+pub fn flag_node_hash(results: &HashMap<String, FileResult>, flag: &Flag) -> Option<String> {
+    results
+        .values()
+        .find(|r| r.entry.id == flag.file_id)
+        .and_then(|r| find_node_hash(&r.entry.nodes, &flag.node_id))
+}
+
+/// Pin legacy (pre-hash, empty-hash) dismissals to the current content of their
+/// flagged nodes — "dismissed for the content as it stands now". Entries whose
+/// flag isn't in the current drift are left as-is (their flag is gone anyway).
+/// Returns true when anything was pinned, so the caller can persist.
+pub fn adopt_legacy_dismissals(
+    state: &mut RepoState,
+    results: &HashMap<String, FileResult>,
+) -> bool {
+    let mut changed = false;
+    for r in results.values() {
+        for f in &r.flags {
+            if state.dismissed.get(&f.id).is_some_and(String::is_empty) {
+                if let Some(hash) = find_node_hash(&r.entry.nodes, &f.node_id) {
+                    state.dismissed.insert(f.id.clone(), hash);
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
 }
 
 /// Find a node by id and return its content hash.
@@ -731,10 +767,12 @@ mod tests {
         let results = analyze_all(&root, &Baseline::default());
         let baseline = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
 
-        // Dismiss the single high-severity flag (loose regex).
+        // Dismiss the single high-severity flag (loose regex), pinned to the
+        // flagged node's current content.
         let high_id = baseline.flags[0].id.clone();
+        let high_hash = flag_node_hash(&results, &baseline.flags[0]).expect("flagged node exists");
         let mut state = RepoState::default();
-        state.dismissed.insert(high_id.clone());
+        state.dismissed.insert(high_id.clone(), high_hash);
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
 
         assert_eq!(data.session.risk_count, 5, "dismissed flag leaves the count");
@@ -756,11 +794,132 @@ mod tests {
         let results = analyze_all(&root, &Baseline::default());
         let all = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
         let mut state = RepoState::default();
-        state.dismissed.extend(all.flags.iter().map(|f| f.id.clone()));
+        state.dismissed.extend(
+            all.flags
+                .iter()
+                .map(|f| (f.id.clone(), flag_node_hash(&results, f).expect("flagged node exists"))),
+        );
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
         assert_eq!(data.session.risk_count, 0);
         assert_eq!(data.session.file_count, 0);
         assert!(data.files.iter().all(|f| f.risks == 0));
+    }
+
+    /// Re-analyze ONE file in a cloned result set (the watcher's incremental path).
+    fn reanalyzed_with(
+        results: &HashMap<String, FileResult>,
+        root: &Path,
+        rel: &str,
+    ) -> HashMap<String, FileResult> {
+        let deps = read_deps(root);
+        let mut changed = results.clone();
+        let updated = analyze_file(root, rel, &deps, &Baseline::default()).expect("file still drifts");
+        changed.insert(rel.into(), updated);
+        changed
+    }
+
+    #[test]
+    fn dismissed_flag_reappears_when_node_content_changes() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+
+        // Dismiss the loose-regex High flag, pinned to current content.
+        let high = base.flags[0].clone();
+        assert_eq!(high.r#type, "Loose regex pattern");
+        let mut state = RepoState::default();
+        state
+            .dismissed
+            .insert(high.id.clone(), flag_node_hash(&results, &high).unwrap());
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        assert_eq!(data.session.risk_count, 5, "dismissed while content matches");
+
+        // The agent rewrites the flagged node (/.*/  → /.+/): same node id, same
+        // flag id, different content → the old dismissal must NOT hide it.
+        std::fs::write(
+            fixture.root.join("auth/validateToken.ts"),
+            r#"import { decode } from "jwt-tiny-decode";
+
+function validateToken(token: string): boolean {
+  const pattern = /.+/;
+  if (false) {
+    throw new Error("Malformed token");
+  }
+  return decode(token);
+}
+"#,
+        )
+        .unwrap();
+        let changed = reanalyzed_with(&results, &root, "auth/validateToken.ts");
+        let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
+        let reflag = data.flags.iter().find(|f| f.id == high.id).expect("flag still fires");
+        assert!(!reflag.dismissed, "content change resurfaces the flag");
+        assert_eq!(data.session.risk_count, 6, "all six flags active again");
+    }
+
+    #[test]
+    fn dismissal_survives_unrelated_changes() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+
+        let high = base.flags[0].clone();
+        let mut state = RepoState::default();
+        state
+            .dismissed
+            .insert(high.id.clone(), flag_node_hash(&results, &high).unwrap());
+
+        // A different file drifts further — the pinned node is untouched.
+        std::fs::write(
+            fixture.root.join("utils/logger.ts"),
+            r#"const logger = createLogger({
+  level: "trace",
+  redact: [],
+});
+
+function log(level: Level, msg: string): void {
+  logger.log(level, msg);
+}
+"#,
+        )
+        .unwrap();
+        let changed = reanalyzed_with(&results, &root, "utils/logger.ts");
+        let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
+        let flag = data.flags.iter().find(|f| f.id == high.id).unwrap();
+        assert!(flag.dismissed, "unrelated drift keeps the dismissal");
+    }
+
+    #[test]
+    fn legacy_and_adopted_dismissals_behave() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let high = base.flags[0].clone();
+
+        // A legacy (empty-hash) entry dismisses regardless of content…
+        let mut state = RepoState::default();
+        state.dismissed.insert(high.id.clone(), String::new());
+        state.dismissed.insert("gone-rule@gone-node".into(), String::new());
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        assert!(data.flags.iter().find(|f| f.id == high.id).unwrap().dismissed);
+
+        // …until the GUI adopts it: the live flag's entry gets pinned to the
+        // current hash, entries for vanished flags stay legacy.
+        assert!(adopt_legacy_dismissals(&mut state, &results), "something was pinned");
+        assert_eq!(
+            state.dismissed.get(&high.id),
+            flag_node_hash(&results, &high).as_ref(),
+            "live flag pinned to current content"
+        );
+        assert_eq!(
+            state.dismissed.get("gone-rule@gone-node").map(String::as_str),
+            Some(""),
+            "vanished flag entry left as-is"
+        );
+        assert!(!adopt_legacy_dismissals(&mut state, &results), "second pass is a no-op");
     }
 
     #[test]

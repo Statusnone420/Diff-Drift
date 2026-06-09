@@ -1,7 +1,7 @@
 //! Per-repo persisted triage state (`repo-state.json` in the app config dir):
 //! which flags the user dismissed, and the drift fingerprint they approved.
 //! Keyed by the repo root path so state never leaks between repositories.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RepoState {
-    pub dismissed: HashSet<String>,
+    /// Dismissed flag id → content hash of the flagged node at dismissal time.
+    /// A dismissal only applies while the node's content still matches — a
+    /// meaningfully changed node resurfaces its flag. The empty hash means
+    /// "dismissed regardless of content" (legacy v0.2.0 entries, which were
+    /// ids only); the GUI pins those to the current content on next open.
+    #[serde(deserialize_with = "de_dismissed")]
+    pub dismissed: BTreeMap<String, String>,
     pub approved_fingerprint: Option<String>,
     pub approved_at: Option<String>,
     /// The user's baseline choice: `"head"` (or absent), `"trust-point"`,
@@ -33,6 +39,24 @@ impl RepoState {
             && self.trust_point.is_none()
             && self.reviewed_nodes.is_empty()
     }
+}
+
+/// Accepts both the current map shape and the legacy v0.2.0 array of flag ids.
+/// Unambiguous: the old format is a JSON array, the new one a JSON object.
+fn de_dismissed<'de, D>(d: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Hashed(BTreeMap<String, String>),
+        Legacy(Vec<String>),
+    }
+    Ok(match Repr::deserialize(d)? {
+        Repr::Hashed(map) => map,
+        Repr::Legacy(ids) => ids.into_iter().map(|id| (id, String::new())).collect(),
+    })
 }
 
 /// The whole file: repo root → its state. BTreeMap for stable on-disk ordering.
@@ -81,16 +105,45 @@ mod tests {
     fn round_trips_per_repo_state() {
         let file = temp_file("roundtrip");
         let mut state = RepoState::default();
-        state.dismissed.insert("rule@node".into());
+        state.dismissed.insert("rule@node".into(), "abc123".into());
         state.approved_fingerprint = Some("fp".into());
         state.approved_at = Some("12:30".into());
 
         save(&file, r"C:\repo-a", &state);
-        save(&file, r"C:\repo-b", &RepoState { dismissed: ["x".into()].into(), ..Default::default() });
+        save(
+            &file,
+            r"C:\repo-b",
+            &RepoState { dismissed: [("x".into(), String::new())].into(), ..Default::default() },
+        );
 
         assert_eq!(load(&file, r"C:\repo-a"), state);
-        assert!(load(&file, r"C:\repo-b").dismissed.contains("x"));
+        assert!(load(&file, r"C:\repo-b").dismissed.contains_key("x"));
         assert_eq!(load(&file, r"C:\repo-c"), RepoState::default(), "unknown repo → default");
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn legacy_dismissed_array_still_loads() {
+        // A literal v0.2.0 state file: `dismissed` was a plain array of flag ids.
+        let file = temp_file("legacy");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"{ "C:\\repo": { "dismissed": ["loose-regex@auth-ts:0", "eval@shim-js:0"], "trustPoint": "abc" } }"#,
+        )
+        .unwrap();
+
+        let state = load(&file, r"C:\repo");
+        assert_eq!(state.dismissed.len(), 2);
+        // Legacy ids carry the match-anything empty hash until the GUI pins them.
+        assert_eq!(state.dismissed.get("loose-regex@auth-ts:0").map(String::as_str), Some(""));
+        assert_eq!(state.trust_point.as_deref(), Some("abc"));
+
+        // Saving rewrites in the new map shape and still loads.
+        save(&file, r"C:\repo", &state);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(r#""loose-regex@auth-ts:0": """#), "map shape on disk: {text}");
+        assert_eq!(load(&file, r"C:\repo"), state);
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 
@@ -98,7 +151,7 @@ mod tests {
     fn empty_state_removes_the_entry() {
         let file = temp_file("prune");
         let mut state = RepoState::default();
-        state.dismissed.insert("f".into());
+        state.dismissed.insert("f".into(), String::new());
         save(&file, "repo", &state);
         assert!(!load(&file, "repo").dismissed.is_empty());
 
