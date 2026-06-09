@@ -32,7 +32,7 @@ function FlagCard({
       <button
         type="button"
         className="flag-in flag-select"
-        aria-label={`${SEV_LABEL[flag.severity]} severity: ${flag.type} in ${flag.filePath}`}
+        aria-label={`${SEV_LABEL[flag.severity]} severity: ${flag.type} in ${flag.filePath} — ${flag.nodePath}`}
         onClick={onSelect}
       >
         <div className="flag-top">
@@ -46,8 +46,9 @@ function FlagCard({
         <div className="flag-map">
           <span className="flag-loc">
             <span className="fp">{flag.filePath}</span>
+            <span className="np">{flag.nodePath}</span>
           </span>
-          <span className="flag-jump">{Ico.jump} node</span>
+          <span className="flag-jump">{Ico.jump} view node</span>
         </div>
       </button>
       <button

@@ -25,7 +25,7 @@ The top toolbar shows the current repo, branch, flag count, and review state.
 
 ## Review Flags
 
-Click a risk flag to jump to the related node in the center panel. The flag text explains what changed and why it may need review.
+Each flag card shows its file path and node path (for example `validateToken › pattern`), so you can see what it points to before clicking. Click a risk flag to jump to the related node in the center panel. The flag text explains what changed and why it may need review.
 
 Use **Dismiss** when a flag is understood and not actionable for the current drift. Dismissed flags are stored per repo and can be restored.
 

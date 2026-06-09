@@ -9,6 +9,8 @@ async function openMockRepo(page: Page) {
   await page.getByRole("button", { name: /Open a repository/ }).click();
   await expect(page.getByText("Risk Flags")).toBeVisible();
   await expect(page.getByText("Loose regex pattern").first()).toBeVisible();
+  // Flag cards surface the node context they jump to.
+  await expect(page.getByText("validateToken › pattern")).toBeVisible();
 }
 
 async function expectNoAxeViolations(page: Page) {
