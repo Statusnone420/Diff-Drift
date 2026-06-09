@@ -216,14 +216,7 @@ pub fn set_baseline(shared: &Shared, spec: String) -> Result<SessionData, String
         "" | "head" => None,
         other => Some(other.to_string()),
     };
-    let baseline = session::resolve_baseline(&root, &state);
-    if state.baseline.is_some() && baseline.sha.is_none() && baseline.spec != "head" {
-        return Err(match baseline.spec.as_str() {
-            "trust-point" => "No trust point yet — Mark reviewed pins one.".into(),
-            "merge-base" => "No default branch (main/master) to take a merge-base with.".into(),
-            rev => format!("\"{rev}\" doesn't resolve to a commit in this repository."),
-        });
-    }
+    let baseline = session::resolve_baseline_strict(&root, &state).map_err(|e| e.to_string())?;
     let results = session::analyze_all(&root, &baseline);
 
     let mut g = shared.lock().unwrap();

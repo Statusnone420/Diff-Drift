@@ -53,18 +53,43 @@ fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
 }
 
-/// Resolve the user's per-repo baseline choice to a concrete commit. Anything
-/// that can't resolve (no trust point yet, no default branch, unknown rev)
-/// falls back to HEAD — never an error, never a blank screen.
-pub fn resolve_baseline(root: &Path, state: &RepoState) -> Baseline {
+/// Why an explicit baseline choice can't resolve to a commit. The `Display`
+/// strings are the single source for both the GUI `set_baseline` error and the
+/// CLI's stderr message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaselineError {
+    NoTrustPoint,
+    NoDefaultBranch,
+    UnknownRev(String),
+}
+
+impl std::fmt::Display for BaselineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BaselineError::NoTrustPoint => {
+                write!(f, "No trust point yet — Mark reviewed pins one.")
+            }
+            BaselineError::NoDefaultBranch => {
+                write!(f, "No default branch (main/master) to take a merge-base with.")
+            }
+            BaselineError::UnknownRev(rev) => {
+                write!(f, "\"{rev}\" doesn't resolve to a commit in this repository.")
+            }
+        }
+    }
+}
+
+/// Strictly resolve the baseline choice to a concrete commit: anything that
+/// can't resolve (no trust point yet, no default branch, unknown rev) is an
+/// error naming the cause. `"head"` always resolves.
+pub fn resolve_baseline_strict(root: &Path, state: &RepoState) -> Result<Baseline, BaselineError> {
     let spec = state.baseline.clone().unwrap_or_else(|| "head".into());
-    let head = Baseline {
-        sha: None,
-        spec: spec.clone(),
-        label: "HEAD".into(),
-    };
     match spec.as_str() {
-        "head" => head,
+        "head" => Ok(Baseline {
+            sha: None,
+            spec,
+            label: "HEAD".into(),
+        }),
         "trust-point" => match state
             .trust_point
             .as_deref()
@@ -72,16 +97,16 @@ pub fn resolve_baseline(root: &Path, state: &RepoState) -> Baseline {
         {
             Some(sha) => {
                 let label = format!("trust point @ {}", short(&sha));
-                Baseline { sha: Some(sha), spec, label }
+                Ok(Baseline { sha: Some(sha), spec, label })
             }
-            None => head,
+            None => Err(BaselineError::NoTrustPoint),
         },
         "merge-base" => match git::merge_base_with_default(root) {
             Some(sha) => {
                 let label = format!("merge-base @ {}", short(&sha));
-                Baseline { sha: Some(sha), spec, label }
+                Ok(Baseline { sha: Some(sha), spec, label })
             }
-            None => head,
+            None => Err(BaselineError::NoDefaultBranch),
         },
         rev => match git::resolve_rev(root, rev) {
             Some(sha) => {
@@ -90,11 +115,23 @@ pub fn resolve_baseline(root: &Path, state: &RepoState) -> Baseline {
                 } else {
                     format!("{} @ {}", rev, short(&sha))
                 };
-                Baseline { sha: Some(sha), spec, label }
+                Ok(Baseline { sha: Some(sha), spec, label })
             }
-            None => head,
+            None => Err(BaselineError::UnknownRev(rev.to_string())),
         },
     }
+}
+
+/// Resolve the user's per-repo baseline choice to a concrete commit. Anything
+/// that can't resolve falls back to HEAD — never an error, never a blank
+/// screen. This is the GUI rendering contract; explicit choices (the baseline
+/// picker, the CLI `--baseline` flag) validate via `resolve_baseline_strict`.
+pub fn resolve_baseline(root: &Path, state: &RepoState) -> Baseline {
+    resolve_baseline_strict(root, state).unwrap_or_else(|_| Baseline {
+        sha: None,
+        spec: state.baseline.clone().unwrap_or_else(|| "head".into()),
+        label: "HEAD".into(),
+    })
 }
 
 /// Changed paths for a baseline: the fast status walk for plain HEAD, the
@@ -582,6 +619,49 @@ mod tests {
         // Trust-point spec without a pinned trust point → HEAD fallback.
         let tp_state = RepoState { baseline: Some("trust-point".into()), ..Default::default() };
         assert_eq!(resolve_baseline(&root, &tp_state).sha, None);
+    }
+
+    #[test]
+    fn strict_resolution_errors_name_the_cause() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+
+        // "head" (and the absent default) always resolves strictly.
+        assert!(resolve_baseline_strict(&root, &RepoState::default()).is_ok());
+
+        // Trust-point chosen but never pinned.
+        let tp_state = RepoState { baseline: Some("trust-point".into()), ..Default::default() };
+        let err = resolve_baseline_strict(&root, &tp_state).unwrap_err();
+        assert_eq!(err, BaselineError::NoTrustPoint);
+        assert!(err.to_string().contains("Mark reviewed pins one"));
+
+        // Unknown custom rev.
+        let bad_state = RepoState { baseline: Some("no-such-ref".into()), ..Default::default() };
+        let err = resolve_baseline_strict(&root, &bad_state).unwrap_err();
+        assert_eq!(err, BaselineError::UnknownRev("no-such-ref".into()));
+        assert!(err.to_string().contains("doesn't resolve to a commit"));
+
+        // No default branch → merge-base has nothing to anchor to.
+        {
+            let repo = git2::Repository::open(&root).unwrap();
+            for name in ["main", "master"] {
+                if let Ok(mut b) = repo.find_branch(name, git2::BranchType::Local) {
+                    b.delete().unwrap();
+                }
+            }
+        }
+        let mb_state = RepoState { baseline: Some("merge-base".into()), ..Default::default() };
+        let err = resolve_baseline_strict(&root, &mb_state).unwrap_err();
+        assert_eq!(err, BaselineError::NoDefaultBranch);
+
+        // The lenient wrapper still falls back to HEAD on every strict error,
+        // preserving the original spec for the UI.
+        for state in [&tp_state, &bad_state, &mb_state] {
+            let b = resolve_baseline(&root, state);
+            assert_eq!(b.sha, None);
+            assert_eq!(b.label, "HEAD");
+            assert_eq!(Some(&b.spec), state.baseline.as_ref(), "spec preserved on fallback");
+        }
     }
 
     #[test]

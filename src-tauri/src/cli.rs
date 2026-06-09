@@ -44,7 +44,7 @@ pub fn run_check(args: &[String]) -> (i32, String) {
                 Some(spec) => baseline_override = Some(spec.clone()),
                 None => return (64, USAGE.into()),
             },
-            "--help" | "-h" => return (64, USAGE.into()),
+            "--help" | "-h" => return (0, USAGE.into()),
             other if !other.starts_with('-') => path = other.to_string(),
             _ => return (64, USAGE.into()),
         }
@@ -58,6 +58,10 @@ pub fn run_check(args: &[String]) -> (i32, String) {
     let mut state = default_state_file()
         .map(|file| store::load(&file, &root.display().to_string()))
         .unwrap_or_default();
+    // An explicit `--baseline` is a contract, not a preference: it must resolve
+    // or the check fails loudly (64). Without the flag, the persisted GUI choice
+    // applies with the GUI's own HEAD-fallback behavior.
+    let explicit_baseline = baseline_override.is_some();
     if let Some(spec) = baseline_override {
         state.baseline = match spec.trim() {
             "" | "head" => None,
@@ -65,7 +69,17 @@ pub fn run_check(args: &[String]) -> (i32, String) {
         };
     }
 
-    let baseline = session::resolve_baseline(&root, &state);
+    let baseline = if explicit_baseline {
+        match session::resolve_baseline_strict(&root, &state) {
+            Ok(b) => b,
+            Err(e) => {
+                let spec = state.baseline.as_deref().unwrap_or("head");
+                return (64, format!("--baseline {spec}: {e}\n\n{USAGE}"));
+            }
+        }
+    } else {
+        session::resolve_baseline(&root, &state)
+    };
     let results = session::analyze_all(&root, &baseline);
     let data = session::assemble(&results, &session::meta(&root, &baseline), &state);
 
@@ -170,5 +184,48 @@ mod tests {
         assert_eq!(code, 64);
         assert!(out.contains("isn't a git repository"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_help_exits_zero_with_usage() {
+        for flag in ["--help", "-h"] {
+            let (code, out) = run_check(&s(&[flag]));
+            assert_eq!(code, 0, "{flag} is not a usage error");
+            assert!(out.contains("Usage:"));
+        }
+    }
+
+    #[test]
+    fn check_rejects_unresolvable_explicit_baseline() {
+        let fixture = test_fixture::payments_api();
+        let root = fixture.root.to_str().unwrap();
+
+        // Unknown custom ref: no silent HEAD fallback for an explicit flag.
+        let (code, out) = run_check(&s(&[root, "--baseline", "no-such-ref", "--json"]));
+        assert_eq!(code, 64, "unknown ref must fail, not fall back to HEAD");
+        assert!(out.contains("doesn't resolve to a commit"), "names the cause: {out}");
+        assert!(out.contains("Usage:"), "points at the help text");
+
+        // Trust-point requested but never pinned.
+        let (code, out) = run_check(&s(&[root, "--baseline", "trust-point"]));
+        assert_eq!(code, 64);
+        assert!(out.contains("No trust point yet"), "names the cause: {out}");
+
+        // Merge-base with no default branch to anchor to.
+        {
+            let repo = git2::Repository::open(&fixture.root).unwrap();
+            for name in ["main", "master"] {
+                if let Ok(mut b) = repo.find_branch(name, git2::BranchType::Local) {
+                    b.delete().unwrap();
+                }
+            }
+        }
+        let (code, out) = run_check(&s(&[root, "--baseline", "merge-base"]));
+        assert_eq!(code, 64);
+        assert!(out.contains("No default branch"), "names the cause: {out}");
+
+        // An explicit baseline that DOES resolve keeps severity-exit semantics.
+        let (code, _) = run_check(&s(&[root, "--baseline", "head"]));
+        assert_eq!(code, 3, "explicit head still exits by severity");
     }
 }
