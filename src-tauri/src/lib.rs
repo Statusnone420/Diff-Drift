@@ -1,3 +1,4 @@
+pub mod cli;
 mod deps_diff;
 mod diff;
 mod git;
