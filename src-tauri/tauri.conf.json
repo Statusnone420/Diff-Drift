@@ -34,7 +34,7 @@
     "active": true,
     "targets": "all",
     "shortDescription": "AST-level security inspector for AI coding agents",
-    "longDescription": "Diff Drift inspects a git repository's uncommitted drift against HEAD as a structured AST diff and live-flags security-relevant changes for review.",
+    "longDescription": "Diff Drift inspects a git repository's drift against a selectable baseline — the last commit, the pinned trust point, a merge-base, or any rev — as a structured AST diff and live-flags security-relevant changes for review.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

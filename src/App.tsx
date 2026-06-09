@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Center } from "./components/Center";
 import { RightPanel } from "./components/RightPanel";
 import { EmptyState } from "./components/EmptyState";
+import { baselinePhrase } from "./lib/baseline";
 import { onMaximizeChange } from "./lib/window";
 import {
   dismissAll,
@@ -333,6 +334,7 @@ export default function App() {
         <Center
           file={file}
           changedFiles={session.changedFiles}
+          baselinePhrase={baselinePhrase(session)}
           flagsById={flagsById}
           activeNodeId={activeNodeId}
           pulseId={pulseId}

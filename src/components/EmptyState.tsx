@@ -17,7 +17,8 @@ export function EmptyState({ error, onOpen }: { error: string | null; onOpen: ()
       </div>
       <div className="es-title">Diff Drift</div>
       <div className="es-tagline">
-        Open a git repository to inspect the AST-level security drift in its uncommitted changes.
+        Open a git repository to inspect the AST-level security drift in its changes — measured
+        against the last commit, your last review, or any ref you choose.
       </div>
       <button className="btn primary es-open" onClick={onOpen}>
         {Ico.folder}

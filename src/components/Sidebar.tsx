@@ -1,4 +1,5 @@
 import type { FileEntry, Session } from "../types";
+import { baselinePhrase } from "../lib/baseline";
 import { Ico } from "../lib/icons";
 
 interface SidebarProps {
@@ -30,7 +31,7 @@ export function Sidebar({
             </span>
           </div>
           <div className="sb-meta">
-            <div className="meta-cell" title="All uncommitted changes, any file type">
+            <div className="meta-cell" title={`Files changed since ${baselinePhrase(session)} — any file type`}>
               <div className="k">Changed files</div>
               <div className="v">{session.changedFiles}</div>
             </div>
@@ -56,7 +57,7 @@ export function Sidebar({
 
         <div
           className="sb-section-label"
-          title="TypeScript, TSX, JavaScript, and JSX files are parsed as AST drift; package.json gets a dependency diff"
+          title="TypeScript, TSX, JavaScript, and JSX files are parsed as AST drift; package.json gets a dependency and script diff"
         >
           <span>Analyzed files</span>
           <span className="count">{files.length}</span>

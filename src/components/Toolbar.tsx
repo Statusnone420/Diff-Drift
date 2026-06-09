@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Session } from "../types";
+import { baselinePhrase } from "../lib/baseline";
 import { Ico } from "../lib/icons";
 
 interface ToolbarProps {
@@ -33,11 +34,14 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           {session.branch}
         </span>
         <span className="sep">·</span>
-        <span className="baseline" title={`Drift is measured against ${session.baselineLabel}`}>
-          <span className="baseline-vs">vs</span>
+        <span className="baseline" title={`Comparing the working tree to ${session.baselineLabel}`}>
+          <label className="baseline-label" htmlFor="baseline-select">
+            Review changes since
+          </label>
           <select
+            id="baseline-select"
+            data-testid="baseline-select"
             className="baseline-select"
-            aria-label="Baseline to diff against"
             value={selectValue}
             onChange={(e) => {
               const v = e.target.value;
@@ -50,18 +54,22 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
               }
             }}
           >
-            <option value="head">HEAD</option>
+            <option value="head">Last commit (HEAD)</option>
             <option value="trust-point" disabled={!session.trustPoint}>
-              {session.trustPoint ? `Trust point (${session.trustPoint})` : "Trust point — none yet"}
+              {session.trustPoint
+                ? `Last review (trust point ${session.trustPoint})`
+                : "Last review — none pinned yet"}
             </option>
-            <option value="merge-base">Merge-base</option>
-            <option value="custom">{isCustom && !refOpen ? `Ref: ${session.baselineSpec}` : "Custom ref…"}</option>
+            <option value="merge-base">Branch start (merge-base)</option>
+            <option value="custom">
+              {isCustom && !refOpen ? `Custom ref: ${session.baselineSpec}` : "Custom ref…"}
+            </option>
           </select>
           {refOpen && (
             <input
               className="baseline-ref"
               aria-label="Custom baseline ref"
-              placeholder="branch or SHA, then Enter"
+              placeholder="branch, tag, or SHA — Enter to apply"
               value={refValue}
               autoFocus
               onChange={(e) => setRefValue(e.target.value)}
@@ -87,7 +95,7 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           {session.reviewedNodes}/{session.changedNodes} reviewed
         </span>
       )}
-      <div className={"summary-pill" + (zero ? " calm" : "")}>
+      <div className={"summary-pill" + (zero ? " calm" : "")} data-testid="summary-pill">
         <span className="dot" />
         <span>
           {session.approved ? (
@@ -101,7 +109,7 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           ) : zero ? (
             noDrift ? (
               <>
-                <b>Clean</b> — no uncommitted changes
+                <b>Clean</b> — no changes since {baselinePhrase(session)}
               </>
             ) : (
               <>
@@ -138,7 +146,7 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           aria-pressed={session.approved}
           title={
             noDrift
-              ? "Nothing to review — the working tree is clean"
+              ? `Nothing to review — no changes since ${baselinePhrase(session)}`
               : session.approved
                 ? "Reviewed — click to revoke. Clears automatically when the drift changes."
                 : "Records that you reviewed this drift. Auto-clears when files change again."

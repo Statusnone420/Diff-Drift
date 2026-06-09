@@ -151,11 +151,13 @@
   gap: 6px;
   min-width: 0;
 }
-.crumb .baseline-vs {
+.crumb .baseline-label {
   color: var(--text-mute);
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  white-space: nowrap;
+  cursor: pointer;
 }
 .baseline-select {
   appearance: none;

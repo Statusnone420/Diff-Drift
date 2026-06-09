@@ -38,10 +38,16 @@ test.describe("Diff Drift browser-mode E2E", () => {
   test("triage, approval, and browser export feedback are interactive", async ({ page }) => {
     await openMockRepo(page);
 
-    // Baseline picker: defaults to HEAD; trust point is locked until a review pins one.
-    const baseline = page.getByLabel("Baseline to diff against");
+    // Baseline picker: labeled in plain language, defaults to the last commit;
+    // "Last review" is locked until a review pins a trust point.
+    const baseline = page.getByLabel("Review changes since");
     await expect(baseline).toHaveValue("head");
-    await expect(baseline.locator("option[value='trust-point']")).toBeDisabled();
+    await expect(baseline.locator("option[value='head']")).toHaveText("Last commit (HEAD)");
+    await expect(baseline.locator("option[value='merge-base']")).toHaveText("Branch start (merge-base)");
+    await expect(baseline.locator("option[value='custom']")).toHaveText("Custom ref…");
+    const trustOption = baseline.locator("option[value='trust-point']");
+    await expect(trustOption).toBeDisabled();
+    await expect(trustOption).toHaveText("Last review — none pinned yet");
     await baseline.selectOption("merge-base");
     await expect(baseline).toHaveValue("merge-base");
     await baseline.selectOption("head");
@@ -70,8 +76,9 @@ test.describe("Diff Drift browser-mode E2E", () => {
     // Reviewing the drift reviews every node.
     await expect(page.getByText("6/6 reviewed")).toBeVisible();
 
-    // Mark reviewed pinned a trust point → the trust-point baseline unlocks.
-    await expect(baseline.locator("option[value='trust-point']")).toBeEnabled();
+    // Mark reviewed pinned a trust point → the "Last review" baseline unlocks.
+    await expect(trustOption).toBeEnabled();
+    await expect(trustOption).toHaveText("Last review (trust point ab12cd3)");
     await baseline.selectOption("trust-point");
     await expect(baseline).toHaveValue("trust-point");
 

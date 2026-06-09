@@ -142,7 +142,9 @@ export function RightPanel({ flags, activeFlagId, onSelectFlag, onDismissFlag, o
         )}
       </div>
       <div className="rp-foot">
-        <div className="rp-note">Heuristic checks on TS/TSX/JS drift — review, don't trust blindly.</div>
+        <div className="rp-note" data-testid="scope-note">
+          Heuristic checks on TS/TSX/JS/JSX and package.json drift — review, don't trust blindly.
+        </div>
         <button
           className="btn primary rp-export"
           onClick={() => void exportNow()}

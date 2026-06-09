@@ -24,6 +24,10 @@ test("native watcher reacts to regex insertion, signature mutation, export, and 
 
     await expect(page.locator(".window")).toBeVisible();
     await expect(page.locator(".center-clean-title")).toHaveText(/No drift detected/);
+    // Clean copy is baseline-relative end-to-end, not hardcoded to "uncommitted".
+    await expect(page.getByTestId("center-clean-sub")).toContainText(
+      "since the last commit (HEAD)",
+    );
 
     await writeFile(path.join(repoRoot, "auth.ts"), "const parser = /.*/;\n", "utf8");
     await expect(page.locator(".flag.high .flag-type")).toHaveText("Loose regex pattern", {

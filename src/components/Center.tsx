@@ -6,6 +6,8 @@ import { NodeCard } from "./NodeCard";
 interface CenterProps {
   file: FileEntry | null;
   changedFiles: number;
+  /** Human-readable baseline phrase ("the last commit (HEAD)", …) for honest empty-state copy. */
+  baselinePhrase: string;
   flagsById: Record<string, Flag>;
   activeNodeId: string | null;
   pulseId: string | null;
@@ -18,6 +20,7 @@ interface CenterProps {
 export function Center({
   file,
   changedFiles,
+  baselinePhrase,
   flagsById,
   activeNodeId,
   pulseId,
@@ -35,10 +38,10 @@ export function Center({
           <div className="center-clean-title">
             {hasUnanalyzedChanges ? "No analyzable drift detected" : "No drift detected"}
           </div>
-          <div className="center-clean-sub">
+          <div className="center-clean-sub" data-testid="center-clean-sub">
             {hasUnanalyzedChanges
               ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are TypeScript, TSX, JavaScript, JSX, or package.json files Diff Drift can inspect.`
-              : "The working tree is clean — nothing has changed since the last commit."}
+              : `Nothing has changed since ${baselinePhrase}.`}
           </div>
         </div>
       </div>
