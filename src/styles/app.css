@@ -841,10 +841,10 @@
   border-radius: 5px;
   padding: 1px 6px;
 }
-.rp-sort {
+.rp-note {
   font-size: 11px;
-  color: var(--text-faint);
-  font-family: var(--mono);
+  line-height: 1.45;
+  color: var(--text-mute);
 }
 
 .flag-list {
@@ -999,10 +999,10 @@
   padding: 12px 14px;
   border-top: 1px solid var(--border);
   display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 .rp-foot .btn {
-  flex: 1;
   justify-content: center;
 }
 

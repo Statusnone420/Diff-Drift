@@ -15,16 +15,16 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
     out.push_str(&format!(
-        "- **Drift:** {} changed file{} · {} active risk{}\n",
+        "- **Drift:** {} changed file{} · {} active flag{}\n",
         s.changed_files,
         plural(s.changed_files),
         s.risk_count,
         plural(s.risk_count)
     ));
     out.push_str(&match (&s.approved, &s.approved_at) {
-        (true, Some(at)) => format!("- **Approval:** approved at {at}\n"),
-        (true, None) => "- **Approval:** approved\n".to_string(),
-        _ => "- **Approval:** not approved\n".to_string(),
+        (true, Some(at)) => format!("- **Review:** reviewed at {at}\n"),
+        (true, None) => "- **Review:** reviewed\n".to_string(),
+        _ => "- **Review:** not reviewed\n".to_string(),
     });
     out.push('\n');
 
@@ -67,7 +67,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     } else {
         for file in &data.files {
             out.push_str(&format!(
-                "- `{}{}` — {} · {} active risk{}\n",
+                "- `{}{}` — {} · {} active flag{}\n",
                 file.dir,
                 file.name,
                 file.summary,
@@ -170,7 +170,7 @@ mod tests {
         assert!(md.contains("# Diff Drift report —"), "title: {md}");
         assert!(md.contains("- **Generated:** 2026-06-09 12:30"));
         assert!(md.contains("- **Branch:** `agent/refactor-token-validation`"));
-        assert!(md.contains("- **Approval:** not approved"));
+        assert!(md.contains("- **Review:** not reviewed"));
         assert!(md.contains("### High severity"));
         assert!(md.contains("Loose regex pattern"));
         assert!(md.contains("```diff"), "flagged nodes include before/after diff");
@@ -192,10 +192,10 @@ mod tests {
         state.approved_fingerprint = Some("CURRENT".into());
         state.approved_at = Some("12:30".into());
         let md = render_markdown(&fixture_data(&state), "now");
-        assert!(md.contains("- **Approval:** approved at 12:30"));
+        assert!(md.contains("- **Review:** reviewed at 12:30"));
         assert!(md.contains("## Dismissed (1)"));
         assert!(md.contains("~~Loose regex pattern~~"));
-        assert!(md.contains("5 active risks"));
+        assert!(md.contains("5 active flags"));
     }
 
     #[test]

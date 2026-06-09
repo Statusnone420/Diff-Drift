@@ -3,7 +3,7 @@
 //! mapping tree-sitter node kinds to the display kinds the UI knows.
 use tree_sitter::{Node, Parser};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Parsed {
     pub kind: String,
     pub name: String,
@@ -19,13 +19,16 @@ impl Parsed {
     }
 }
 
-/// Parse a TS source string into the top-level `Parsed` nodes.
-pub fn parse_file(source: &str) -> Vec<Parsed> {
+/// Parse a TS/TSX source string into the top-level `Parsed` nodes. `tsx` selects
+/// the TSX grammar — JSX is a parse ERROR under the plain TypeScript grammar.
+pub fn parse_file(source: &str, tsx: bool) -> Vec<Parsed> {
     let mut parser = Parser::new();
-    if parser
-        .set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-        .is_err()
-    {
+    let language = if tsx {
+        tree_sitter_typescript::LANGUAGE_TSX
+    } else {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT
+    };
+    if parser.set_language(&language.into()).is_err() {
         return Vec::new();
     }
     let Some(tree) = parser.parse(source, None) else {
@@ -220,7 +223,7 @@ export default router;
 
     #[test]
     fn maps_kinds_names_and_signatures() {
-        let nodes = parse_file(SRC);
+        let nodes = parse_file(SRC, false);
         let kinds: Vec<(&str, &str)> = nodes
             .iter()
             .map(|n| (n.kind.as_str(), n.name.as_str()))
@@ -240,7 +243,7 @@ export default router;
 
     #[test]
     fn function_bodies_surface_one_level_of_children() {
-        let nodes = parse_file(SRC);
+        let nodes = parse_file(SRC, false);
         let func = &nodes[2];
         let child_kinds: Vec<&str> = func.children.iter().map(|c| c.kind.as_str()).collect();
         assert_eq!(child_kinds, vec!["IfStatement", "ReturnStatement"]);
@@ -249,17 +252,36 @@ export default router;
 
     #[test]
     fn unparseable_or_empty_source_yields_no_nodes() {
-        assert!(parse_file("").is_empty());
+        assert!(parse_file("", false).is_empty());
         // tree-sitter is error-tolerant; garbage shouldn't panic.
-        let _ = parse_file("@@@ ??? not typescript {{{");
+        let _ = parse_file("@@@ ??? not typescript {{{", false);
     }
 
     #[test]
     fn multiline_nodes_are_dedented() {
         let src = "function f() {\n  const x = {\n    a: 1,\n  };\n}\n";
-        let nodes = parse_file(src);
+        let nodes = parse_file(src, false);
         let decl = &nodes[0].children[0];
         assert_eq!(decl.lines, vec!["const x = {", "  a: 1,", "};"]);
+    }
+
+    #[test]
+    fn tsx_source_parses_with_the_tsx_grammar() {
+        // Under the TS grammar this JSX only parses via error recovery (inner
+        // ERROR nodes); the TSX grammar parses it as real syntax. The surfaced
+        // skeleton happens to survive recovery for simple components, but the
+        // guarantee we want — JSX is valid syntax, not tolerated garbage — only
+        // holds with the TSX grammar.
+        let src = "function Badge({ label }: { label: string }) {\n  return <span className=\"badge\">{label}</span>;\n}\n\nconst App = () => <Badge label=\"hi\" />;\n";
+        let nodes = parse_file(src, true);
+        let kinds: Vec<(&str, &str)> = nodes.iter().map(|n| (n.kind.as_str(), n.name.as_str())).collect();
+        assert_eq!(
+            kinds,
+            vec![("FunctionDeclaration", "Badge"), ("VariableDeclaration", "App")],
+            "JSX parses to clean top-level nodes"
+        );
+        let child_kinds: Vec<&str> = nodes[0].children.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(child_kinds, vec!["ReturnStatement"], "JSX body parses cleanly");
     }
 }
 

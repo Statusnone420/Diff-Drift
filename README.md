@@ -30,13 +30,13 @@ The screenshot uses mock data from the browser-mode fallback. It does not expose
 
 ## What It Does
 
-Diff Drift opens a git repository, compares the working tree against `HEAD`, and renders changed TypeScript/TSX as a structured AST diff instead of a raw text patch. It live-flags security-relevant drift such as widened validation regexes, removed sanitizers, hardcoded secrets, disabled TLS checks, broadened CORS, downgraded crypto verification, permissive logging, and unvetted dependencies.
+Diff Drift opens a git repository, compares the working tree against `HEAD`, and renders changed TypeScript/TSX as a structured AST diff instead of a raw text patch. It live-flags security-relevant drift such as widened validation regexes, removed sanitizers, hardcoded secrets, disabled TLS checks, broadened CORS, downgraded crypto verification, permissive logging, and undeclared imports. Flags come from heuristic pattern rules over changed code — they are review prompts, not verdicts.
 
 A session is simply everything that changed since the last commit, which is exactly the review surface an AI coding agent leaves behind.
 
 ## Highlights
 
-- Native Windows desktop app built with Tauri 2, Rust, React, TypeScript, Vite, and WebView2.
+- Native Windows desktop app built with Tauri 2, Rust, React, TypeScript, Vite, and WebView2. Windows 11 is the supported platform; a macOS build is experimental and currently unsigned (no signing or notarization is configured yet). The bundle identifier `io.github.statusnone420.diffdrift` is stable and must not change — macOS update and notarization continuity depend on it.
 - Rust core handles git access, tree-sitter parsing, AST diffing, rule evaluation, watching, triage state, approval fingerprints, and Markdown/JSON export.
 - Live watcher re-analyzes on save, preserves selection, and revokes approval when meaningful drift changes.
 - Triage supports per-flag dismiss/restore, dismiss all, dismissed sections, and per-repo persistence.

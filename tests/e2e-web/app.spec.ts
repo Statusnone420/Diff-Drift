@@ -29,7 +29,7 @@ test.describe("Diff Drift browser-mode E2E", () => {
 
     await page.getByRole("button", { name: "Dismiss all" }).click();
     await expect(page.getByText("No active risk flags")).toBeVisible();
-    await expect(page.getByText(/No risks in 3 changed files/)).toBeVisible();
+    await expect(page.getByText(/No flags in 3 changed files/)).toBeVisible();
     await expectNoAxeViolations(page);
   });
 
@@ -47,8 +47,8 @@ test.describe("Diff Drift browser-mode E2E", () => {
     await expect(page.getByRole("button", { name: "Dismiss all" })).toBeDisabled();
     await expect(page.getByText("No active risk flags")).toBeVisible();
 
-    await page.getByRole("button", { name: "Approve session" }).click();
-    await expect(page.getByText(/Approved at/)).toBeVisible();
+    await page.getByRole("button", { name: "Mark reviewed" }).click();
+    await expect(page.getByText(/Reviewed at/)).toBeVisible();
 
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Export report" }).click();

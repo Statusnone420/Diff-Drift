@@ -30,12 +30,12 @@ export function Sidebar({
             </span>
           </div>
           <div className="sb-meta">
-            <div className="meta-cell">
-              <div className="k">Changed</div>
+            <div className="meta-cell" title="All uncommitted changes, any file type">
+              <div className="k">Changed files</div>
               <div className="v">{session.changedFiles}</div>
             </div>
-            <div className="meta-cell">
-              <div className="k">Risks</div>
+            <div className="meta-cell" title="Active risk flags across analyzed files">
+              <div className="k">Flags</div>
               <div className="v">{session.riskCount}</div>
             </div>
             <div className="meta-cell meta-agent">
@@ -48,8 +48,8 @@ export function Sidebar({
           </div>
         </div>
 
-        <div className="sb-section-label">
-          <span>Files analyzed</span>
+        <div className="sb-section-label" title="Only TypeScript/TSX files are parsed and checked">
+          <span>TS/TSX analyzed</span>
           <span className="count">{files.length}</span>
         </div>
         <div className="file-list">
@@ -59,7 +59,7 @@ export function Sidebar({
               className={"file-row" + (f.id === selectedId ? " sel" : "")}
               onClick={() => onSelect(f.id)}
               aria-current={f.id === selectedId || undefined}
-              aria-label={`${f.dir}${f.name}, ${f.risks} risk${f.risks === 1 ? "" : "s"}`}
+              aria-label={`${f.dir}${f.name}, ${f.risks} flag${f.risks === 1 ? "" : "s"}`}
             >
               <span className="file-ic">{Ico.file}</span>
               <span className="file-main">

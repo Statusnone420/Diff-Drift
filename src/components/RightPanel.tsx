@@ -89,7 +89,6 @@ export function RightPanel({ flags, activeFlagId, onSelectFlag, onDismissFlag, o
         <span className="rp-title">
           {Ico.flag}Risk Flags <span className="tcount">{active.length}</span>
         </span>
-        <span className="rp-sort">severity ↓</span>
       </div>
       <div className="col-scroll">
         {active.length === 0 ? (
@@ -142,6 +141,7 @@ export function RightPanel({ flags, activeFlagId, onSelectFlag, onDismissFlag, o
         )}
       </div>
       <div className="rp-foot">
+        <div className="rp-note">Heuristic checks on TypeScript/TSX drift — review, don't trust blindly.</div>
         <button
           className="btn primary rp-export"
           onClick={() => void exportNow()}

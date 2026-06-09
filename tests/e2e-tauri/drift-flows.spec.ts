@@ -29,10 +29,10 @@ test("native watcher reacts to regex insertion, signature mutation, export, and 
     await expect(page.locator(".flag.high .flag-type")).toHaveText("Loose regex pattern", {
       timeout: 15_000,
     });
-    await expect(page.locator(".summary-pill")).toContainText(/1 risks? across 1 files?/);
+    await expect(page.locator(".summary-pill")).toContainText(/1 flag in 1 file/);
 
     await writeFile(path.join(repoRoot, "src", "api.ts"), signatureMutationApi(), "utf8");
-    await page.getByRole("button", { name: /src\/api\.ts, 0 risks/ }).click();
+    await page.getByRole("button", { name: /src\/api\.ts, 0 flags/ }).click();
     const modifiedFunction = page.locator(".node-card.state-modified").filter({
       hasText: "parseToken",
     });
@@ -51,7 +51,7 @@ test("native watcher reacts to regex insertion, signature mutation, export, and 
     await page.getByRole("button", { name: "Dismiss all" }).click();
     await expect(page.locator(".rp-empty-title")).toHaveText("No active risk flags");
     await expect(page.locator(".rp-title .tcount")).toHaveText("0");
-    await expect(page.locator(".summary-pill")).toContainText(/No risks/);
+    await expect(page.locator(".summary-pill")).toContainText(/No flags/);
   } finally {
     await app?.close();
     await removeTestRoot(repoRoot);

@@ -38,8 +38,9 @@ pub fn analyze_file(root: &Path, rel: &str, deps: &HashSet<String>) -> Option<Fi
         _ => {}
     }
 
-    let before = parse_file(before_src.as_deref().unwrap_or(""));
-    let after = parse_file(after_src.as_deref().unwrap_or(""));
+    let tsx = rel.to_ascii_lowercase().ends_with(".tsx");
+    let before = parse_file(before_src.as_deref().unwrap_or(""), tsx);
+    let after = parse_file(after_src.as_deref().unwrap_or(""), tsx);
     let mut nodes = diff_nodes(&before, &after);
 
     let file_id = sanitize_id(rel);
@@ -60,7 +61,7 @@ pub fn analyze_file(root: &Path, rel: &str, deps: &HashSet<String>) -> Option<Fi
             id: file_id,
             name,
             dir,
-            lang: "TypeScript".into(),
+            lang: if tsx { "TSX" } else { "TypeScript" }.into(),
             risks: flags.len() as u32,
             summary,
             nodes,
@@ -316,6 +317,26 @@ mod tests {
         assert_eq!(res.flags.len(), 1);
         assert!(matches!(res.flags[0].severity, Severity::High));
         assert_eq!(res.flags[0].r#type, "Loose regex pattern");
+    }
+
+    #[test]
+    fn analyze_new_tsx_file_uses_tsx_grammar() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let new_file = fixture.root.join("auth/Badge.tsx");
+        std::fs::write(
+            new_file,
+            "function Badge({ label }: { label: string }) {\n  return <span className=\"badge\">{label}</span>;\n}\n",
+        )
+        .unwrap();
+
+        let deps = read_deps(&root);
+        let res = analyze_file(&root, "auth/Badge.tsx", &deps).expect("new tsx file is drift");
+        assert_eq!(res.entry.lang, "TSX");
+        assert_eq!(res.flags.len(), 0, "clean JSX must not produce garbage flags");
+        assert_eq!(res.entry.nodes.len(), 1, "JSX parses to one clean node: {:?}", res.entry.summary);
+        assert_eq!(res.entry.nodes[0].kind, "FunctionDeclaration");
+        assert_eq!(res.entry.nodes[0].name, "Badge");
     }
 
     #[test]

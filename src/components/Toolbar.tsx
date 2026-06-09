@@ -25,14 +25,16 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove }
         </span>
       </div>
       <div className="spacer" />
-      <div className={"summary-pill" + (zero || session.approved ? " calm" : "")}>
+      <div className={"summary-pill" + (zero ? " calm" : "")}>
         <span className="dot" />
         <span>
           {session.approved ? (
             <>
-              <b>Approved</b>
+              <b>Reviewed</b>
               {session.approvedAt ? ` at ${session.approvedAt}` : ""} —{" "}
-              {zero ? "no active risks" : `${session.riskCount} active risks`}
+              {zero
+                ? "no open flags"
+                : `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open`}
             </>
           ) : zero ? (
             noDrift ? (
@@ -41,12 +43,19 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove }
               </>
             ) : (
               <>
-                <b>No risks</b> in {session.changedFiles} changed files
+                <b>No flags</b> in {session.changedFiles} changed file
+                {session.changedFiles === 1 ? "" : "s"}
               </>
             )
           ) : (
             <>
-              <b>{session.riskCount} risks</b> across <b>{session.fileCount} files</b>
+              <b>
+                {session.riskCount} flag{session.riskCount === 1 ? "" : "s"}
+              </b>{" "}
+              in{" "}
+              <b>
+                {session.fileCount} file{session.fileCount === 1 ? "" : "s"}
+              </b>
             </>
           )}
         </span>
@@ -67,13 +76,13 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove }
           aria-pressed={session.approved}
           title={
             noDrift
-              ? "Nothing to approve — the working tree is clean"
+              ? "Nothing to review — the working tree is clean"
               : session.approved
-                ? "Approved — click to revoke. Approval auto-revokes when the drift changes."
-                : "Mark this drift as reviewed and approved"
+                ? "Reviewed — click to revoke. Clears automatically when the drift changes."
+                : "Records that you reviewed this drift. Auto-clears when files change again."
           }
         >
-          {session.approved ? <>{Ico.check} Approved</> : "Approve session"}
+          {session.approved ? <>{Ico.check} Reviewed</> : "Mark reviewed"}
         </button>
       </div>
     </div>

@@ -31,8 +31,8 @@ export const mockSession: SessionData = {
     {
       id: "f2",
       severity: "medium",
-      type: "Unvetted nested package",
-      desc: "New dependency “jwt-tiny-decode” has no audit trail and pulls 4 transitive packages.",
+      type: "Undeclared import",
+      desc: "Imports “jwt-tiny-decode”, which isn't declared in package.json — verify it's intentional.",
       fileId: "auth",
       filePath: "auth/validateToken.ts",
       nodePath: "import › jwt-tiny-decode",

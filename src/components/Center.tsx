@@ -82,7 +82,7 @@ export function Center({
         <div className="tree">
           {noChanges && (
             <div className="empty-note">
-              {Ico.shield}No security-relevant structural changes in this file.
+              {Ico.shield}Only formatting or whitespace changed — no structural drift in this file.
             </div>
           )}
           <div className="tree-root">

@@ -237,7 +237,7 @@ impl Rule for EnvTlsReject {
         static RE: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(r#"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#).unwrap()
         });
-        if RE.is_match(&joined(&node.after)) {
+        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Disabled TLS verification",
@@ -494,6 +494,11 @@ impl Rule for UnvettedPackage {
         if module.is_empty() || module.starts_with('.') || module.starts_with('/') {
             return None; // relative/local import, not a dependency
         }
+        // Bundler/tsconfig path aliases (`@/…`, `~/…`, `~…`) and Node subpath
+        // imports (`#…`) resolve inside the repo, not to an npm package.
+        if module.starts_with("@/") || module.starts_with('~') || module.starts_with('#') {
+            return None;
+        }
         if is_node_builtin(module) {
             return None; // Node standard library import, not an npm package.
         }
@@ -504,8 +509,8 @@ impl Rule for UnvettedPackage {
         }
         finding(
             Severity::Medium,
-            "Unvetted nested package",
-            format!("Imports `{module}`, which isn't declared in package.json — no audit trail."),
+            "Undeclared import",
+            format!("Imports `{module}`, which isn't declared in package.json — verify it's intentional."),
         )
     }
 }
@@ -681,6 +686,18 @@ mod tests {
         assert!(EnvTlsReject
             .check(&node("ExpressionStatement", NodeState::Added, &[], &["process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';"]), &ctx())
             .is_some());
+        // already present before the edit → not newly introduced, no fire
+        assert!(EnvTlsReject
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // legacy"],
+                    &["process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';"],
+                ),
+                &ctx()
+            )
+            .is_none());
     }
 
     #[test]
@@ -747,6 +764,25 @@ mod tests {
 
         import.name = "./local".into();
         assert!(UnvettedPackage.check(&import, &with_deps).is_none(), "relative import not flagged");
+    }
+
+    #[test]
+    fn unvetted_package_ignores_path_aliases() {
+        let no_deps = RuleCtx { deps: HashSet::new(), is_test_file: false };
+        let mut import = node("ImportDeclaration", NodeState::Added, &[], &["import x from \"@/components/x\";"]);
+
+        for module in ["@/components/x", "~/lib/x", "~utils/x", "#app/x"] {
+            import.name = module.into();
+            assert!(
+                UnvettedPackage.check(&import, &no_deps).is_none(),
+                "path alias `{module}` resolves inside the repo, not to an npm package"
+            );
+        }
+
+        // a real undeclared package still fires, and with the new wording
+        import.name = "left-pad".into();
+        let f = UnvettedPackage.check(&import, &no_deps).expect("undeclared dep flagged");
+        assert_eq!(f.r#type, "Undeclared import");
     }
 
     #[test]
