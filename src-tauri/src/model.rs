@@ -20,6 +20,9 @@ pub struct AstNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     pub state: NodeState,
+    /// Per-node review state (changed nodes only): true while the node's content
+    /// matches what the user last marked reviewed. Content drift resets it.
+    pub reviewed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flag_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +65,10 @@ pub struct FileEntry {
     pub lang: String,
     pub risks: u32,
     pub summary: String,
+    /// Changed (added/modified/removed) nodes in this file, including children.
+    pub changed_nodes: u32,
+    /// How many of those the user has marked reviewed (content still matching).
+    pub reviewed_nodes: u32,
     pub nodes: Vec<AstNode>,
 }
 
@@ -81,6 +88,9 @@ pub struct Session {
     pub changed_files: u32,
     pub risk_count: u32,
     pub file_count: u32,
+    /// Review progress across the whole drift: changed nodes vs reviewed nodes.
+    pub changed_nodes: u32,
+    pub reviewed_nodes: u32,
     /// True while the stored approval matches the current drift fingerprint —
     /// any change to the drift auto-revokes it.
     pub approved: bool,

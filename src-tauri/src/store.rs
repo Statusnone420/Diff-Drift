@@ -18,6 +18,11 @@ pub struct RepoState {
     /// Last trusted commit SHA — pinned by "Mark reviewed". The drift "since the
     /// agent started" is everything between this commit and the working tree.
     pub trust_point: Option<String>,
+    /// Per-node review state: node id → content hash at review time. A node whose
+    /// content changes after review automatically reads as unreviewed again —
+    /// that IS the "new since last look" signal. Rebuilt (and pruned) whenever
+    /// the whole drift is marked reviewed.
+    pub reviewed_nodes: BTreeMap<String, String>,
 }
 
 impl RepoState {
@@ -26,6 +31,7 @@ impl RepoState {
             && self.approved_fingerprint.is_none()
             && self.baseline.is_none()
             && self.trust_point.is_none()
+            && self.reviewed_nodes.is_empty()
     }
 }
 

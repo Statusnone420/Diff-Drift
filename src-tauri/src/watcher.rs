@@ -123,6 +123,23 @@ pub fn set_dismissed(shared: &Shared, flag_id: String, dismissed: bool) -> Resul
     })
 }
 
+/// Mark one node reviewed (pinning its current content hash) or unreviewed.
+/// A reviewed node whose content later changes reads as unreviewed again.
+pub fn set_node_reviewed(shared: &Shared, node_id: String, reviewed: bool) -> Result<SessionData, String> {
+    update_triage(shared, |state, results| {
+        if reviewed {
+            if let Some(hash) = results
+                .values()
+                .find_map(|r| session::find_node_hash(&r.entry.nodes, &node_id))
+            {
+                state.reviewed_nodes.insert(node_id, hash);
+            }
+        } else {
+            state.reviewed_nodes.remove(&node_id);
+        }
+    })
+}
+
 pub fn dismiss_all(shared: &Shared) -> Result<SessionData, String> {
     update_triage(shared, |state, results| {
         state
@@ -174,6 +191,9 @@ pub fn set_approved(shared: &Shared, approved: bool, approved_at: Option<String>
     }
     state.approved_fingerprint = Some(session::fingerprint(&g.results));
     state.approved_at = approved_at;
+    // Reviewing the whole drift reviews every node in it — and rebuilding the
+    // map from the current drift prunes entries for nodes that no longer exist.
+    state.reviewed_nodes = session::changed_node_hashes(&g.results).into_iter().collect();
     g.repo_state = state;
     g.baseline = baseline;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
@@ -506,6 +526,36 @@ mod tests {
         let data = set_approved(&shared, false, None).unwrap();
         assert!(!data.session.approved);
         assert_eq!(data.session.trust_point.as_deref(), Some(&head[..7]));
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn node_review_toggles_persist_and_mark_reviewed_reviews_everything() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+
+        let initial = current_data(&shared).unwrap();
+        let total = initial.session.changed_nodes;
+        let node_id = initial.flags[0].node_id.clone();
+
+        let data = set_node_reviewed(&shared, node_id.clone(), true).unwrap();
+        assert_eq!(data.session.reviewed_nodes, 1, "one node reviewed");
+        let data = set_node_reviewed(&shared, node_id.clone(), false).unwrap();
+        assert_eq!(data.session.reviewed_nodes, 0, "toggle back off");
+
+        // Unknown node ids are a no-op, not an error (live updates can race a click).
+        let data = set_node_reviewed(&shared, "no:such:node".into(), true).unwrap();
+        assert_eq!(data.session.reviewed_nodes, 0);
+
+        // "Mark reviewed" reviews the whole drift.
+        let data = set_approved(&shared, true, Some("12:30".into())).unwrap();
+        assert_eq!(data.session.reviewed_nodes, total, "everything reviewed");
+        assert!(data.files.iter().all(|f| f.reviewed_nodes == f.changed_nodes));
+        {
+            let g = shared.lock().unwrap();
+            assert_eq!(g.repo_state.reviewed_nodes.len() as u32, total, "map rebuilt + pruned");
+        }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
 

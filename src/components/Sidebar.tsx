@@ -38,6 +38,12 @@ export function Sidebar({
               <div className="k">Flags</div>
               <div className="v">{session.riskCount}</div>
             </div>
+            <div className="meta-cell meta-wide" title="Changed nodes you've marked reviewed">
+              <div className="k">Reviewed</div>
+              <div className="v">
+                {session.reviewedNodes}/{session.changedNodes}
+              </div>
+            </div>
             <div className="meta-cell meta-agent">
               <span className="av">{Ico.eye}</span>
               <div>
@@ -59,13 +65,21 @@ export function Sidebar({
               className={"file-row" + (f.id === selectedId ? " sel" : "")}
               onClick={() => onSelect(f.id)}
               aria-current={f.id === selectedId || undefined}
-              aria-label={`${f.dir}${f.name}, ${f.risks} flag${f.risks === 1 ? "" : "s"}`}
+              aria-label={`${f.dir}${f.name}, ${f.risks} flag${f.risks === 1 ? "" : "s"}, ${f.reviewedNodes} of ${f.changedNodes} changes reviewed`}
             >
               <span className="file-ic">{Ico.file}</span>
               <span className="file-main">
                 <span className="file-name">{f.name}</span>
                 <span className="file-dir">{f.dir}</span>
               </span>
+              {f.changedNodes > 0 && (
+                <span
+                  className={"file-review" + (f.reviewedNodes === f.changedNodes ? " done" : "")}
+                  title={`${f.reviewedNodes} of ${f.changedNodes} changed nodes reviewed`}
+                >
+                  {f.reviewedNodes}/{f.changedNodes}
+                </span>
+              )}
               <span className={"file-badge r" + (f.risks > 1 ? 2 : f.risks)}>{f.risks}</span>
             </button>
           ))}

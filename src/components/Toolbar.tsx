@@ -79,6 +79,14 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
         </span>
       </div>
       <div className="spacer" />
+      {session.changedNodes > 0 && (
+        <span
+          className={"review-progress" + (session.reviewedNodes === session.changedNodes ? " done" : "")}
+          title="Changed nodes marked reviewed across the whole drift"
+        >
+          {session.reviewedNodes}/{session.changedNodes} reviewed
+        </span>
+      )}
       <div className={"summary-pill" + (zero ? " calm" : "")}>
         <span className="dot" />
         <span>

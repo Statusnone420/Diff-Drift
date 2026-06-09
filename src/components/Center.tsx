@@ -10,6 +10,7 @@ interface CenterProps {
   activeNodeId: string | null;
   pulseId: string | null;
   onToggleFlag: (flagId: string) => void;
+  onToggleReviewed: (nodeId: string, reviewed: boolean) => void;
   registerRef: (id: string, el: HTMLDivElement | null) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
 }
@@ -21,6 +22,7 @@ export function Center({
   activeNodeId,
   pulseId,
   onToggleFlag,
+  onToggleReviewed,
   registerRef,
   scrollRef,
 }: CenterProps) {
@@ -76,6 +78,14 @@ export function Center({
           <span className="lg">
             <span className="sw r" />−{counts.removed} removed
           </span>
+          {file.changedNodes > 0 && (
+            <span
+              className={"lg lg-review" + (file.reviewedNodes === file.changedNodes ? " done" : "")}
+              title="Changed nodes you've marked reviewed in this file"
+            >
+              {file.reviewedNodes}/{file.changedNodes} reviewed
+            </span>
+          )}
         </div>
       </div>
       <div className="col-scroll" ref={scrollRef}>
@@ -94,6 +104,7 @@ export function Center({
                 activeNodeId={activeNodeId}
                 pulseId={pulseId}
                 onToggleFlag={onToggleFlag}
+                onToggleReviewed={onToggleReviewed}
                 registerRef={registerRef}
               />
             ))}

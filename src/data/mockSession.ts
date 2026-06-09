@@ -15,6 +15,8 @@ export const mockSession: SessionData = {
     changedFiles: 3,
     riskCount: 3,
     fileCount: 2,
+    changedNodes: 6,
+    reviewedNodes: 0,
     approved: false,
   },
 
@@ -63,12 +65,15 @@ export const mockSession: SessionData = {
       lang: "TypeScript",
       risks: 2,
       summary: "1 added · 3 modified · 1 removed",
+      changedNodes: 5,
+      reviewedNodes: 0,
       nodes: [
         {
           id: "n_import",
           kind: "ImportDeclaration",
           name: "jwt-tiny-decode",
           state: "added",
+          reviewed: false,
           flagId: "f2",
           after: ['import { decode } from "jwt-tiny-decode";'],
         },
@@ -78,12 +83,14 @@ export const mockSession: SessionData = {
           name: "validateToken",
           signature: "(token: string): boolean",
           state: "unchanged",
+          reviewed: false,
           children: [
             {
               id: "n_pattern",
               kind: "VariableDeclaration",
               name: "pattern",
               state: "modified",
+          reviewed: false,
               flagId: "f1",
               before: ["const pattern = /^[A-Za-z0-9_\\-]{32,}$/;"],
               after: ["const pattern = /.*/;"],
@@ -93,6 +100,7 @@ export const mockSession: SessionData = {
               kind: "IfStatement",
               name: "guard",
               state: "modified",
+          reviewed: false,
               before: [
                 "if (!pattern.test(token)) {",
                 '  throw new Error("Malformed token");',
@@ -105,6 +113,7 @@ export const mockSession: SessionData = {
               kind: "ExpressionStatement",
               name: "sanitizeInput(token)",
               state: "removed",
+          reviewed: false,
               before: ["sanitizeInput(token);"],
             },
             {
@@ -112,6 +121,7 @@ export const mockSession: SessionData = {
               kind: "ReturnStatement",
               name: "return",
               state: "modified",
+          reviewed: false,
               before: ["return verify(token, PUBLIC_KEY);"],
               after: ["return decode(token);"],
             },
@@ -126,6 +136,8 @@ export const mockSession: SessionData = {
       lang: "TypeScript",
       risks: 1,
       summary: "1 modified",
+      changedNodes: 1,
+      reviewedNodes: 0,
       nodes: [
         {
           id: "n_logger",
@@ -133,6 +145,7 @@ export const mockSession: SessionData = {
           name: "createLogger",
           signature: "config",
           state: "modified",
+          reviewed: false,
           flagId: "f3",
           before: [
             "const logger = createLogger({",
@@ -148,6 +161,7 @@ export const mockSession: SessionData = {
           name: "log",
           signature: "(level: Level, msg: string): void",
           state: "unchanged",
+          reviewed: false,
         },
       ],
     },
@@ -158,6 +172,8 @@ export const mockSession: SessionData = {
       lang: "TypeScript",
       risks: 0,
       summary: "Formatting only",
+      changedNodes: 0,
+      reviewedNodes: 0,
       nodes: [
         {
           id: "n_handle",
@@ -165,6 +181,7 @@ export const mockSession: SessionData = {
           name: "handleSession",
           signature: "(req: Request, res: Response)",
           state: "unchanged",
+          reviewed: false,
         },
         {
           id: "n_export",
@@ -172,6 +189,7 @@ export const mockSession: SessionData = {
           name: "router",
           signature: "default export",
           state: "unchanged",
+          reviewed: false,
         },
       ],
     },

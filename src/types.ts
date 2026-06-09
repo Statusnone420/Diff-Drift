@@ -9,6 +9,8 @@ export interface AstNode {
   name: string; // display name
   signature?: string; // dim trailing text
   state: NodeState;
+  /** Changed nodes only: true while content matches the last "reviewed" mark. */
+  reviewed: boolean;
   flagId?: string; // ties to a risk flag
   before?: string[]; // removed/old lines (for removed + modified)
   after?: string[]; // added/new lines (for added + modified)
@@ -37,6 +39,10 @@ export interface FileEntry {
   lang: string;
   risks: number;
   summary: string;
+  /** Changed (added/modified/removed) nodes in this file, children included. */
+  changedNodes: number;
+  /** How many of those are currently marked reviewed. */
+  reviewedNodes: number;
   nodes: AstNode[];
 }
 
@@ -53,6 +59,9 @@ export interface Session {
   changedFiles: number;
   riskCount: number;
   fileCount: number;
+  /** Review progress across the whole drift. */
+  changedNodes: number;
+  reviewedNodes: number;
   /** True while the stored approval matches the current drift; auto-revokes on change. */
   approved: boolean;
   approvedAt?: string;

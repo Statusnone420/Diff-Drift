@@ -159,6 +159,17 @@ fn dismiss_all(shared: State<'_, Shared>) -> Result<SessionData, String> {
     watcher::dismiss_all(shared.inner())
 }
 
+/// Mark a single changed node reviewed (or unreviewed). Persisted per repo;
+/// auto-resets if the node's content changes afterwards.
+#[tauri::command]
+fn set_node_reviewed(
+    shared: State<'_, Shared>,
+    node_id: String,
+    reviewed: bool,
+) -> Result<SessionData, String> {
+    watcher::set_node_reviewed(shared.inner(), node_id, reviewed)
+}
+
 /// Switch the drift baseline: "head", "trust-point", "merge-base", or any git
 /// rev. Persisted per repo; re-analyzes everything and returns the new session.
 #[tauri::command]
@@ -246,6 +257,7 @@ pub fn run() {
             init_session,
             set_flag_dismissed,
             dismiss_all,
+            set_node_reviewed,
             set_baseline,
             set_approved,
             export_report,

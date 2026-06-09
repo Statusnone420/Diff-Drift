@@ -95,6 +95,7 @@ fn node(
         name: p.name.clone(),
         signature: p.signature.clone(),
         state,
+        reviewed: false, // computed at assemble from the persisted review map
         flag_id: None,
         before,
         after,

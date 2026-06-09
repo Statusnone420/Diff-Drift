@@ -155,6 +155,8 @@ pub fn analyze_file(
             lang: if tsx { "TSX" } else { "TypeScript" }.into(),
             risks: flags.len() as u32,
             summary,
+            changed_nodes: 0, // computed at assemble (needs the review map)
+            reviewed_nodes: 0,
             nodes,
         },
         flags,
@@ -190,8 +192,15 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
     for f in flags.iter().filter(|f| !f.dismissed) {
         *active_by_file.entry(f.file_id.as_str()).or_insert(0) += 1;
     }
+    let (mut changed_nodes, mut reviewed_nodes) = (0u32, 0u32);
     for entry in files.iter_mut() {
         entry.risks = active_by_file.get(entry.id.as_str()).copied().unwrap_or(0);
+        let (mut changed, mut done) = (0u32, 0u32);
+        mark_reviewed(&mut entry.nodes, &state.reviewed_nodes, &mut changed, &mut done);
+        entry.changed_nodes = changed;
+        entry.reviewed_nodes = done;
+        changed_nodes += changed;
+        reviewed_nodes += done;
     }
 
     files.sort_by(|a, b| {
@@ -221,6 +230,8 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
         changed_files: meta.changed_files,
         risk_count,
         file_count,
+        changed_nodes,
+        reviewed_nodes,
         approved,
         approved_at: if approved { state.approved_at.clone() } else { None },
     };
@@ -252,23 +263,89 @@ pub fn fingerprint(results: &HashMap<String, FileResult>) -> String {
 
 /// Deterministic hash of a file's diffed node tree (structure + before/after text).
 fn content_hash(nodes: &[AstNode]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    fn walk(ns: &[AstNode], h: &mut std::collections::hash_map::DefaultHasher) {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    hash_nodes_into(nodes, &mut h);
+    std::hash::Hasher::finish(&h)
+}
+
+fn hash_nodes_into(ns: &[AstNode], h: &mut std::collections::hash_map::DefaultHasher) {
+    use std::hash::Hash;
+    for n in ns {
+        // Deliberately excludes `reviewed` and `flag_id` — the hash describes the
+        // CODE content, so triage state can never change a fingerprint.
+        n.kind.hash(h);
+        n.name.hash(h);
+        n.signature.hash(h);
+        (n.state as u8).hash(h);
+        n.before.hash(h);
+        n.after.hash(h);
+        if let Some(c) = &n.children {
+            hash_nodes_into(c, h);
+        }
+    }
+}
+
+/// Content hash of ONE node (subtree included) — what the per-node review state
+/// pins. If the node's content changes after review, the stored hash no longer
+/// matches and the node reads as unreviewed ("new since last look").
+pub fn node_hash(n: &AstNode) -> String {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    hash_nodes_into(std::slice::from_ref(n), &mut h);
+    format!("{:016x}", std::hash::Hasher::finish(&h))
+}
+
+/// Find a node by id and return its content hash.
+pub fn find_node_hash(nodes: &[AstNode], id: &str) -> Option<String> {
+    for n in nodes {
+        if n.id == id {
+            return Some(node_hash(n));
+        }
+        if let Some(found) = n.children.as_deref().and_then(|c| find_node_hash(c, id)) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Every changed node's (id, content hash) — what "Mark reviewed" records.
+pub fn changed_node_hashes(results: &HashMap<String, FileResult>) -> Vec<(String, String)> {
+    fn walk(ns: &[AstNode], out: &mut Vec<(String, String)>) {
         for n in ns {
-            n.kind.hash(h);
-            n.name.hash(h);
-            n.signature.hash(h);
-            (n.state as u8).hash(h);
-            n.before.hash(h);
-            n.after.hash(h);
+            if n.state != NodeState::Unchanged {
+                out.push((n.id.clone(), node_hash(n)));
+            }
             if let Some(c) = &n.children {
-                walk(c, h);
+                walk(c, out);
             }
         }
     }
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    walk(nodes, &mut h);
-    h.finish()
+    let mut out = Vec::new();
+    for r in results.values() {
+        walk(&r.entry.nodes, &mut out);
+    }
+    out
+}
+
+/// Apply the persisted review map to a (cloned) node tree, counting changed and
+/// still-reviewed nodes as it goes.
+fn mark_reviewed(
+    nodes: &mut [AstNode],
+    reviewed: &std::collections::BTreeMap<String, String>,
+    changed: &mut u32,
+    done: &mut u32,
+) {
+    for n in nodes.iter_mut() {
+        if n.state != NodeState::Unchanged {
+            *changed += 1;
+            n.reviewed = reviewed.get(&n.id).is_some_and(|h| *h == node_hash(n));
+            if n.reviewed {
+                *done += 1;
+            }
+        }
+        if let Some(c) = &mut n.children {
+            mark_reviewed(c, reviewed, changed, done);
+        }
+    }
 }
 
 /// Package names declared in the repo's package.json (deps of every kind).
@@ -593,6 +670,70 @@ mod tests {
         assert_eq!(data.session.risk_count, 0);
         assert_eq!(data.session.file_count, 0);
         assert!(data.files.iter().all(|f| f.risks == 0));
+    }
+
+    #[test]
+    fn node_review_state_tracks_content_and_feeds_progress_counts() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+
+        // Nothing reviewed yet: progress is 0 of N.
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        assert!(data.session.changed_nodes >= 6, "fixture has plenty of changed nodes");
+        assert_eq!(data.session.reviewed_nodes, 0);
+        assert!(data.files.iter().all(|f| f.reviewed_nodes == 0));
+
+        // Review one changed node (the loose-regex pattern).
+        let pattern_id = data.flags[0].node_id.clone();
+        let hash = results
+            .values()
+            .find_map(|r| find_node_hash(&r.entry.nodes, &pattern_id))
+            .expect("flagged node exists");
+        let mut state = RepoState::default();
+        state.reviewed_nodes.insert(pattern_id.clone(), hash);
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        assert_eq!(data.session.reviewed_nodes, 1);
+        let file = data.files.iter().find(|f| f.id == data.flags[0].file_id).unwrap();
+        assert_eq!(file.reviewed_nodes, 1);
+        let node_reviewed = |nodes: &[crate::model::AstNode]| -> bool {
+            fn find(ns: &[crate::model::AstNode], id: &str) -> Option<bool> {
+                for n in ns {
+                    if n.id == id {
+                        return Some(n.reviewed);
+                    }
+                    if let Some(f) = n.children.as_deref().and_then(|c| find(c, id)) {
+                        return Some(f);
+                    }
+                }
+                None
+            }
+            find(nodes, &pattern_id).unwrap()
+        };
+        assert!(node_reviewed(&file.nodes), "the node itself reads reviewed");
+
+        // The node's content changes → the pinned hash no longer matches →
+        // unreviewed again. That IS "new since last look".
+        std::fs::write(
+            fixture.root.join("auth/validateToken.ts"),
+            r#"import { decode } from "jwt-tiny-decode";
+
+function validateToken(token: string): boolean {
+  const pattern = /.+/;
+  if (false) {
+    throw new Error("Malformed token");
+  }
+  return decode(token);
+}
+"#,
+        )
+        .unwrap();
+        let deps = read_deps(&root);
+        let mut changed = results.clone();
+        let updated = analyze_file(&root, "auth/validateToken.ts", &deps, &Baseline::default()).unwrap();
+        changed.insert("auth/validateToken.ts".into(), updated);
+        let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
+        assert_eq!(data.session.reviewed_nodes, 0, "content drift resets the review");
     }
 
     #[test]

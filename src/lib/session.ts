@@ -49,6 +49,13 @@ export async function dismissAll(): Promise<SessionData> {
   return invoke<SessionData>("dismiss_all");
 }
 
+/** Mark one changed node reviewed (or unreviewed). Persisted per repo;
+ * auto-resets when the node's content changes afterwards. */
+export async function setNodeReviewed(nodeId: string, reviewed: boolean): Promise<SessionData> {
+  if (!isTauri) return browserSetNodeReviewed(nodeId, reviewed);
+  return invoke<SessionData>("set_node_reviewed", { nodeId, reviewed });
+}
+
 /** Approve (or revoke approval of) the current drift; auto-revokes when drift changes.
  * Approving also pins the trust point to the current HEAD commit. */
 export async function setApproved(approved: boolean, approvedAt: string | null): Promise<SessionData> {
@@ -138,7 +145,41 @@ function browserRecount(d: SessionData): SessionData {
   });
   d.session.riskCount = active.length;
   d.session.fileCount = d.files.filter((f) => f.risks > 0).length;
+  let changed = 0;
+  let reviewed = 0;
+  const walk = (ns: SessionData["files"][number]["nodes"], file: SessionData["files"][number]) => {
+    ns.forEach((n) => {
+      if (n.state !== "unchanged") {
+        changed++;
+        file.changedNodes++;
+        if (n.reviewed) {
+          reviewed++;
+          file.reviewedNodes++;
+        }
+      }
+      if (n.children) walk(n.children, file);
+    });
+  };
+  d.files.forEach((file) => {
+    file.changedNodes = 0;
+    file.reviewedNodes = 0;
+    walk(file.nodes, file);
+  });
+  d.session.changedNodes = changed;
+  d.session.reviewedNodes = reviewed;
   return structuredClone(d);
+}
+
+function browserSetNodeReviewed(nodeId: string, reviewed: boolean): SessionData {
+  const d = browserData ?? browserMock();
+  const walk = (ns: SessionData["files"][number]["nodes"]) => {
+    ns.forEach((n) => {
+      if (n.id === nodeId) n.reviewed = reviewed;
+      if (n.children) walk(n.children);
+    });
+  };
+  d.files.forEach((f) => walk(f.nodes));
+  return browserRecount(d);
 }
 
 function browserSetDismissed(flagId: string, dismissed: boolean): SessionData {
@@ -159,8 +200,17 @@ function browserSetApproved(approved: boolean, approvedAt: string | null): Sessi
   const d = browserData ?? browserMock();
   d.session.approved = approved;
   d.session.approvedAt = approved ? approvedAt ?? undefined : undefined;
-  if (approved) d.session.trustPoint = "ab12cd3"; // mock "pinned at HEAD"
-  return structuredClone(d);
+  if (!approved) return structuredClone(d);
+  // Mirrors the backend: reviewing the drift pins a trust point and reviews every node.
+  d.session.trustPoint = "ab12cd3";
+  const walk = (ns: SessionData["files"][number]["nodes"]) => {
+    ns.forEach((n) => {
+      if (n.state !== "unchanged") n.reviewed = true;
+      if (n.children) walk(n.children);
+    });
+  };
+  d.files.forEach((f) => walk(f.nodes));
+  return browserRecount(d);
 }
 
 function browserSetBaseline(spec: string): SessionData {

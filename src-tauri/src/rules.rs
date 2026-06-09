@@ -598,6 +598,7 @@ mod tests {
             name: "x".into(),
             signature: None,
             state,
+            reviewed: false,
             flag_id: None,
             before: if before.is_empty() {
                 None
