@@ -233,6 +233,7 @@ fn analyze_file_in(
                     largest as f64 / (1024.0 * 1024.0),
                     MAX_PARSE_BYTES / (1024 * 1024)
                 ),
+                skipped: true,
                 changed_nodes: 0,
                 reviewed_nodes: 0,
                 nodes: Vec::new(),
@@ -313,6 +314,7 @@ fn drift_result(
             lang: lang.label().into(),
             risks: flags.len() as u32,
             summary,
+            skipped: false,
             changed_nodes: 0, // computed at assemble (needs the review map)
             reviewed_nodes: 0,
             nodes,
@@ -407,6 +409,7 @@ pub fn assemble(
 
     let risk_count = flags.iter().filter(|f| !f.dismissed).count() as u32;
     let file_count = files.iter().filter(|f| f.risks > 0).count() as u32;
+    let skipped_files = files.iter().filter(|f| f.skipped).count() as u32;
     let approved = state.approved_fingerprint.as_deref() == Some(fingerprint(results).as_str());
     let session = Session {
         project: meta.project.clone(),
@@ -418,6 +421,7 @@ pub fn assemble(
         changed_files: meta.changed_files,
         risk_count,
         file_count,
+        skipped_files,
         changed_nodes,
         reviewed_nodes,
         approved,

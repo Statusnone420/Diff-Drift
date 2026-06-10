@@ -309,6 +309,7 @@ pub fn analyze_package_json(
             lang: "JSON".into(),
             risks: flags.len() as u32,
             summary: parts.join(" · "),
+            skipped: false,
             changed_nodes: 0, // computed at assemble
             reviewed_nodes: 0,
             nodes,

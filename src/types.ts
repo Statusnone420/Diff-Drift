@@ -39,6 +39,8 @@ export interface FileEntry {
   lang: string;
   risks: number;
   summary: string;
+  /** True when the file was too large to analyze — listed but not parsed. */
+  skipped?: boolean;
   /** Changed (added/modified/removed) nodes in this file, children included. */
   changedNodes: number;
   /** How many of those are currently marked reviewed. */
@@ -59,6 +61,8 @@ export interface Session {
   changedFiles: number;
   riskCount: number;
   fileCount: number;
+  /** Files listed but not analyzed because they exceed the parse-size cap. */
+  skippedFiles: number;
   /** Review progress across the whole drift. */
   changedNodes: number;
   reviewedNodes: number;

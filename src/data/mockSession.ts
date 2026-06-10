@@ -15,6 +15,7 @@ export const mockSession: SessionData = {
     changedFiles: 3,
     riskCount: 3,
     fileCount: 2,
+    skippedFiles: 0,
     changedNodes: 6,
     reviewedNodes: 0,
     approved: false,
