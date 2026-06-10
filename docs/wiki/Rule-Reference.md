@@ -1,6 +1,8 @@
 # Rule Reference
 
-Diff Drift rules are small heuristics over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. They favor useful review prompts over complete static analysis.
+Diff Drift rules run over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. They favor useful review prompts over complete static analysis.
+
+Most code rules match **structurally**: the changed node's before/after source is re-parsed with the file's tree-sitter grammar and matched against a compiled query, so a pattern inside a string literal or comment never triggers a flag and reformatting cannot evade one. A `match type` column below records how each rule matches. Rules marked **differential** compare the node's before and after versions — a question only a diff-aware tool can ask — and a few intentionally stay text-based where that is the correct tool (secret markers, env-var assignments). When a structural parse fails, a rule falls back to its text pattern rather than going silent.
 
 ## Severity
 
@@ -10,20 +12,22 @@ Diff Drift rules are small heuristics over changed TS/TSX/JS/JSX AST nodes and p
 
 ## Rules
 
-| Rule | Severity | Triggers On | Notes |
-| --- | --- | --- | --- |
-| Hardcoded secret | High | AWS-style keys, OpenAI-style keys, or private key markers added to source | Suppressed in test-like files. Does not detect every secret format. |
-| Dynamic code execution | High | Newly added `eval(...)` or `new Function(...)` | Flags code execution from strings. |
-| Child process execution | High | Newly added `child_process` imports or subprocess calls | Suppressed in test-like files. |
-| Disabled TLS verification | High | `rejectUnauthorized: false` or `NODE_TLS_REJECT_UNAUTHORIZED=0` introduced | Review for local-dev exceptions before dismissing. |
-| Broadened CORS | High | CORS opened to `*` or `true` | Suppressed in test-like files. |
-| Weakened cookie flags | High | Removal of `httpOnly`, `secure`, or weakening `sameSite` | Only fires on modified nodes where the before/after comparison shows weakening. |
-| Loose regex pattern | High | Validation regex widened to catch-all forms such as `/.*/` | Best effort, not a full regex semantic analyzer. |
-| Crypto downgrade | Medium | Verification-like call replaced with decode/parse-like call | Intended for token/JWT review prompts. |
-| Undeclared import | Medium | New bare package import not declared in root `package.json` | Ignores relative imports, Node built-ins, and common path aliases. |
-| Disabled guard | Low | Guard rewritten to `if (false)` | Review whether a check was intentionally bypassed. |
-| Removed sanitization | Low | Sanitization, escaping, or validation call removed | Can produce review prompts for renames or refactors. |
-| Permissive logging config | Low | Redaction emptied or log level lowered | Review before committing sensitive logging changes. |
+| Rule | Severity | Match type | Triggers On | Notes |
+| --- | --- | --- | --- | --- |
+| Hardcoded secret | High | Text (markers) | AWS-style keys, OpenAI-style keys, or private key markers added to source | Suppressed in test-like files. Marker-based, like gitleaks; does not detect every secret format. |
+| Dynamic code execution | High | Structural | Newly added `eval(...)`/`window.eval(...)` or `new Function(...)` | Matches the real call syntax (incl. optional chaining and member form); the words inside a string or comment never flag. |
+| Child process execution | High | Text | Newly added `child_process` imports or subprocess calls | Suppressed in test-like files. |
+| Disabled TLS verification | High | Structural + text | `rejectUnauthorized: false` (object property) or `NODE_TLS_REJECT_UNAUTHORIZED=0` (env var) introduced | The object-property form matches quoted or unquoted keys; the env-var form is text. Review for local-dev exceptions before dismissing. |
+| Broadened CORS | High | Structural | CORS `origin` opened to `*`, `true`, or `['*']` | Matches the property value structurally, including the array form. Suppressed in test-like files. |
+| Weakened cookie flags | High | Text (differential) | Removal of `httpOnly`, `secure`, or weakening `sameSite` | Only fires on modified nodes where the before/after comparison shows weakening. |
+| Loose regex pattern | High | Structural (differential) | Validation regex widened to a catch-all, or — on a modified node — its anchors dropped or length bound removed | Extracts regex literals from before and after and compares them; the flag names exactly what weakened. Tightening a pattern stays quiet. Not a full regex semantic analyzer. |
+| Crypto downgrade | Medium | Structural (differential) | A verify/sign call replaced by a newly introduced decode/parse call | Compares real callee names, so async variants (`verifyAsync`, `decodeJwt`) count and generic `parseInt`/`parseFloat` do not. Only fires when the decode is new. |
+| Guard removed | Medium | Structural (differential) | A call that ran only inside an `if` guard before now runs unconditionally | Suppresses the common refactor to an early-return/throw guard clause. A diff-only signal. |
+| Error handling removed | Low | Structural (differential) | A `try` that wrapped surviving calls is gone after the change | Suppressed when the change converts to a `.catch()` promise chain. |
+| Undeclared import | Medium | Node field | New bare package import not declared in root `package.json` | Ignores relative imports, Node built-ins, and common path aliases. |
+| Disabled guard | Low | Structural | Guard condition rewritten to a constant-falsy value (`if (false)`, `if (0)`, `if (null)`, `if (undefined)`) | Closes the `if (0)` bypass of the old literal-only check. |
+| Removed sanitization | Low | Structural (differential) | A `sanitize`/`escape`/`validate` call removed, including wrapper-stripping (`save(escapeSql(x))` → `save(x)`) | Compares real callee names, so a name surviving only in a comment neither flags nor masks. A rename to a still-validating name can still prompt. |
+| Permissive logging config | Low | Text (differential) | Redaction emptied or log level lowered | Review before committing sensitive logging changes. |
 
 ## Dependency Drift Rules (package.json)
 

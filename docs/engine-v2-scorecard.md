@@ -110,6 +110,19 @@ number. A future parse-once-per-node shared-tree refactor (rules currently re-ru
 against a memoized parse) would recover most of it without touching detection — logged for
 v0.4.
 
+## Blind-agent scorecard
+
+The deterministic, CI-gated engine eval (`npm run eval:engine`) covers all five new cases
+and runs them through the real binary: **20/20**. That is the gate that can't go green on
+broken detection.
+
+The advisory blind-agent scorecard (`npm run eval:agent`) scores model-generated review
+answers against the frozen v3 rubric. It is **not** re-run here: a faithful rescore needs
+fresh *blind* model answers for the new cases, and generating those inside the change that
+adds the cases would defeat the blindness the scorecard depends on. Left pending fresh
+blind answers — the same "independent validation pending" posture the v1→v3 history already
+takes, rather than a self-graded number.
+
 ## Known out-of-lane evasions
 
 In-scope red-team findings became tests and fixes (above). These surfaced evasions are
