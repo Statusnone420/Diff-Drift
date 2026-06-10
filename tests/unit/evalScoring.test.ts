@@ -109,12 +109,14 @@ describe("blind-agent answer scoring", () => {
         findings: [
           {
             title: "Dependency added without lockfile entry",
+            severity: "high",
             filePath: "package.json",
             riskType: "Dependency drift / lockfile inconsistency",
             evidence: "ghost-payments-sdk is not in the lockfile",
           },
           {
             title: "New install-time script",
+            severity: "medium",
             filePath: "package.json",
             riskType: "npm script drift",
             evidence: "postinstall runs node scripts/bootstrap.js",
@@ -146,18 +148,21 @@ describe("blind-agent answer scoring", () => {
         findings: [
           {
             title: "Access cookie lost HttpOnly",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "httpOnly removed",
           },
           {
             title: "Refresh cookie lost Secure",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "secure removed",
           },
           {
             title: "CSRF cookie downgraded SameSite",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "sameSite Strict became None",
@@ -220,12 +225,14 @@ describe("blind-agent answer scoring", () => {
       findings: [
         {
           title: "Loose regex pattern disables validation",
+          severity: "high",
           filePath: "src/auth.ts",
           riskType: "Loose regex pattern",
           evidence: "pattern changed to /.*/",
         },
         {
           title: "Suspicious but unrelated observation",
+          severity: "low",
           filePath: "src/other.ts",
           riskType: "Speculation",
           evidence: "not an expected flag",
@@ -329,6 +336,31 @@ describe("blind-agent answer scoring", () => {
       "answer.decision",
     );
     expect(() => validateAgentAnswer({ decision: "approve" })).toThrow("answer.findings");
+  });
+
+  it("enforces the full finding shape the packet prompt requires", () => {
+    // The prompt asks for severity, filePath, riskType, and evidence; a
+    // title-only finding must not be scoreable.
+    const full = {
+      title: "Loose regex pattern disables validation",
+      severity: "high",
+      filePath: "src/auth.ts",
+      riskType: "Loose regex pattern",
+      evidence: "pattern changed to /.*/",
+    };
+    expect(() =>
+      validateAgentAnswer({ decision: "block", findings: [full] }),
+    ).not.toThrow();
+
+    for (const missing of ["severity", "filePath", "riskType", "evidence"] as const) {
+      const { [missing]: _omitted, ...partial } = full;
+      expect(() => validateAgentAnswer({ decision: "block", findings: [partial] })).toThrow(
+        `answer.findings[0].${missing}`,
+      );
+    }
+    expect(() =>
+      validateAgentAnswer({ decision: "block", findings: [{ ...full, severity: "fatal" }] }),
+    ).toThrow("answer.findings[0].severity");
   });
 
   it("accepts scoring-ignored notes and validates their shape", () => {

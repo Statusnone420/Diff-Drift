@@ -225,8 +225,15 @@ export function validateAgentAnswer(answer) {
     if (!finding || typeof finding !== "object") {
       throw new Error(`answer.findings[${index}] must be an object`);
     }
-    if (typeof finding.title !== "string" || finding.title.trim() === "") {
-      throw new Error(`answer.findings[${index}].title is required`);
+    // The packet prompt requires the full shape; a title-only "finding"
+    // cannot claim the cite-evidence-and-location credit the rubric awards.
+    for (const field of ["title", "filePath", "riskType", "evidence"]) {
+      if (typeof finding[field] !== "string" || finding[field].trim() === "") {
+        throw new Error(`answer.findings[${index}].${field} is required`);
+      }
+    }
+    if (!severityScore.has(normalize(finding.severity))) {
+      throw new Error(`answer.findings[${index}].severity must be high, medium, or low`);
     }
   }
   // Benchmark v2: benign observations live in `notes`, which scoring ignores
