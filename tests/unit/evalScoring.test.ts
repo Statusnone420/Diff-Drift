@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { diffDriftCommand, diffDriftRuntimeEnv } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
+import { collectEvaluators, externalValidationPending } from "../../eval/lib/evaluators.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
 import {
   scoreAgentAnswer,
@@ -420,29 +421,55 @@ describe("blind-agent answer scoring", () => {
       findings: [
         {
           title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.falsePositives).toBe(0);
+    expect(score.relatedFindings).toEqual(["Loose regex pattern disables validation"]);
+
+    const summary = summarizeAgentScores([score]);
+    expect(summary.precision).toBe(1);
+    expect(summary.matchedReportedFindings).toBe(0);
+    expect(summary.totalRelatedFindings).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+  });
+
+  it("penalizes duplicate copies of an already matched finding", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
           severity: "high",
           filePath: "src/auth.ts",
           riskType: "Loose regex pattern",
           evidence: "pattern changed to /.*/",
         },
         {
-          title: "Validation now accepts arbitrary input",
+          title: "Loose regex pattern repeated",
           severity: "high",
           filePath: "src/auth.ts",
-          riskType: "Validation regression",
-          evidence: "The loose regex pattern accepts any token string.",
+          riskType: "Loose regex pattern",
+          evidence: "same pattern changed to /.*/",
         },
       ],
     });
 
-    expect(score.falsePositives).toBe(0);
-    expect(score.relatedFindings).toEqual(["Validation now accepts arbitrary input"]);
+    expect(score.matchedFindings).toBe(1);
+    expect(score.relatedFindings).toEqual([]);
+    expect(score.unmatchedFindings).toEqual(["Loose regex pattern repeated"]);
+    expect(score.falsePositives).toBe(1);
+    expect(score.score).toBe(95);
 
     const summary = summarizeAgentScores([score]);
-    expect(summary.precision).toBe(1);
-    expect(summary.matchedReportedFindings).toBe(1);
-    expect(summary.totalRelatedFindings).toBe(1);
-    expect(summary.totalFalsePositives).toBe(0);
+    expect(summary.precision).toBe(0.5);
+    expect(summary.totalRelatedFindings).toBe(0);
+    expect(summary.totalFalsePositives).toBe(1);
   });
 
   it("treats a clean benign run as perfect precision", () => {
@@ -521,6 +548,20 @@ describe("blind-agent answer scoring", () => {
     expect(html).toContain("Independent external validation pending");
     expect(html).toContain("Precision");
     expect(html).toContain("claude-fable-5 (model, 10)");
+  });
+
+  it("keeps validation pending until a human evaluator is explicitly external", () => {
+    const internalPanel = collectEvaluators([
+      { evaluator: { id: "model-batch", kind: "model" }, score: 100 },
+      { evaluator: { id: "maintainer-pass", kind: "human" }, score: 100 },
+    ]);
+    expect(externalValidationPending(internalPanel)).toBe(true);
+
+    const externalPanel = collectEvaluators([
+      { evaluator: { id: "model-batch", kind: "model" }, score: 100 },
+      { evaluator: { id: "outside-reviewer", kind: "human", external: true }, score: 100 },
+    ]);
+    expect(externalValidationPending(externalPanel)).toBe(false);
   });
 
   it("rejects malformed answers", () => {

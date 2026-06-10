@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { collectAnswerFiles } from "./lib/answers.mjs";
 import { loadCases, projectRoot } from "./lib/cases.mjs";
+import { collectEvaluators, externalValidationPending, normalizeEvaluator } from "./lib/evaluators.mjs";
 import { evalOutputRoot, writeAgentScores } from "./lib/packets.mjs";
 import { scoreAgentAnswer, summarizeAgentScores } from "./lib/score.mjs";
 
@@ -41,10 +42,9 @@ const result = {
   averageScore: Math.round(scores.reduce((sum, score) => sum + score.score, 0) / scores.length),
   summary: summarizeAgentScores(scores),
   evaluators,
-  // Honest by construction: a single evaluator — or any all-model panel —
-  // is not independent external validation. The banner clears only when a
-  // human evaluator outside the project has contributed answers.
-  externalValidationPending: evaluators.length < 2 || evaluators.every((e) => e.kind !== "human"),
+  // Honest by construction: a single evaluator, any all-model panel, or an
+  // internal human pass is not independent external validation.
+  externalValidationPending: externalValidationPending(evaluators),
   scores,
 };
 writeAgentScores(result);
@@ -59,30 +59,4 @@ console.log(`Scorecard: ${join(evalOutputRoot, "results", "agents", "latest.html
 
 function idFromFile(file) {
   return file.split(/[\\/]/).pop().replace(/\.json$/i, "");
-}
-
-function normalizeEvaluator(evaluator) {
-  if (!evaluator || typeof evaluator !== "object") {
-    return { id: "unspecified", kind: "unknown" };
-  }
-  const kind = ["model", "human"].includes(evaluator.kind) ? evaluator.kind : "unknown";
-  return {
-    id: typeof evaluator.id === "string" && evaluator.id.trim() ? evaluator.id.trim() : "unspecified",
-    kind,
-    ...(typeof evaluator.note === "string" && evaluator.note.trim() ? { note: evaluator.note.trim() } : {}),
-  };
-}
-
-function collectEvaluators(scored) {
-  const byId = new Map();
-  for (const score of scored) {
-    const key = `${score.evaluator.id}|${score.evaluator.kind}`;
-    const entry = byId.get(key) ?? { ...score.evaluator, cases: 0, scoreSum: 0 };
-    entry.cases += 1;
-    entry.scoreSum += score.score;
-    byId.set(key, entry);
-  }
-  return [...byId.values()]
-    .map(({ scoreSum, ...entry }) => ({ ...entry, averageScore: Math.round(scoreSum / entry.cases) }))
-    .sort((a, b) => a.id.localeCompare(b.id));
 }

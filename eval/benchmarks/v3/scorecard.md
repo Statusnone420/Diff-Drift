@@ -1,6 +1,6 @@
 # Diff Drift blind-agent scorecard
 
-Generated: 2026-06-10T16:16:12.121Z
+Generated: 2026-06-10T16:40:54.071Z
 
 > Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.
 

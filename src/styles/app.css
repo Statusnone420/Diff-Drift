@@ -1378,6 +1378,18 @@
   background: var(--live);
   box-shadow: 0 0 8px var(--live);
 }
+.summary-pill.skipped {
+  background: rgba(231, 168, 62, 0.14);
+  border-color: rgba(231, 168, 62, 0.34);
+  color: #f0c069;
+}
+.summary-pill.skipped b {
+  color: #ffe1a3;
+}
+.summary-pill.skipped .dot {
+  background: var(--modified);
+  box-shadow: 0 0 8px rgba(231, 168, 62, 0.7);
+}
 
 /* footer transient — "Updated just now" after a live re-scan */
 .sb-foot.updated {

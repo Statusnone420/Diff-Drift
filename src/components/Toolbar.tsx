@@ -16,6 +16,16 @@ const KNOWN_BASELINES = ["head", "trust-point", "merge-base"];
 export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, onSetBaseline }: ToolbarProps) {
   const zero = session.riskCount === 0;
   const noDrift = session.changedFiles === 0;
+  const skippedFiles = session.skippedFiles ?? 0;
+  const hasSkippedFiles = skippedFiles > 0;
+  const skippedCopy = `${skippedFiles} skipped file${skippedFiles === 1 ? "" : "s"} not analyzed`;
+  const summaryClassName = [
+    "summary-pill",
+    zero ? "calm" : "",
+    zero && hasSkippedFiles ? "skipped" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const isCustom = !KNOWN_BASELINES.includes(session.baselineSpec);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -194,19 +204,29 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           {session.reviewedNodes}/{session.changedNodes} reviewed
         </span>
       )}
-      <div className={"summary-pill" + (zero ? " calm" : "")} data-testid="summary-pill">
+      <div className={summaryClassName} data-testid="summary-pill">
         <span className="dot" />
         <span>
           {session.approved ? (
             <>
               <b>Reviewed</b>
               {session.approvedAt ? ` at ${session.approvedAt}` : ""} —{" "}
-              {zero
-                ? "no open flags"
-                : `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open`}
+              {zero ? (
+                hasSkippedFiles ? (
+                  <>no open flags; {skippedCopy}</>
+                ) : (
+                  "no open flags"
+                )
+              ) : (
+                `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open`
+              )}
             </>
           ) : zero ? (
-            noDrift ? (
+            hasSkippedFiles ? (
+              <>
+                <b>No flags</b> — {skippedCopy}
+              </>
+            ) : noDrift ? (
               <>
                 <b>Clean</b> — no changes since {baselinePhrase(session)}
               </>
@@ -234,7 +254,13 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           className="btn"
           onClick={onDismissAll}
           disabled={zero}
-          title={zero ? "No active flags to dismiss" : "Dismiss every active flag (persisted for this repo)"}
+          title={
+            zero
+              ? hasSkippedFiles
+                ? `No active flags to dismiss; ${skippedCopy}`
+                : "No active flags to dismiss"
+              : "Dismiss every active flag (persisted for this repo)"
+          }
         >
           Dismiss all
         </button>

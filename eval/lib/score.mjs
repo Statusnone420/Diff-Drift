@@ -126,12 +126,17 @@ export function scoreAgentAnswer(caseDef, answer) {
 
   const usedFindings = new Set(usedFindingTypes.keys());
   const unmatchedFindings = findings.filter((_finding, index) => !usedFindings.has(index));
-  const relatedFindings = unmatchedFindings.filter((finding) =>
-    required.some((expected) => findingRelatedToExpected(finding, expected)),
-  );
-  const falsePositiveFindings = unmatchedFindings.filter((finding) =>
-    !required.some((expected) => findingRelatedToExpected(finding, expected)),
-  );
+  const relatedFindings = [];
+  const falsePositiveFindings = [];
+  for (const finding of unmatchedFindings) {
+    if (findingDuplicatesMatchedExpectation(finding, required, matched)) {
+      falsePositiveFindings.push(finding);
+    } else if (required.some((expected) => findingRelatedToExpected(finding, expected))) {
+      relatedFindings.push(finding);
+    } else {
+      falsePositiveFindings.push(finding);
+    }
+  }
   const falsePositives = falsePositiveFindings.length;
   const expectedDecision = caseDef.agent?.expectedDecision ?? inferDecision(required);
   const acceptedDecisions = acceptedDecisionSet(caseDef, expectedDecision);
@@ -327,6 +332,15 @@ function findingFileMatches(finding, expected) {
 
 function findingRelatedToExpected(finding, expected) {
   return findingFileMatches(finding, expected) && findingMatchesRisk(finding, expected);
+}
+
+function findingDuplicatesMatchedExpectation(finding, required, matched) {
+  return required.some(
+    (expected, index) =>
+      matched.has(index) &&
+      findingFileMatches(finding, expected) &&
+      findingMatchesExpected(finding, expected),
+  );
 }
 
 function topRiskRankedFirst(findings, required) {

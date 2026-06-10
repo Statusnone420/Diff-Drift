@@ -97,4 +97,25 @@ describe("Toolbar status copy", () => {
     renderToolbar(makeSession({ changedFiles: 3, riskCount: 2, fileCount: 2 }));
     expect(screen.getByTestId("summary-pill")).toHaveTextContent("2 flags in 2 files");
   });
+
+  it("does not let skipped files read as fully clean when there are no flags", () => {
+    renderToolbar(makeSession({ changedFiles: 1, riskCount: 0, fileCount: 1, skippedFiles: 1 }));
+    expect(screen.getByTestId("summary-pill")).toHaveTextContent("No flags — 1 skipped file not analyzed");
+  });
+
+  it("keeps approved no-flag copy honest when files were skipped", () => {
+    renderToolbar(
+      makeSession({
+        approved: true,
+        approvedAt: "12:00",
+        changedFiles: 1,
+        riskCount: 0,
+        fileCount: 1,
+        skippedFiles: 1,
+      }),
+    );
+    expect(screen.getByTestId("summary-pill")).toHaveTextContent(
+      "Reviewed at 12:00 — no open flags; 1 skipped file not analyzed",
+    );
+  });
 });

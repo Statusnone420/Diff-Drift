@@ -33,7 +33,7 @@ export function renderAgentScorecard(result) {
   if (result.evaluators?.length) {
     lines.push(
       `Evaluators: ${result.evaluators
-        .map((e) => `${e.id} (${e.kind}, ${e.cases} case${e.cases === 1 ? "" : "s"})`)
+        .map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases} case${e.cases === 1 ? "" : "s"})`)
         .join(", ")}`,
       "",
     );
@@ -120,7 +120,7 @@ export function renderAgentDashboard(result) {
     ...(summary.precision !== undefined ? [metric("Precision", summary.precision, "var(--purple)")] : []),
   ];
   const evaluatorLine = result.evaluators?.length
-    ? `<span>${escapeHtml(result.evaluators.map((e) => `${e.id} (${e.kind}, ${e.cases})`).join(" | "))}</span>`
+    ? `<span>${escapeHtml(result.evaluators.map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases})`).join(" | "))}</span>`
     : "<span>No evaluator metadata</span>";
   const pendingBanner = result.externalValidationPending
     ? `<p class="pending"><b>Independent external validation pending.</b> All answers so far come from a model-only panel. Treat this as an internal product-quality signal, not third-party validation.</p>`
@@ -773,6 +773,10 @@ function renderScoreHistogram(scores) {
   </div>`;
     })
     .join("\n");
+}
+
+function evaluatorKind(evaluator) {
+  return evaluator.external === true ? `external ${evaluator.kind}` : evaluator.kind;
 }
 
 function describeScoreRange(scores) {

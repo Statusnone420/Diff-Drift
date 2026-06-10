@@ -19,6 +19,8 @@ import {
   ensureDiffDriftBuilt,
 } from "../eval/lib/cli.mjs";
 
+const CHECK_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
+
 const configPath = resolve(projectRoot, process.argv[2] ?? "fp-replay.config.json");
 if (!existsSync(configPath)) {
   console.error(`No config at ${configPath}.`);
@@ -67,6 +69,7 @@ function replayTarget(target) {
       cwd: projectRoot,
       encoding: "utf8",
       env: diffDriftRuntimeEnv(stateHome),
+      maxBuffer: CHECK_OUTPUT_MAX_BUFFER,
     });
     if (run.error) {
       return { label, repoPath, baseline, error: run.error.message };
