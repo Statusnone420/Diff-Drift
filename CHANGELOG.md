@@ -4,16 +4,23 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-10
+
 ### Added
 
 - Evaluation harness: a CI-gated engine benchmark (`npm run eval:engine`), blind-review packets, and advisory scorecards with evaluator attribution, precision, and per-rule recall.
 - Eval cases for TSX, JSX, and `.mjs` drift, a noisy benign refactor, and the oversized-file skip.
-- Tag-triggered release workflow producing an NSIS installer, SHA256 checksums, CycloneDX SBOMs, and a draft GitHub Release (signing scaffolded, not yet configured).
+- Tag-triggered release workflow producing NSIS and MSI installers, SHA256 checksums, CycloneDX SBOMs, and a draft GitHub Release (signing scaffolded, not yet configured).
 - Oversized-file guard: files over 2 MB are skipped before any content is read and shown as "Skipped — file too large to analyze".
 - Skipped-file counts in session data and reports, so "0 active flags" can't be mistaken for "fully analyzed".
 - Exact entry-name parsing for `yarn.lock` and `pnpm-lock.yaml` (the old substring check let similar names vouch for each other).
 - FP-replay script (`npm run eval:fp-replay`) to measure flag noise on your own repos; it builds the CLI if missing.
 - Trust documentation: `SECURITY.md`, threat model, privacy/data-flow page, eval methodology, A/B study design, FAQ, and this changelog.
+- Strict CLI baselines: an explicit `--baseline` that cannot resolve exits `64` with the cause on stderr — never a silent `HEAD` fallback. `--help` exits `0`.
+- Content-pinned dismissals: each dismissal stores a hash of the flagged node; meaningful changes to the node resurface the flag.
+- Watcher full-scans when a root lockfile (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`) changes, so phantom-dependency flags track lockfile content.
+- CLI subprocess integration tests and vitest + Testing Library component tests.
+- CI: native Tauri build smoke job, advisory native E2E, and dependency audit gates (`cargo audit`, `npm audit`).
 
 ### Fixed
 
@@ -25,23 +32,10 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 - README rewritten: problem-first lead, tool comparison, install-from-release, CI/hook examples, honestly captioned scorecard.
 - `schemaVersion` bumped to 3 for the new skipped-file fields.
 - Blind-answer validation enforces the full finding shape (severity, file path, risk type, evidence).
-- The published benchmark's raw answers and scorecard are committed under `eval/benchmarks/v2/` so the score is reproducible from a fresh clone.
-- Blind-agent benchmark moved to v2 (findings/notes prompt contract, realistic JSX fixture); v1's 72/100 is preserved in the methodology history, v2 scores 98/100.
+- The published benchmark's raw answers and scorecards are committed under `eval/benchmarks/v2/` and `eval/benchmarks/v3/` so scores are reproducible from a fresh clone.
+- Blind-agent benchmark moved through v2 and v3; v1's 72/100 is preserved in the methodology history, v2 scored 98/100, and v3 scores 100/100 with severity included in scoring.
 - The release workflow refuses tags that don't match all three version fields.
 - Privacy/security docs now state the verifiable claim: no HTTP client in the compiled Windows binary (the framework lists one for other platforms).
-
-## [0.2.1] — 2026-06-09
-
-### Added
-
-- Strict CLI baselines: an explicit `--baseline` that cannot resolve exits `64` with the cause on stderr — never a silent `HEAD` fallback. `--help` exits `0`.
-- Content-pinned dismissals: each dismissal stores a hash of the flagged node; meaningful changes to the node resurface the flag.
-- Watcher full-scans when a root lockfile (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`) changes, so phantom-dependency flags track lockfile content.
-- CLI subprocess integration tests and vitest + Testing Library component tests.
-- CI: native Tauri build smoke job, advisory native E2E, and dependency audit gates (`cargo audit`, `npm audit`).
-
-### Changed
-
 - Binary renamed to `diff-drift` to match the product and docs.
 - Plain-language baseline picker ("Review changes since") and baseline-honest copy throughout the UI and docs.
 

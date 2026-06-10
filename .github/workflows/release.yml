@@ -1,7 +1,7 @@
 name: Release
 
-# Tag-driven releases: push vX.Y.Z and this builds the Windows NSIS installer,
-# signs it when signing is configured (see docs/wiki/Release-and-Platform-Support.md),
+# Tag-driven releases: push vX.Y.Z and this builds the Windows NSIS + MSI installers,
+# signs them when signing is configured (see docs/wiki/Release-and-Platform-Support.md),
 # generates SHA256 checksums + CycloneDX SBOMs, and opens a DRAFT GitHub Release.
 # A human smoke-tests the draft installer before publishing — never auto-publish.
 
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   windows-installer:
-    name: Windows installer (NSIS + checksums + SBOM)
+    name: Windows installers (NSIS + MSI + checksums + SBOM)
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v6
@@ -49,18 +49,20 @@ jobs:
 
       - run: npm ci
 
-      - name: Build NSIS installer
-        run: npm run tauri -- build --bundles nsis --ci
+      - name: Build Windows installers
+        run: npm run tauri -- build --bundles nsis,msi --ci
 
       - name: Collect artifacts
         id: artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist-release | Out-Null
-          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe"
-          if ($installer.Count -ne 1) { Write-Error "Expected exactly one NSIS installer, found $($installer.Count)" }
-          Copy-Item $installer.FullName dist-release/
-          "installer=dist-release/$($installer.Name)" >> $env:GITHUB_OUTPUT
+          $nsis = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe")
+          $msi = @(Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi")
+          if ($nsis.Count -ne 1) { Write-Error "Expected exactly one NSIS installer, found $($nsis.Count)" }
+          if ($msi.Count -ne 1) { Write-Error "Expected exactly one MSI installer, found $($msi.Count)" }
+          Copy-Item $nsis[0].FullName dist-release/
+          Copy-Item $msi[0].FullName dist-release/
 
       # --- Code signing (skipped unless configured) -------------------------
       # Gate on the repo VARIABLE `WINDOWS_SIGNING` ('azure' | 'pfx' | unset).
@@ -68,7 +70,7 @@ jobs:
       # docs/wiki/Release-and-Platform-Support.md. With WINDOWS_SIGNING unset
       # both steps are skipped and the release is published as UNSIGNED.
 
-      - name: Sign installer (Azure Trusted Signing)
+      - name: Sign NSIS installer (Azure Trusted Signing)
         if: vars.WINDOWS_SIGNING == 'azure'
         uses: azure/trusted-signing-action@v0.5.1
         with:
@@ -84,7 +86,23 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Sign installer (Authenticode PFX)
+      - name: Sign MSI installer (Azure Trusted Signing)
+        if: vars.WINDOWS_SIGNING == 'azure'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TS_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TS_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TS_PROFILE }}
+          files-folder: dist-release
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign installers (Authenticode PFX)
         if: vars.WINDOWS_SIGNING == 'pfx'
         shell: pwsh
         env:
@@ -95,16 +113,22 @@ jobs:
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_B64))
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
-          & $signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "${{ steps.artifacts.outputs.installer }}"
+          Get-ChildItem dist-release -File | Where-Object Extension -in '.exe', '.msi' | ForEach-Object {
+            & $signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           Remove-Item $pfx -Force
 
-      - name: Verify signature
+      - name: Verify signatures
         if: vars.WINDOWS_SIGNING == 'azure' || vars.WINDOWS_SIGNING == 'pfx'
         shell: pwsh
         run: |
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
-          & $signtool verify /pa "${{ steps.artifacts.outputs.installer }}"
+          Get-ChildItem dist-release -File | Where-Object Extension -in '.exe', '.msi' | ForEach-Object {
+            & $signtool verify /pa $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       # --- SBOMs + checksums -------------------------------------------------
 
@@ -153,7 +177,7 @@ jobs:
 
           $signingNote
 
-          Artifacts: NSIS installer, SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
+          Artifacts: NSIS installer, MSI installer, SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
           "@
           # Pass the multiline body via a file — avoids any PowerShell/native
           # argument quoting or newline-encoding pitfalls.

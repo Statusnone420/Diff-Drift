@@ -4,16 +4,17 @@
 
 Windows 11 is the supported platform for the current public build.
 
-Build the Windows NSIS installer:
+Build the Windows installers:
 
 ```bash
-npm run tauri -- build --bundles nsis
+npm run tauri -- build --bundles nsis,msi --ci
 ```
 
 Expected output:
 
 ```text
 src-tauri/target/release/bundle/nsis/Diff Drift_0.2.1_x64-setup.exe
+src-tauri/target/release/bundle/msi/Diff Drift_0.2.1_x64_en-US.msi
 ```
 
 ## macOS Status
@@ -49,8 +50,8 @@ Releases are tag-driven. The [release workflow](../../.github/workflows/release.
 1. Verify the tree: `npm run test:rust`, `npm run build`, `npm run test:unit`, `npm run test:e2e:web`, `npm run eval:engine`. Run native E2E for native behavior changes.
 2. Align the three version fields and move `CHANGELOG.md` entries from `[Unreleased]` to the new version. Commit as `chore(release): prepare X.Y.Z`.
 3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. The workflow builds the NSIS installer, signs it if signing secrets are configured (see below), generates `SHA256SUMS.txt` and CycloneDX SBOMs, and creates a **draft** GitHub Release with all artifacts attached.
-5. Download the draft installer and smoke-test on a real machine: install, open a real repo, dismiss/restore a flag, mark reviewed, export a report, run `diff-drift check --json`.
+4. The workflow builds the NSIS and MSI installers, signs them if signing secrets are configured (see below), generates `SHA256SUMS.txt` and CycloneDX SBOMs, and creates a **draft** GitHub Release with all artifacts attached.
+5. Download the draft installers and smoke-test on a real machine: install, open a real repo, dismiss/restore a flag, mark reviewed, export a report, run `diff-drift check --json`.
 6. Paste the changelog section into the release notes and publish the draft. Never publish a release whose installer you have not run.
 
 ## Code Signing (not yet configured)
@@ -70,7 +71,7 @@ An org that cannot trust downloaded binaries can build from the tag and compare:
 
 - Toolchains: Node per `package.json` `engines` (CI uses Node 22), Rust stable, Microsoft C++ Build Tools, WebView2.
 - Dependencies are fully pinned by `package-lock.json` and `src-tauri/Cargo.lock` (both committed). Use `npm ci`, never `npm install`, for verification builds.
-- Build: `npm ci && npm run tauri -- build --bundles nsis`.
+- Build: `npm ci && npm run tauri -- build --bundles nsis,msi --ci`.
 - Caveat: NSIS installers embed timestamps, so installer bytes will not be hash-identical across builds. Compare the contained `diff-drift.exe` and resources, or rebuild and diff the bundle directory contents. Byte-for-byte reproducibility is not yet a guarantee. The SBOMs published with each release cover the Rust dependency tree (cargo-cyclonedx) and npm **production** dependencies (`npm sbom --omit dev`) — dev tooling is not included.
 
 ## Distribution (winget) — pending
@@ -90,5 +91,5 @@ Until then, the supported install paths are the GitHub Release installer or buil
 - Run `npm run test:e2e:web`.
 - Run native E2E for native behavior changes.
 - Update `CHANGELOG.md` and align the three version fields.
-- After the workflow's draft release: smoke-test the actual installer artifact (open a real repo, dismiss/restore a flag, mark reviewed, export a report).
+- After the workflow's draft release: smoke-test the actual installer artifacts (open a real repo, dismiss/restore a flag, mark reviewed, export a report).
 - Update README and docs only for behavior that actually exists.
