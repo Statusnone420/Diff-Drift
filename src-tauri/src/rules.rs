@@ -586,7 +586,12 @@ impl Rule for VerifyToDecode {
                         .any(|n| prefixes.iter().any(|p| n.starts_with(p)))
                 };
                 let verifies = |s: &HashSet<String>| starts_any(s, &["verify", "sign"]);
-                let decodes = |s: &HashSet<String>| starts_any(s, &["decode", "parse"]);
+                // `decode*` (decodeJwt, decodeAsync) counts; bare `parse` counts
+                // only as an exact name, never the generic `parseInt`/`parseFloat`.
+                let decodes = |s: &HashSet<String>| {
+                    s.iter()
+                        .any(|n| n.starts_with("decode") || n == "parse" || n == "parseJwt" || n == "parseToken")
+                };
                 // Only a downgrade if the non-verifying decode/parse is NEW —
                 // code that already decoded before isn't regressing here.
                 verifies(&b) && !verifies(&a) && decodes(&a) && !decodes(&b)
@@ -594,8 +599,9 @@ impl Rule for VerifyToDecode {
             _ => {
                 static VERIFY: LazyLock<Regex> =
                     LazyLock::new(|| Regex::new(r"\b(verify|sign)\w*\s*\(").unwrap());
+                // `decode*` or exactly `parse(` — never `parseInt(`/`parseFloat(`.
                 static DECODE: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"\b(decode|parse)\w*\s*\(").unwrap());
+                    LazyLock::new(|| Regex::new(r"\b(decode\w*|parse)\s*\(").unwrap());
                 VERIFY.is_match(&before)
                     && !VERIFY.is_match(&after)
                     && DECODE.is_match(&after)
@@ -733,9 +739,14 @@ fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
 /// removed guard.
 fn is_guard_clause(consequence: &str) -> bool {
     let body = consequence.trim().trim_start_matches('{').trim();
-    ["return", "throw", "break", "continue"]
-        .iter()
-        .any(|kw| body.starts_with(kw))
+    ["return", "throw", "break", "continue"].iter().any(|kw| {
+        // Whole keyword, not an identifier prefix (`returnStatus`, `throwError`).
+        body.strip_prefix(kw).is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+        })
+    })
 }
 
 fn guard_clause_count(src: &str, lang: Lang) -> usize {
@@ -1573,6 +1584,42 @@ mod tests {
             )
             .expect("anchored catch-all must flag");
         assert!(!f.desc.is_empty());
+    }
+
+    // ---- Red-team round 2: fixes must not over-suppress ----
+
+    #[test]
+    fn guard_removed_word_boundary_does_not_oversuppress() {
+        // `return_status = …` is an assignment, not a guard clause — a real
+        // unconditional call must still flag.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (loggingEnabled) {\n    returnStatus = 'ok';\n  }\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn verify_to_decode_ignores_generic_parsers() {
+        // Removing a verify and adding an unrelated parseInt is not a crypto
+        // downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(token) {\n  return jwt.verify(token, key);\n}"],
+                    &["function f(token) {\n  return parseInt(token.slice(0, 3));\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
     }
 
     #[test]
