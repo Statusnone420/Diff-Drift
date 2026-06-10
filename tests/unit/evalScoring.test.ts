@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
 import { scoreAgentAnswer, scoreEngineResult, validateAgentAnswer } from "../../eval/lib/score.mjs";
 
@@ -80,7 +81,119 @@ describe("blind-agent answer scoring", () => {
 
     expect(score.score).toBe(100);
     expect(score.decisionCorrect).toBe(true);
+    expect(score.decisionAccepted).toBe(true);
     expect(score.recall).toBe(1);
+  });
+
+  it("accepts calibrated decisions and semantic flag aliases", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Dependency not in lockfile", severity: "high", filePath: "package.json" },
+            { type: "npm script changed", severity: "medium", filePath: "package.json" },
+          ],
+        },
+        agent: { expectedDecision: "block", acceptedDecisions: ["investigate", "block"] },
+      },
+      {
+        decision: "investigate",
+        findings: [
+          {
+            title: "Dependency added without lockfile entry",
+            filePath: "package.json",
+            riskType: "Dependency drift / lockfile inconsistency",
+            evidence: "ghost-payments-sdk is not in the lockfile",
+          },
+          {
+            title: "New install-time script",
+            filePath: "package.json",
+            riskType: "npm script drift",
+            evidence: "postinstall runs node scripts/bootstrap.js",
+          },
+        ],
+      },
+    );
+
+    expect(score.decisionAccepted).toBe(true);
+    expect(score.score).toBe(100);
+    expect(score.recall).toBe(1);
+  });
+
+  it("matches duplicate same-type findings with distinct answer findings", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Access cookie lost HttpOnly",
+            filePath: "src/cookies.ts",
+            riskType: "weakened-cookie-flags",
+            evidence: "httpOnly removed",
+          },
+          {
+            title: "Refresh cookie lost Secure",
+            filePath: "src/cookies.ts",
+            riskType: "weakened-cookie-flags",
+            evidence: "secure removed",
+          },
+          {
+            title: "CSRF cookie downgraded SameSite",
+            filePath: "src/cookies.ts",
+            riskType: "weakened-cookie-flags",
+            evidence: "sameSite Strict became None",
+          },
+        ],
+      },
+    );
+
+    expect(score.score).toBe(100);
+    expect(score.matchedFindings).toBe(3);
+    expect(score.falsePositives).toBe(0);
+  });
+
+  it("renders advisory scorecards separate from CI gating", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 95,
+      summary: { decisionAccuracy: 1, averageRecall: 0.95, averageLocalization: 1 },
+      scores: [
+        {
+          caseId: "synthetic-risk",
+          score: 95,
+          decisionAccepted: true,
+          acceptedDecisions: ["block"],
+          recall: 0.95,
+          localization: 1,
+          falsePositives: 0,
+          matchedFindings: 1,
+          requiredFindings: 2,
+          missedExpectations: ["medium / Undeclared import / src/auth.ts"],
+        },
+      ],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    expect(md).toContain("Advisory only");
+    expect(md).toContain("Overall score");
+    expect(md).toContain("missed Undeclared import");
+    expect(html).toContain("Blind-agent scorecard");
+    expect(html).toContain("Score distribution");
+    expect(html).toContain("synthetic-risk");
   });
 
   it("rejects malformed answers", () => {

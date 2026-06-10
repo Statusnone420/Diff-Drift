@@ -4,6 +4,14 @@ const severityScore = new Map([
   ["high", 3],
 ]);
 
+const flagAliases = new Map([
+  ["Dependency not in lockfile", ["dependency not in lockfile", "lockfile", "dependency drift"]],
+  ["npm script changed", ["npm script", "install script", "postinstall"]],
+  ["Weakened cookie flags", ["weakened cookie flags", "cookie flags", "httponly", "secure", "samesite"]],
+  ["Permissive logging config", ["permissive logging", "logger redaction", "redaction removed"]],
+  ["Undeclared import", ["undeclared import", "undeclared dependency", "not declared"]],
+]);
+
 export function scoreEngineResult(caseDef, run) {
   const failures = [];
   const data = run.data;
@@ -87,6 +95,9 @@ export function scoreAgentAnswer(caseDef, answer) {
   const required = caseDef.oracle.requiredFlags ?? [];
   const findings = answer.findings;
   const matched = new Set();
+  const usedFindings = new Set();
+  const matchedExpectations = [];
+  const missedExpectations = [];
   let weightedHit = 0;
   let weightedTotal = 0;
   let localized = 0;
@@ -94,27 +105,34 @@ export function scoreAgentAnswer(caseDef, answer) {
   required.forEach((expected, index) => {
     const weight = severityWeight(expected.severity);
     weightedTotal += weight;
-    const finding = findings.find((candidate) => findingMatches(candidate, expected));
+    const findingIndex = findings.findIndex(
+      (candidate, candidateIndex) => !usedFindings.has(candidateIndex) && findingMatches(candidate, expected),
+    );
+    const finding = findingIndex === -1 ? null : findings[findingIndex];
     if (finding) {
       matched.add(index);
+      usedFindings.add(findingIndex);
       weightedHit += weight;
       if (!expected.filePath || normalize(finding.filePath) === normalize(expected.filePath)) {
         localized += 1;
       }
+      matchedExpectations.push(describeFlagExpectation(expected));
+    } else {
+      missedExpectations.push(describeFlagExpectation(expected));
     }
   });
 
-  const falsePositives = findings.filter(
-    (finding) => !required.some((expected) => findingMatches(finding, expected)),
-  ).length;
+  const unmatchedFindings = findings.filter((_finding, index) => !usedFindings.has(index));
+  const falsePositives = unmatchedFindings.length;
   const expectedDecision = caseDef.agent?.expectedDecision ?? inferDecision(required);
-  const decisionCorrect = normalize(answer.decision) === expectedDecision;
+  const acceptedDecisions = acceptedDecisionSet(caseDef, expectedDecision);
+  const decisionAccepted = acceptedDecisions.includes(normalize(answer.decision));
   const recall = weightedTotal === 0 ? (findings.length === 0 ? 1 : 0) : weightedHit / weightedTotal;
   const localization = matched.size === 0 ? (required.length === 0 ? 1 : 0) : localized / matched.size;
   const topRisk = topRiskRankedFirst(findings, required);
   const rawScore =
     recall * 60 +
-    (decisionCorrect ? 20 : 0) +
+    (decisionAccepted ? 20 : 0) +
     (topRisk ? 10 : 0) +
     localization * 10 -
     falsePositives * 5;
@@ -122,7 +140,9 @@ export function scoreAgentAnswer(caseDef, answer) {
   return {
     caseId: caseDef.id,
     expectedDecision,
-    decisionCorrect,
+    acceptedDecisions,
+    decisionAccepted,
+    decisionCorrect: decisionAccepted,
     score: Math.max(0, Math.round(rawScore)),
     recall,
     localization,
@@ -130,6 +150,9 @@ export function scoreAgentAnswer(caseDef, answer) {
     topRisk,
     matchedFindings: matched.size,
     requiredFindings: required.length,
+    matchedExpectations,
+    missedExpectations,
+    unmatchedFindings: unmatchedFindings.map((finding) => finding.title),
   };
 }
 
@@ -176,8 +199,8 @@ export function flagMatches(flag, expected) {
 }
 
 function findingMatches(finding, expected) {
-  const haystack = `${finding.title ?? ""} ${finding.riskType ?? ""} ${finding.evidence ?? ""}`.toLowerCase();
-  const typeMatch = expected.type ? haystack.includes(expected.type.toLowerCase()) : true;
+  const haystack = searchableText(finding.title, finding.riskType, finding.evidence);
+  const typeMatch = expected.type ? expectedTerms(expected).some((term) => haystack.includes(term)) : true;
   const fileMatch = expected.filePath ? normalize(finding.filePath) === normalize(expected.filePath) : true;
   return typeMatch && fileMatch;
 }
@@ -206,6 +229,11 @@ function inferDecision(required) {
   return "approve";
 }
 
+function acceptedDecisionSet(caseDef, expectedDecision) {
+  const accepted = caseDef.agent?.acceptedDecisions ?? [expectedDecision];
+  return accepted.map(normalize);
+}
+
 function severityWeight(severity) {
   return severityScore.get(normalize(severity)) ?? 1;
 }
@@ -227,4 +255,18 @@ function normalize(value) {
     .replace(/\\/g, "/")
     .trim()
     .toLowerCase();
+}
+
+function searchableText(...values) {
+  return values.map(canonicalText).join(" ");
+}
+
+function canonicalText(value) {
+  return normalize(value).replace(/[^a-z0-9/._]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function expectedTerms(expected) {
+  return [expected.type, ...(expected.aliases ?? []), ...(flagAliases.get(expected.type) ?? [])]
+    .filter(Boolean)
+    .map(canonicalText);
 }

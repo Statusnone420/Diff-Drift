@@ -41,6 +41,16 @@ Use it when an agent made a broad edit, a refactor touched security-sensitive co
 
 Diff Drift runs locally and is deliberately not an LLM. It does not send repository contents to a server or model API — it's the reviewer in the loop that can't hallucinate or be prompt-injected.
 
+## Evaluation
+
+The deterministic engine benchmark is a CI gate, and blind-agent scorecards are advisory local reports for product quality. They show whether reviewers can use Diff Drift packets to reach the right decision and cite the right evidence.
+
+<p align="center">
+  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard" width="920">
+</p>
+
+See [Development](docs/wiki/Development.md#evaluation-harness) for `npm run eval:engine`, packet generation, and advisory scorecards.
+
 ## Quick Start
 
 Prerequisites: Node.js 20.19.x, 22.12+, or 24+; Rust stable; Microsoft C++ Build Tools; and WebView2.

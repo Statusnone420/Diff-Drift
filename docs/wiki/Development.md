@@ -90,6 +90,10 @@ Packets are written to `.eval/packets/<case-id>/` with a prompt, Diff Drift mark
 npm run eval:score-agent
 ```
 
+Blind-agent scoring writes `.eval/results/agents/latest.json`, `.eval/results/agents/latest.md`, and `.eval/results/agents/latest.html`. This scorecard is advisory, not a blocker: use it to see whether reviewers reach the right decisions, cite the right evidence, and where the report or rubric is confusing. Engine eval remains the CI gate; blind-agent scorecards are local product-quality telemetry with no network calls and no committed generated output.
+
+![Diff Drift blind-agent benchmark scorecard](../assets/diff-drift-blind-agent-scorecard.png)
+
 Use `--case <case-id>` with `eval:engine` or `eval:packets` to narrow a run while developing a fixture. Use `--keep` to preserve the generated temp repo path printed by the script for debugging.
 
 ## Visual Baselines

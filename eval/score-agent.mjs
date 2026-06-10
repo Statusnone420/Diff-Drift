@@ -33,10 +33,16 @@ for (const file of answerFiles) {
 const result = {
   generatedAt: new Date().toISOString(),
   averageScore: Math.round(scores.reduce((sum, score) => sum + score.score, 0) / scores.length),
+  summary: {
+    decisionAccuracy: average(scores.map((score) => (score.decisionAccepted ? 1 : 0))),
+    averageRecall: average(scores.map((score) => score.recall)),
+    averageLocalization: average(scores.map((score) => score.localization)),
+  },
   scores,
 };
 writeAgentScores(result);
 console.log(`\nAgent eval average: ${result.averageScore}/100 over ${scores.length} answer(s)`);
+console.log(`Scorecard: ${join(evalOutputRoot, "results", "agents", "latest.html")}`);
 
 function collectAnswerFiles(args) {
   if (args.length > 0) {
@@ -54,4 +60,8 @@ function collectAnswerFiles(args) {
 
 function idFromFile(file) {
   return file.split(/[\\/]/).pop().replace(/\.json$/i, "");
+}
+
+function average(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }

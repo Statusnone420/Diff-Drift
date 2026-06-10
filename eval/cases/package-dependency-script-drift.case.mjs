@@ -72,5 +72,6 @@ export default {
   },
   agent: {
     expectedDecision: "block",
+    acceptedDecisions: ["investigate", "block"],
   },
 };
