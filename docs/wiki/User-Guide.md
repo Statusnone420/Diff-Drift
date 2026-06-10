@@ -78,6 +78,45 @@ It prints the session (JSON by default) and exits with the highest active severi
 diff-drift check . --baseline trust-point || echo "drift needs review"
 ```
 
+## CI and Hook Recipes
+
+The contract that makes these safe to wire up: the CLI is **read-only** (never writes triage state), dismissed flags don't count, and an explicit `--baseline` that can't resolve exits `64` loudly instead of silently falling back to `HEAD`. Exit codes: `0` none, `1` low, `2` medium, `3` high.
+
+**Pre-commit hook** (`.git/hooks/pre-commit`) — block commits that introduce high-severity drift:
+
+```bash
+#!/bin/sh
+diff-drift check . --json > /dev/null
+code=$?
+if [ "$code" -ge 3 ]; then
+  echo "diff-drift: high-severity drift — review in the app or run: diff-drift check . --md"
+  exit 1
+fi
+```
+
+**Agent hook** (e.g. a Claude Code Stop/PostToolUse hook) — make the agent's own loop fail until drift is reviewed:
+
+```powershell
+diff-drift check . --baseline trust-point --md
+if ($LASTEXITCODE -ge 2) { exit 2 }  # surface medium+ drift back to the agent loop
+```
+
+With the `trust-point` baseline the gate keeps seeing everything since *you* last clicked **Mark reviewed**, even while the agent commits as it works.
+
+**GitHub Actions** (Windows runner) — gate a PR on medium+ drift vs the merge-base. Build the CLI from source in CI (or restore it from a cache/artifact); it's the same binary the app installs:
+
+```yaml
+- run: cargo build --release --manifest-path src-tauri/Cargo.toml --bin diff-drift
+- name: Drift gate (medium+ fails)
+  shell: pwsh
+  run: |
+    & src-tauri/target/release/diff-drift.exe check . --baseline merge-base --md
+    if ($LASTEXITCODE -ge 2) { exit 1 }
+    if ($LASTEXITCODE -eq 64) { exit 1 }
+```
+
+Pick the threshold deliberately: `-ge 3` gates only High (low triage burden), `-ge 1` gates everything (strictest). Markdown output (`--md`) pastes well into PR comments and agent transcripts.
+
 ## What Diff Drift Is Not
 
 Diff Drift is not a full static analyzer, package scanner, or proof of safety. It is a focused drift review tool for code changes that deserve a second look.
