@@ -153,11 +153,61 @@ export function scoreAgentAnswer(caseDef, answer) {
     topRisk,
     benignWrongDecision,
     matchedFindings: matched.size,
+    totalFindings: findings.length,
     requiredFindings: required.length,
     matchedExpectations,
     missedExpectations,
     mislocalizedExpectations,
     unmatchedFindings: unmatchedFindings.map((finding) => finding.title),
+    // Per-expectation hit/miss, keyed by flag type — feeds per-rule recall.
+    expectationDetails: required.map((expected, index) => ({
+      type: expected.type ?? describeFlagExpectation(expected),
+      severity: normalize(expected.severity) || null,
+      matched: matched.has(index),
+    })),
+  };
+}
+
+// Aggregate blind-agent case scores into the scorecard summary: decision
+// accuracy, weighted recall, localization, precision (matched findings over
+// all findings the reviewers reported), false-positive total, and recall per
+// flag type across every case that required it.
+export function summarizeAgentScores(scores) {
+  const average = (values) =>
+    values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+  const matchedFindings = scores.reduce((sum, score) => sum + (score.matchedFindings ?? 0), 0);
+  const totalFindings = scores.reduce(
+    (sum, score) => sum + (score.totalFindings ?? (score.matchedFindings ?? 0) + (score.falsePositives ?? 0)),
+    0,
+  );
+
+  const perRule = new Map();
+  for (const score of scores) {
+    for (const detail of score.expectationDetails ?? []) {
+      const entry = perRule.get(detail.type) ?? { required: 0, matched: 0 };
+      entry.required += 1;
+      entry.matched += detail.matched ? 1 : 0;
+      perRule.set(detail.type, entry);
+    }
+  }
+  const perRuleRecall = Object.fromEntries(
+    [...perRule.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, entry]) => [
+        type,
+        { required: entry.required, matched: entry.matched, recall: entry.matched / entry.required },
+      ]),
+  );
+
+  return {
+    decisionAccuracy: average(scores.map((score) => (score.decisionAccepted ? 1 : 0))),
+    averageRecall: average(scores.map((score) => score.recall)),
+    averageLocalization: average(scores.map((score) => score.localization)),
+    precision: totalFindings === 0 ? 1 : matchedFindings / totalFindings,
+    matchedFindings,
+    totalFindings,
+    totalFalsePositives: scores.reduce((sum, score) => sum + (score.falsePositives ?? 0), 0),
+    perRuleRecall,
   };
 }
 

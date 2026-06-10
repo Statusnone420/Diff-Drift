@@ -5,7 +5,12 @@ import { describe, expect, it } from "vitest";
 import { diffDriftCommand, diffDriftRuntimeEnv } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
-import { scoreAgentAnswer, scoreEngineResult, validateAgentAnswer } from "../../eval/lib/score.mjs";
+import {
+  scoreAgentAnswer,
+  scoreEngineResult,
+  summarizeAgentScores,
+  validateAgentAnswer,
+} from "../../eval/lib/score.mjs";
 
 const caseDef = {
   id: "synthetic-risk",
@@ -209,6 +214,50 @@ describe("blind-agent answer scoring", () => {
     expect(score.score).toBe(90);
   });
 
+  it("summarizes precision, false positives, and per-rule recall across cases", () => {
+    const hit = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Suspicious but unrelated observation",
+          filePath: "src/other.ts",
+          riskType: "Speculation",
+          evidence: "not an expected flag",
+        },
+      ],
+    });
+    const miss = scoreAgentAnswer(caseDef, { decision: "block", findings: [] });
+
+    const summary = summarizeAgentScores([hit, miss]);
+    expect(summary.matchedFindings).toBe(1);
+    expect(summary.totalFindings).toBe(2);
+    expect(summary.precision).toBe(0.5);
+    expect(summary.totalFalsePositives).toBe(1);
+    expect(summary.perRuleRecall["Loose regex pattern"]).toEqual({
+      required: 2,
+      matched: 1,
+      recall: 0.5,
+    });
+  });
+
+  it("treats a clean benign run as perfect precision", () => {
+    const summary = summarizeAgentScores([
+      scoreAgentAnswer(
+        { ...caseDef, oracle: { ...caseDef.oracle, requiredFlags: [] }, agent: { expectedDecision: "approve" } },
+        { decision: "approve", findings: [] },
+      ),
+    ]);
+    expect(summary.precision).toBe(1);
+    expect(summary.totalFindings).toBe(0);
+    expect(summary.perRuleRecall).toEqual({});
+  });
+
   it("renders advisory scorecards separate from CI gating", () => {
     const result = {
       generatedAt: "2026-06-10T00:00:00.000Z",
@@ -238,6 +287,41 @@ describe("blind-agent answer scoring", () => {
     expect(html).toContain("Blind-agent scorecard");
     expect(html).toContain("Score distribution");
     expect(html).toContain("synthetic-risk");
+  });
+
+  it("labels evaluators and surfaces the external-validation banner", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 95,
+      summary: {
+        decisionAccuracy: 1,
+        averageRecall: 0.95,
+        averageLocalization: 1,
+        precision: 0.9,
+        matchedFindings: 9,
+        totalFindings: 10,
+        totalFalsePositives: 1,
+        perRuleRecall: {
+          "Loose regex pattern": { required: 2, matched: 2, recall: 1 },
+          "Undeclared import": { required: 2, matched: 1, recall: 0.5 },
+        },
+      },
+      evaluators: [{ id: "claude-fable-5", kind: "model", cases: 10, averageScore: 95 }],
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    expect(md).toContain("claude-fable-5 (model, 10 cases)");
+    expect(md).toContain("Independent external validation pending");
+    expect(md).toContain("Per-rule recall");
+    expect(md).toContain("| Undeclared import | 1/2 | 50% |");
+    expect(md).toContain("Precision: 90%");
+
+    const html = renderAgentDashboard(result);
+    expect(html).toContain("Independent external validation pending");
+    expect(html).toContain("Precision");
+    expect(html).toContain("claude-fable-5 (model, 10)");
   });
 
   it("rejects malformed answers", () => {

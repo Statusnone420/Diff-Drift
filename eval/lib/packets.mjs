@@ -29,15 +29,38 @@ export function renderAgentScorecard(result) {
     "",
     "> Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.",
     "",
+  ];
+  if (result.evaluators?.length) {
+    lines.push(
+      `Evaluators: ${result.evaluators
+        .map((e) => `${e.id} (${e.kind}, ${e.cases} case${e.cases === 1 ? "" : "s"})`)
+        .join(", ")}`,
+      "",
+    );
+  }
+  if (result.externalValidationPending) {
+    lines.push(
+      "> **Independent external validation pending.** All answers so far come from a single evaluator or an all-model panel. Treat the score as an internal product-quality signal, not third-party validation.",
+      "",
+    );
+  }
+  lines.push(
     `Overall score: ${bar(result.averageScore)} ${result.averageScore}/100`,
     "",
     `- Decision accuracy: ${percent(summary.decisionAccuracy)}`,
     `- Finding recall: ${percent(summary.averageRecall)}`,
     `- Localization: ${percent(summary.averageLocalization)}`,
+  );
+  if (summary.precision !== undefined) {
+    lines.push(
+      `- Precision: ${percent(summary.precision)} (${summary.matchedFindings}/${summary.totalFindings} reported findings matched an expected flag; ${summary.totalFalsePositives} unmatched)`,
+    );
+  }
+  lines.push(
     "",
     "| Case | Score | Decision | Recall | Notes |",
     "| --- | ---: | --- | ---: | --- |",
-  ];
+  );
 
   for (const score of sortedScores(result.scores)) {
     lines.push(
@@ -45,6 +68,22 @@ export function renderAgentScorecard(result) {
         score.recall,
       )} | ${notesFor(score)} |`,
     );
+  }
+
+  const perRule = Object.entries(summary.perRuleRecall ?? {});
+  if (perRule.length > 0) {
+    lines.push(
+      "",
+      "## Per-rule recall",
+      "",
+      "Across every case that required the flag type:",
+      "",
+      "| Flag type | Matched / Required | Recall |",
+      "| --- | ---: | ---: |",
+    );
+    for (const [type, entry] of perRule) {
+      lines.push(`| ${type} | ${entry.matched}/${entry.required} | ${percent(entry.recall)} |`);
+    }
   }
 
   lines.push(
@@ -65,6 +104,20 @@ export function renderAgentDashboard(result) {
   const score = clampScore(result.averageScore);
   const rows = sortedScores(result.scores).map(renderCaseCard).join("\n");
   const dots = sortedScores(result.scores).map(renderScoreDot).join("\n");
+  const metrics = [
+    metric("Decision", summary.decisionAccuracy),
+    metric("Recall", summary.averageRecall),
+    metric("Location", summary.averageLocalization),
+    ...(summary.precision !== undefined ? [metric("Precision", summary.precision)] : []),
+  ];
+  const evaluatorLine = result.evaluators?.length
+    ? `<div>${escapeHtml(
+        result.evaluators.map((e) => `${e.id} (${e.kind}, ${e.cases})`).join(" · "),
+      )}</div>`
+    : "";
+  const pendingBanner = result.externalValidationPending
+    ? `<p class="pending"><b>Independent external validation pending.</b> All answers so far come from a single evaluator or an all-model panel — treat this as an internal product-quality signal, not third-party validation.</p>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -151,7 +204,17 @@ export function renderAgentDashboard(result) {
     .score-number span { color: var(--dim); font-family: var(--mono); }
     .score-track { height: 12px; border-radius: 999px; background: #242730; overflow: hidden; }
     .score-track i { display: block; height: 100%; width: ${score}%; background: var(--accent); }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .metrics { display: grid; grid-template-columns: repeat(${metrics.length}, 1fr); gap: 8px; }
+    .pending {
+      margin: 14px 0 0;
+      padding: 10px 12px;
+      border: 1px solid rgba(231, 168, 62, 0.4);
+      border-radius: 8px;
+      background: rgba(231, 168, 62, 0.07);
+      color: #ecd3a4;
+      font-size: 13px;
+      max-width: 70ch;
+    }
     .metric { border-top: 1px solid var(--border); padding-top: 9px; }
     .metric b { display: block; font-size: 20px; letter-spacing: -0.02em; }
     .metric span { color: var(--dim); font-size: 12px; }
@@ -258,20 +321,20 @@ export function renderAgentDashboard(result) {
   <main>
     <div class="topline">
       <div class="brand"><span class="mark"></span><span>Diff Drift benchmark</span></div>
+      ${evaluatorLine}
       <div>${escapeHtml(result.generatedAt)}</div>
     </div>
     <section class="brief">
       <div>
         <h1>Blind-agent scorecard</h1>
         <p class="lede">This advisory benchmark checks whether reviewers can use Diff Drift packets to make the right trust decision and cite the right evidence. It is designed to improve the product, not to block releases.</p>
+        ${pendingBanner}
       </div>
       <aside class="score-summary" aria-label="Overall score">
         <div class="score-number"><strong>${score}</strong><span>/100</span></div>
         <div class="score-track" aria-hidden="true"><i></i></div>
         <div class="metrics">
-          ${metric("Decision", summary.decisionAccuracy)}
-          ${metric("Recall", summary.averageRecall)}
-          ${metric("Location", summary.averageLocalization)}
+          ${metrics.join("\n          ")}
         </div>
       </aside>
     </section>
