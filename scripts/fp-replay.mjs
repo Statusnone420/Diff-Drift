@@ -13,7 +13,11 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { projectRoot } from "../eval/lib/cases.mjs";
-import { diffDriftCommand, diffDriftRuntimeEnv } from "../eval/lib/cli.mjs";
+import {
+  diffDriftCommand,
+  diffDriftRuntimeEnv,
+  ensureDiffDriftBuilt,
+} from "../eval/lib/cli.mjs";
 
 const configPath = resolve(projectRoot, process.argv[2] ?? "fp-replay.config.json");
 if (!existsSync(configPath)) {
@@ -28,6 +32,8 @@ if (targets.length === 0) {
   console.error('Config has no "targets". Each target needs { "repoPath": ..., "baseline": ... }.');
   process.exit(64);
 }
+
+ensureDiffDriftBuilt(); // clean checkouts get the CLI built, not an ENOENT
 
 const results = [];
 for (const target of targets) {
