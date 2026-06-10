@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "v*"]
+    branches: [main, "v*", dogfooding-testing-branch]
   pull_request:
 
 concurrency:
