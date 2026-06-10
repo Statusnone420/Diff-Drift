@@ -32,10 +32,10 @@ The triage state contains repo paths, flag IDs, and content hashes — not sourc
 
 Nothing. To verify rather than trust:
 
-1. **Dependencies**: [src-tauri/Cargo.toml](../../src-tauri/Cargo.toml) and [package.json](../../package.json) contain no networking library (no reqwest, hyper, ureq, axios, node-fetch).
-2. **Renderer CSP**: [tauri.conf.json](../../src-tauri/tauri.conf.json) sets `connect-src ipc: http://ipc.localhost` — the UI process cannot reach any external host even if it tried.
-3. **Capabilities**: [src-tauri/capabilities/default.json](../../src-tauri/capabilities/default.json) grants the renderer window controls and the file dialog only — no HTTP, no filesystem, no shell.
-4. **Source**: grep the repo for `fetch(`, `reqwest`, `http://`, `https://` — matches are docs links and the IPC origin, not network calls.
+1. **App code**: grep `src/` and `src-tauri/src/` for `fetch(`, `reqwest`, `http://`, `https://` — zero matches. No application code performs network I/O.
+2. **Build graph**: `cargo tree -i reqwest` (and `-i hyper`) on the supported Windows target prints nothing — no HTTP client is compiled into the binary. You will see `reqwest` in `Cargo.lock`: lockfiles pin dependencies for every platform, and the Tauri framework pulls an HTTP stack on *other* targets (`cargo tree --target all -i reqwest` shows tauri as the sole path). It is not part of the Windows build, and no enabled Diff Drift feature or plugin uses it on any target — no updater, no HTTP plugin. The framework dependency can't be removed without leaving Tauri; the build-graph check is the meaningful one.
+3. **Renderer CSP**: [tauri.conf.json](../../src-tauri/tauri.conf.json) sets `connect-src ipc: http://ipc.localhost` — the UI process cannot reach any external host even if it tried.
+4. **Capabilities**: [src-tauri/capabilities/default.json](../../src-tauri/capabilities/default.json) grants the renderer window controls and the file dialog only — no HTTP, no filesystem, no shell.
 5. **Observe it**: run the app under a local firewall or packet capture; it opens no sockets beyond the loopback IPC channel WebView2 uses internally.
 
 ## Related

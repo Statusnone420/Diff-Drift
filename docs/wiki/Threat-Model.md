@@ -54,8 +54,8 @@ A hostile repo can still make analysis slow (many changed files near the size ca
 
 Verifiable, not just claimed:
 
-- No HTTP client exists in the dependency tree — check [Cargo.toml](../../src-tauri/Cargo.toml) and [package.json](../../package.json) (no reqwest/hyper/axios/fetch polyfill).
-- The CSP forbids any non-IPC connection from the renderer.
+- No application code performs network I/O, and no HTTP client is compiled into the Windows binary: `cargo tree -i reqwest` on the host target prints nothing. (`Cargo.lock` does list `reqwest`/`hyper` — the Tauri framework pulls an HTTP stack for *other* platforms, visible via `cargo tree --target all -i reqwest`; no enabled feature or plugin uses it on any target.)
+- The CSP forbids any non-IPC connection from the renderer, and no networking capability is granted.
 - No updater plugin is configured; updates are manual downloads from Releases.
 - CI runs `cargo audit` and `npm audit` on every push ([ci.yml](../../.github/workflows/ci.yml)) to catch supply-chain advisories in this dependency tree.
 

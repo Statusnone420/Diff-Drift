@@ -34,4 +34,4 @@ Out of scope:
 
 ## Posture Summary
 
-Diff Drift is local-only: no telemetry, no model calls, no repository upload, no HTTP client in the dependency tree. The renderer's CSP only allows IPC to the local backend. CI gates `cargo audit` and `npm audit` on every push. See [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md) for how to verify this yourself.
+Diff Drift is local-only: no telemetry, no model calls, no repository upload, and no HTTP client compiled into the app (the Tauri framework lists one in `Cargo.lock` for other platforms; it is not in the Windows build and nothing uses it). The renderer's CSP only allows IPC to the local backend. CI gates `cargo audit` and `npm audit` on every push. See [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md) for how to verify this yourself.

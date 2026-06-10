@@ -26,7 +26,7 @@ Yes — that's what the read-only CLI is for. `diff-drift check` exits with the 
 
 ## Does anything leave my machine?
 
-No. No telemetry, no model calls, no upload, no update pings, and no HTTP client in the dependency tree. [Privacy and Data Flow](Privacy-and-Data-Flow.md) shows how to verify that yourself instead of taking the claim on trust.
+No. No telemetry, no model calls, no upload, no update pings — and no HTTP client compiled into the app. [Privacy and Data Flow](Privacy-and-Data-Flow.md) shows how to verify that yourself instead of taking the claim on trust.
 
 ## Is a clean run proof the change is safe?
 
