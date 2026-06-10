@@ -1,6 +1,6 @@
 [package]
 name = "diff-drift"
-version = "0.2.1"
+version = "0.3.0"
 description = "Diff Drift — AST-level security inspector for the code drift AI coding agents leave behind"
 edition = "2021"
 

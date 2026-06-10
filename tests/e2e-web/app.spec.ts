@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"];
+// The title bar renders the version injected from package.json at build time;
+// assert against the same source so a release bump can't go stale here.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 
 async function openMockRepo(page: Page) {
   await page.goto("/");
@@ -21,7 +25,7 @@ async function expectNoAxeViolations(page: Page) {
 test.describe("Diff Drift browser-mode E2E", () => {
   test("onboarding, loaded, and dismissed states pass automated axe checks", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("v0.2.1")).toBeVisible();
+    await expect(page.getByText(`v${APP_VERSION}`)).toBeVisible();
     await expect(page.getByRole("button", { name: /Open a repository/ })).toBeVisible();
     await expectNoAxeViolations(page);
 

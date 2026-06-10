@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-e7a83e?style=for-the-badge">
+  <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/diff-drift-demo.gif" alt="Diff Drift reviewing a mock payments-api session: picking a baseline, inspecting a loosened token regex, marking nodes reviewed, exporting a report" width="920">
+  <img src="docs/assets/diff-drift-demo.gif" alt="Diff Drift reviewing a mock payments-api session: picking a baseline, inspecting a loosened token regex, marking nodes reviewed, exporting a report" width="680">
 </p>
 
 An AI agent just changed your repo. A normal diff shows you every hunk it touched. What you actually need to know is what structurally changed since the last point you trusted, and which of those changes still needs a human.
@@ -63,7 +63,7 @@ The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3`
 
 ## Give feedback
 
-This is a public feedback release ([release notes](docs/releases/v0.3.0-rc.1-public-feedback.md)). The question that decides where this project goes:
+This is a public feedback release ([release notes](docs/releases/v0.3.0-public-feedback.md)). The question that decides where this project goes:
 
 > Would you use this before trusting code changed by an AI coding agent? Why or why not?
 
@@ -76,7 +76,7 @@ A deterministic engine benchmark gates CI: 15 fixture cases through the real bin
 ## Status
 
 - Supported platform: Windows 11. macOS: experimental and unsigned.
-- Current version: `0.2.1` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+- Current version: `0.3.0` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Docs
 
