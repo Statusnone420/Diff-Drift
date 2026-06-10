@@ -706,6 +706,28 @@ describe("blind-agent answer scoring", () => {
     expect(externalValidationPending(coverage)).toBe(false);
   });
 
+  it("reads a single external human with full coverage as needing a second evaluator", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [{ id: "outside", kind: "human", external: true, cases: 2, averageScore: 100 }],
+      externalValidation: { evaluatorCount: 1, externalCases: 2, totalCases: 2 },
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    // Full external coverage but only one evaluator → say so, without the
+    // contradictory "covers N of N; full coverage pending" wording.
+    expect(md).toContain("single external human reviewed all 2 cases");
+    expect(md).toContain("second evaluator");
+    expect(md).not.toContain("full independent coverage is pending");
+    expect(md).not.toContain("no human evaluator is marked external");
+    expect(html).toContain("single external human reviewed all 2 cases");
+  });
+
   it("reads a single external human as partial coverage, not none", () => {
     const result = {
       generatedAt: "2026-06-10T00:00:00.000Z",

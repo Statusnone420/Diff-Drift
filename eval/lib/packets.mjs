@@ -781,10 +781,22 @@ function evaluatorKind(evaluator) {
 }
 
 function pendingValidationText(coverage, evaluators = []) {
-  // Some external coverage exists but is incomplete: distinguish single/partial
-  // external review from none at all.
-  if ((coverage?.externalCases ?? 0) > 0) {
-    return `External human review covers ${coverage.externalCases} of ${coverage.totalCases} cases; full independent coverage is pending.`;
+  const externalCases = coverage?.externalCases ?? 0;
+  const totalCases = coverage?.totalCases ?? 0;
+  const evaluatorCount = coverage?.evaluatorCount ?? evaluators.length;
+  if (externalCases > 0) {
+    if (externalCases >= totalCases && evaluatorCount < 2) {
+      // Full external coverage, but a single evaluator is not independent —
+      // what's missing is a second reviewer, not more coverage.
+      return `A single external human reviewed all ${totalCases} case${totalCases === 1 ? "" : "s"}; independent validation needs a second evaluator.`;
+    }
+    if (externalCases < totalCases) {
+      // Some, but not all, cases have external review.
+      return `External human review covers ${externalCases} of ${totalCases} cases; full independent coverage is pending.`;
+    }
+    // Full external coverage with ≥2 evaluators normally clears pending; this
+    // is a defensive label only.
+    return `External human review covers all ${totalCases} case${totalCases === 1 ? "" : "s"}.`;
   }
   const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
   if (hasHuman) {
