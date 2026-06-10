@@ -303,9 +303,13 @@ const CORS_QUERY: &str = r#"
 (pair key: (property_identifier) @key (#eq? @key "origin") value: (true))
 (pair key: (property_identifier) @key (#eq? @key "origin")
   value: (string (string_fragment) @v (#eq? @v "*")))
+(pair key: (property_identifier) @key (#eq? @key "origin")
+  value: (array (string (string_fragment) @av (#eq? @av "*"))))
 (pair key: (string (string_fragment) @skey (#eq? @skey "origin")) value: (true))
 (pair key: (string (string_fragment) @skey (#eq? @skey "origin"))
   value: (string (string_fragment) @sv (#eq? @sv "*")))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin"))
+  value: (array (string (string_fragment) @asv (#eq? @asv "*"))))
 "#;
 
 impl Rule for BroadenedCors {
@@ -428,7 +432,12 @@ fn regex_pattern(lit: &str) -> &str {
 fn is_catch_all_pattern(pat: &str) -> bool {
     matches!(
         pat,
-        ".*" | ".+" | "^.*$" | "^.+$" | "[\\s\\S]*" | "[\\s\\S]+" | "[^]*" | "[^]+"
+        ".*" | ".+"
+            | "^.*$" | "^.+$"
+            | "[\\s\\S]*" | "[\\s\\S]+"
+            | "^[\\s\\S]*$" | "^[\\s\\S]+$"
+            | "[^]*" | "[^]+"
+            | "^[^]*$" | "^[^]+$"
     )
 }
 
@@ -436,9 +445,17 @@ fn has_anchors(pat: &str) -> bool {
     pat.starts_with('^') || (pat.ends_with('$') && !pat.ends_with("\\$"))
 }
 
+/// A quantifier with an upper limit (`{n}` or `{n,m}`). `{n,}` and `{0,}` are
+/// unbounded — losing the upper bound is a weakening, so they don't count.
 fn has_bounded_quantifier(pat: &str) -> bool {
-    static BOUND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+(,\d*)?\}").unwrap());
+    static BOUND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+(,\d+)?\}").unwrap());
     BOUND.is_match(pat)
+}
+
+/// An unbounded quantifier: `*`, `+`, or `{n,}` with no upper limit.
+fn has_unbounded_quantifier(pat: &str) -> bool {
+    static OPEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+,\}").unwrap());
+    pat.contains('*') || pat.contains('+') || OPEN.is_match(pat)
 }
 
 /// What weakened between two versions of the same regex literal, if anything.
@@ -457,8 +474,7 @@ fn regex_weakening(before: &str, after: &str) -> Option<String> {
             "lost its anchors (was {before}, now {after}) — partial matches now pass"
         ));
     }
-    if has_bounded_quantifier(b) && !has_bounded_quantifier(a) && (a.contains('*') || a.contains('+'))
-    {
+    if has_bounded_quantifier(b) && !has_bounded_quantifier(a) && has_unbounded_quantifier(a) {
         return Some(format!(
             "lost its length bound (was {before}, now {after}) — unbounded input now passes"
         ));
@@ -482,6 +498,22 @@ impl Rule for LooseRegex {
                 regex_literals(&before, ctx.lang),
                 regex_literals(&after, ctx.lang),
             ) {
+                // Pair by position only when the count is unchanged. An
+                // inserted or removed literal shifts every position, so a
+                // mismatched count would misread an unrelated pair as a
+                // weakening — fall through to the catch-all check instead.
+                if !bl.is_empty() && bl.len() != al.len() {
+                    if let Some(rx) = permissive_regex(&after) {
+                        if permissive_regex(&before).is_none() {
+                            return finding(
+                                Severity::High,
+                                "Loose regex pattern",
+                                format!("Validation regex was widened to {rx} — any string now passes validation."),
+                            );
+                        }
+                    }
+                    return None;
+                }
                 for (b, a) in bl.iter().zip(al.iter()) {
                     if let Some(weakened) = regex_weakening(b, a) {
                         return finding(
@@ -546,16 +578,28 @@ impl Rule for VerifyToDecode {
         let before = joined(&node.before);
         let fired = match (callee_names(&before, ctx.lang), callee_names(&after, ctx.lang)) {
             (Some(b), Some(a)) => {
-                let verifies = |s: &HashSet<String>| s.contains("verify") || s.contains("sign");
-                let decodes = |s: &HashSet<String>| s.contains("decode") || s.contains("parse");
-                verifies(&b) && decodes(&a) && !verifies(&a)
+                // Prefix match so async/library variants (`verifyAsync`,
+                // `decodeJwt`) count, without matching unrelated words like
+                // `assign` or `design` that a bare substring would.
+                let starts_any = |s: &HashSet<String>, prefixes: &[&str]| {
+                    s.iter()
+                        .any(|n| prefixes.iter().any(|p| n.starts_with(p)))
+                };
+                let verifies = |s: &HashSet<String>| starts_any(s, &["verify", "sign"]);
+                let decodes = |s: &HashSet<String>| starts_any(s, &["decode", "parse"]);
+                // Only a downgrade if the non-verifying decode/parse is NEW —
+                // code that already decoded before isn't regressing here.
+                verifies(&b) && !verifies(&a) && decodes(&a) && !decodes(&b)
             }
             _ => {
                 static VERIFY: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"\b(verify|sign)\s*\(").unwrap());
+                    LazyLock::new(|| Regex::new(r"\b(verify|sign)\w*\s*\(").unwrap());
                 static DECODE: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"\b(decode|parse)\s*\(").unwrap());
-                VERIFY.is_match(&before) && DECODE.is_match(&after) && !VERIFY.is_match(&after)
+                    LazyLock::new(|| Regex::new(r"\b(decode|parse)\w*\s*\(").unwrap());
+                VERIFY.is_match(&before)
+                    && !VERIFY.is_match(&after)
+                    && DECODE.is_match(&after)
+                    && !DECODE.is_match(&before)
             }
         };
         if fired {
@@ -683,6 +727,23 @@ fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
     Some(guarded)
 }
 
+/// An `if` consequence that is purely an early exit (`return`/`throw`/`break`/
+/// `continue`), i.e. a guard clause. Hoisting a wrapping `if` into an inverted
+/// guard clause is the most common guard refactor and must not read as a
+/// removed guard.
+fn is_guard_clause(consequence: &str) -> bool {
+    let body = consequence.trim().trim_start_matches('{').trim();
+    ["return", "throw", "break", "continue"]
+        .iter()
+        .any(|kw| body.starts_with(kw))
+}
+
+fn guard_clause_count(src: &str, lang: Lang) -> usize {
+    crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")
+        .map(|cs| cs.iter().filter(|c| is_guard_clause(c)).count())
+        .unwrap_or(0)
+}
+
 impl Rule for GuardRemoved {
     fn id(&self) -> &'static str {
         "guard-removed"
@@ -701,6 +762,12 @@ impl Rule for GuardRemoved {
             return None;
         }
         let after = joined(&node.after);
+        // If the change introduced an early-exit guard clause (`if (!ok) return`),
+        // the protection was very likely converted, not removed. Suppress —
+        // the dominant false positive for this rule.
+        if guard_clause_count(&after, ctx.lang) > guard_clause_count(&before, ctx.lang) {
+            return None;
+        }
         let all_before = callee_list(&before, ctx.lang)?;
         let guarded_after = guarded_callee_list(&after, ctx.lang)?;
         let all_after = callee_list(&after, ctx.lang)?;
@@ -746,6 +813,13 @@ impl Rule for ErrorHandlingRemoved {
         let tries_after = crate::structural::capture_texts(&after, ctx.lang, TRY_QUERY, "try")?;
         if !tries_after.is_empty() {
             return None;
+        }
+        // try/catch refactored to a promise `.catch(…)` chain still handles
+        // errors — not a removal.
+        if let Some(after_callees) = callee_names(&after, ctx.lang) {
+            if after_callees.contains("catch") {
+                return None;
+            }
         }
         // The calls that were inside the try must still exist after.
         let mut wrapped = HashSet::new();
@@ -1350,6 +1424,155 @@ mod tests {
                 &ctx(),
             )
             .is_some());
+    }
+
+    // ---- Red-team round 1: confirmed findings become regression tests ----
+
+    #[test]
+    fn guard_removed_ignores_early_return_refactor() {
+        // THE most common guard refactor: hoist the guard into an early return.
+        // The call is still protected; this must NOT flag.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (!isVerified(order)) return;\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn guard_removed_ignores_throw_guard_clause() {
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (!isVerified(order)) { throw new Error('denied'); }\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn verify_to_decode_requires_decode_to_be_new() {
+        // decode was already present before; removing a verify call for
+        // unrelated reasons must not read as a crypto downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(t) {\n  const meta = decode(t);\n  return verify(t, key);\n}"],
+                    &["function f(t) {\n  const meta = decode(t);\n  return meta;\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn verify_to_decode_catches_async_name_variants() {
+        // verifyAsync → decodeJwt: prefix/suffix variants a real refactor emits.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "ReturnStatement",
+                    NodeState::Modified,
+                    &["return jwt.verifyAsync(token, key);"],
+                    &["return jwt.decodeJwt(token);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn try_catch_to_promise_catch_is_not_flagged() {
+        // try/catch refactored to a .catch() chain still handles errors.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["async function f() {\n  try {\n    await push(q);\n  } catch (e) {\n    log(e);\n  }\n}"],
+                    &["async function f() {\n  await push(q).catch((e) => log(e));\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn cors_array_wildcard_is_caught() {
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ origin: [\"*\"] }));"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn loose_regex_unbounded_quantifier_is_caught() {
+        // {0,} and {n,} are unbounded — losing the upper bound is a weakening.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[A-Z]{4,16}$/;"],
+                    &["const p = /^[A-Z]{4,}$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("losing the upper bound must flag");
+        assert!(f.desc.contains("length bound"), "desc: {}", f.desc);
+    }
+
+    #[test]
+    fn loose_regex_skips_comparison_when_literal_counts_differ() {
+        // A new regex inserted before an existing one shifts positions; pairing
+        // by position would misread. With unequal counts we must not invent a
+        // weakening on the tightened/unchanged survivor.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const zip = /^[0-9]{5}$/;"],
+                    &["const dbg = /x/; const zip = /^[0-9]{5}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn loose_regex_anchored_catch_all_is_caught() {
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[a-z]{2,20}$/;"],
+                    &["const p = /^[\\s\\S]*$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("anchored catch-all must flag");
+        assert!(!f.desc.is_empty());
     }
 
     #[test]
