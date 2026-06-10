@@ -28,9 +28,18 @@ pub(crate) fn common_git_dir(root: &Path) -> Option<PathBuf> {
 pub fn current_branch(root: &Path) -> String {
     Repository::open(root)
         .ok()
-        .and_then(|r| r.head().ok().and_then(|h| h.shorthand().ok().map(String::from)))
+        .and_then(|r| {
+            r.head()
+                .ok()
+                .and_then(|h| h.shorthand().ok().map(String::from))
+        })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "HEAD".into())
+}
+
+/// Open the repository once for callers that need repeated object reads.
+pub fn open(root: &Path) -> Option<Repository> {
+    Repository::open(root).ok()
 }
 
 fn is_changed(s: Status) -> bool {
@@ -78,14 +87,21 @@ pub fn changed_files(root: &Path) -> Vec<String> {
 }
 
 /// File contents at HEAD (the "before"). `None` if the path is new / not in HEAD.
+#[allow(dead_code)]
 pub fn head_content(root: &Path, rel: &str) -> Option<String> {
     content_at(root, "HEAD", rel)
 }
 
 /// File contents at an arbitrary commit-ish (the "before" for a chosen baseline).
 /// `None` if the path doesn't exist there.
+#[allow(dead_code)]
 pub fn content_at(root: &Path, rev: &str, rel: &str) -> Option<String> {
-    let repo = Repository::open(root).ok()?;
+    let repo = open(root)?;
+    content_at_in(&repo, rev, rel)
+}
+
+/// File contents at an arbitrary commit-ish using an already-open repository.
+pub fn content_at_in(repo: &Repository, rev: &str, rel: &str) -> Option<String> {
     let obj = repo.revparse_single(&format!("{rev}:{rel}")).ok()?;
     let blob = obj.peel_to_blob().ok()?;
     Some(String::from_utf8_lossy(blob.content()).into_owned())
@@ -188,7 +204,11 @@ mod tests {
         let repo = Repository::open(&root).unwrap();
         let oid = repo.head().unwrap().peel_to_commit().unwrap().id();
         repo.set_head_detached(oid).unwrap();
-        assert_eq!(current_branch(&root), "HEAD", "detached HEAD reports as HEAD");
+        assert_eq!(
+            current_branch(&root),
+            "HEAD",
+            "detached HEAD reports as HEAD"
+        );
     }
 
     #[test]
@@ -200,7 +220,11 @@ mod tests {
         let files = changed_files(&root);
         assert_eq!(
             files,
-            vec!["auth/validateToken.ts", "routes/session.ts", "utils/logger.ts"],
+            vec![
+                "auth/validateToken.ts",
+                "routes/session.ts",
+                "utils/logger.ts"
+            ],
             "sorted, deduped, forward slashes"
         );
 
@@ -211,8 +235,14 @@ mod tests {
         // Rename-as-delete+add (untracked new path): both sides listed.
         std::fs::write(root.join("utils/log2.ts"), "const x = 1;\n").unwrap();
         let files = changed_files(&root);
-        assert!(files.contains(&"utils/log2.ts".to_string()), "untracked file listed");
-        assert!(files.contains(&"utils/logger.ts".to_string()), "old path still listed");
+        assert!(
+            files.contains(&"utils/log2.ts".to_string()),
+            "untracked file listed"
+        );
+        assert!(
+            files.contains(&"utils/logger.ts".to_string()),
+            "old path still listed"
+        );
 
         // Untracked nested directory contents are recursed into.
         std::fs::create_dir_all(root.join("brand/new")).unwrap();
@@ -252,9 +282,15 @@ mod tests {
         let root = repo_root(&fixture.root).unwrap();
         assert_eq!(changed_files(&root).len(), 3);
         test_fixture::commit_all(&root, "agent commits its edits");
-        assert!(changed_files(&root).is_empty(), "working tree clean vs new HEAD");
+        assert!(
+            changed_files(&root).is_empty(),
+            "working tree clean vs new HEAD"
+        );
         let after = head_content(&root, "auth/validateToken.ts").unwrap();
-        assert!(after.contains("jwt-tiny-decode"), "HEAD now holds the agent's edit");
+        assert!(
+            after.contains("jwt-tiny-decode"),
+            "HEAD now holds the agent's edit"
+        );
     }
 
     #[test]
@@ -268,18 +304,36 @@ mod tests {
 
         // Agent commits two files, keeps editing a third, adds a brand-new one.
         test_fixture::commit_all(&root, "agent commits");
-        std::fs::write(root.join("utils/logger.ts"), "const logger = createLogger({});\n").unwrap();
+        std::fs::write(
+            root.join("utils/logger.ts"),
+            "const logger = createLogger({});\n",
+        )
+        .unwrap();
         std::fs::write(root.join("utils/audit.ts"), "const audit = true;\n").unwrap();
 
         let files = changed_files_vs(&root, &trusted);
-        assert!(files.contains(&"auth/validateToken.ts".to_string()), "committed drift visible");
-        assert!(files.contains(&"utils/logger.ts".to_string()), "uncommitted drift visible");
-        assert!(files.contains(&"utils/audit.ts".to_string()), "untracked file visible");
+        assert!(
+            files.contains(&"auth/validateToken.ts".to_string()),
+            "committed drift visible"
+        );
+        assert!(
+            files.contains(&"utils/logger.ts".to_string()),
+            "uncommitted drift visible"
+        );
+        assert!(
+            files.contains(&"utils/audit.ts".to_string()),
+            "untracked file visible"
+        );
 
         // content_at pins the "before" to the trusted commit, not the new HEAD.
         let before = content_at(&root, &trusted, "auth/validateToken.ts").unwrap();
-        assert!(before.contains("sanitizeInput"), "trusted version is the before");
-        assert!(head_content(&root, "auth/validateToken.ts").unwrap().contains("jwt-tiny-decode"));
+        assert!(
+            before.contains("sanitizeInput"),
+            "trusted version is the before"
+        );
+        assert!(head_content(&root, "auth/validateToken.ts")
+            .unwrap()
+            .contains("jwt-tiny-decode"));
 
         // Unknown baselines and revs degrade to empty/None, never panic.
         assert!(changed_files_vs(&root, "not-a-rev").is_empty());
@@ -302,9 +356,15 @@ mod tests {
         let root = repo_root(&fixture.root).unwrap();
 
         let before = head_content(&root, "auth/validateToken.ts").expect("in HEAD");
-        assert!(before.contains("sanitizeInput"), "HEAD holds the safe version");
+        assert!(
+            before.contains("sanitizeInput"),
+            "HEAD holds the safe version"
+        );
         let after = worktree_content(&root, "auth/validateToken.ts").expect("on disk");
-        assert!(after.contains("jwt-tiny-decode"), "worktree holds the risky edit");
+        assert!(
+            after.contains("jwt-tiny-decode"),
+            "worktree holds the risky edit"
+        );
 
         // New file: no before. Deleted file: no after, but HEAD content remains.
         std::fs::write(root.join("auth/new.ts"), "const n = 1;\n").unwrap();
@@ -312,5 +372,18 @@ mod tests {
         std::fs::remove_file(root.join("utils/logger.ts")).unwrap();
         assert!(worktree_content(&root, "utils/logger.ts").is_none());
         assert!(head_content(&root, "utils/logger.ts").is_some());
+    }
+
+    #[test]
+    fn content_at_in_matches_content_at_through_one_open_repo() {
+        let fixture = test_fixture::payments_api();
+        let root = repo_root(&fixture.root).unwrap();
+        let repo = open(&root).expect("repo opens once");
+
+        assert_eq!(
+            content_at_in(&repo, "HEAD", "auth/validateToken.ts"),
+            content_at(&root, "HEAD", "auth/validateToken.ts")
+        );
+        assert!(content_at_in(&repo, "HEAD", "missing.ts").is_none());
     }
 }

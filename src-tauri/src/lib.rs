@@ -1,17 +1,17 @@
 pub mod cli;
 mod deps_diff;
-mod diff;
+pub mod diff;
 mod git;
 mod heuristics;
-mod model;
-mod parse;
+pub mod model;
+pub mod parse;
 mod report;
 mod rules;
-mod session;
-mod store;
-mod watcher;
+pub mod session;
+pub mod store;
 #[cfg(test)]
 mod test_fixture;
+mod watcher;
 
 use std::path::{Path, PathBuf};
 
@@ -65,10 +65,7 @@ fn e2e_state_file() -> Option<PathBuf> {
     if let Some(path) = e2e_env("DIFF_DRIFT_E2E_STATE_FILE") {
         return Some(PathBuf::from(path));
     }
-    Some(std::env::temp_dir().join(format!(
-        "diff-drift-e2e-state-{}.json",
-        std::process::id()
-    )))
+    Some(std::env::temp_dir().join(format!("diff-drift-e2e-state-{}.json", std::process::id())))
 }
 
 fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
@@ -83,7 +80,10 @@ fn save_last_repo(app: &tauri::AppHandle, path: &str) {
     }
     if let Some(file) = settings_file(app) {
         let json = serde_json::json!({ "lastRepoPath": path });
-        let _ = std::fs::write(file, serde_json::to_string_pretty(&json).unwrap_or_default());
+        let _ = std::fs::write(
+            file,
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        );
     }
 }
 
@@ -117,7 +117,11 @@ fn state_file(app: &tauri::AppHandle) -> std::path::PathBuf {
 /// Open a repo: validate it's a git repo, persist it, start watching, return the
 /// initial analysis. Errors (frontend shows it inline) if the folder isn't a repo.
 #[tauri::command]
-fn open_repo(app: tauri::AppHandle, shared: State<'_, Shared>, path: String) -> Result<SessionData, String> {
+fn open_repo(
+    app: tauri::AppHandle,
+    shared: State<'_, Shared>,
+    path: String,
+) -> Result<SessionData, String> {
     let root = git::repo_root(Path::new(&path))
         .ok_or_else(|| format!("\"{path}\" isn't a git repository."))?;
     save_last_repo(&app, &root.display().to_string());
@@ -128,7 +132,10 @@ fn open_repo(app: tauri::AppHandle, shared: State<'_, Shared>, path: String) -> 
 /// On launch: reopen the last repo if it still exists + is a git repo, else `None`
 /// (the frontend shows onboarding).
 #[tauri::command]
-fn init_session(app: tauri::AppHandle, shared: State<'_, Shared>) -> Result<Option<SessionData>, String> {
+fn init_session(
+    app: tauri::AppHandle,
+    shared: State<'_, Shared>,
+) -> Result<Option<SessionData>, String> {
     if let Some(path) = e2e_repo_path() {
         let root = git::repo_root(Path::new(&path))
             .ok_or_else(|| format!("\"{path}\" isn't a git repository."))?;
@@ -194,7 +201,11 @@ fn set_approved(
 /// Write a report of the current session to `path` — JSON when the extension is
 /// `.json`, Markdown otherwise.
 #[tauri::command]
-fn export_report(shared: State<'_, Shared>, path: String, generated_at: String) -> Result<(), String> {
+fn export_report(
+    shared: State<'_, Shared>,
+    path: String,
+    generated_at: String,
+) -> Result<(), String> {
     let data = watcher::current_data(shared.inner())?;
     let content = if path.to_lowercase().ends_with(".json") {
         report::render_json(&data)

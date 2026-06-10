@@ -80,6 +80,12 @@ impl Default for RuleRegistry {
     }
 }
 
+static REGISTRY: LazyLock<RuleRegistry> = LazyLock::new(RuleRegistry::new);
+
+pub fn registry() -> &'static RuleRegistry {
+    &REGISTRY
+}
+
 // ---------- helpers ----------
 fn joined(lines: &Option<Vec<String>>) -> String {
     lines.as_ref().map(|l| l.join("\n")).unwrap_or_default()
@@ -234,9 +240,8 @@ impl Rule for EnvTlsReject {
         if !added_or_modified(node.state) {
             return None;
         }
-        static RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r#"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#).unwrap()
-        });
+        static RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#).unwrap());
         if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
             return finding(
                 Severity::High,
@@ -260,8 +265,7 @@ impl Rule for BroadenedCors {
         }
         static WILDCARD: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
-        static TRUE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
+        static TRUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
         let after = joined(&node.after);
         let before = joined(&node.before);
         let now = WILDCARD.is_match(&after) || TRUE.is_match(&after);
@@ -287,8 +291,7 @@ impl Rule for CookieHttpOnlyRemoved {
         if ctx.is_test_file || node.state != NodeState::Modified {
             return None;
         }
-        static RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"httpOnly\s*:\s*true").unwrap());
+        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"httpOnly\s*:\s*true").unwrap());
         if RE.is_match(&joined(&node.before)) && !RE.is_match(&joined(&node.after)) {
             return finding(
                 Severity::High,
@@ -364,7 +367,9 @@ impl Rule for LooseRegex {
                 return finding(
                     Severity::High,
                     "Loose regex pattern",
-                    format!("Validation regex was widened to {rx} — any string now passes validation."),
+                    format!(
+                        "Validation regex was widened to {rx} — any string now passes validation."
+                    ),
                 );
             }
         }
@@ -475,7 +480,10 @@ impl Rule for PermissiveLogging {
         finding(
             Severity::Low,
             "Permissive logging config",
-            format!("Logger {} — sensitive values may reach log sinks.", why.join(" and ")),
+            format!(
+                "Logger {} — sensitive values may reach log sinks.",
+                why.join(" and ")
+            ),
         )
     }
 }
@@ -630,62 +638,174 @@ mod tests {
     fn hardcoded_secret_fires_on_markers_only() {
         let r = HardcodedSecret;
         assert!(r
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const k = \"AKIA0123456789ABCDEF\";"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const k = \"AKIA0123456789ABCDEF\";"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(r
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const k = \"sk-abcdefghij0123456789\";"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const k = \"sk-abcdefghij0123456789\";"]
+                ),
+                &ctx()
+            )
             .is_some());
         // plain base64-ish string → no fire (markers only)
         assert!(r
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const k = \"aGVsbG8gd29ybGQ=\";"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const k = \"aGVsbG8gd29ybGQ=\";"]
+                ),
+                &ctx()
+            )
             .is_none());
         // suppressed in test files
         assert!(r
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const k = \"AKIA0123456789ABCDEF\";"]), &test_ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const k = \"AKIA0123456789ABCDEF\";"]
+                ),
+                &test_ctx()
+            )
             .is_none());
         // removed (not added) → no fire
         assert!(r
-            .check(&node("VariableDeclaration", NodeState::Removed, &["const k = \"AKIA0123456789ABCDEF\";"], &[]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Removed,
+                    &["const k = \"AKIA0123456789ABCDEF\";"],
+                    &[]
+                ),
+                &ctx()
+            )
             .is_none());
     }
 
     #[test]
     fn eval_and_fn_constructor() {
         assert!(EvalCall
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["eval(userInput);"]
+                ),
+                &ctx()
+            )
             .is_some());
         // already present before → not newly introduced
         assert!(EvalCall
-            .check(&node("ExpressionStatement", NodeState::Modified, &["eval(a);"], &["eval(b);"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["eval(a);"],
+                    &["eval(b);"]
+                ),
+                &ctx()
+            )
             .is_none());
         assert!(FnConstructor
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const f = new Function(\"return 1\");"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const f = new Function(\"return 1\");"]
+                ),
+                &ctx()
+            )
             .is_some());
     }
 
     #[test]
     fn child_process() {
         assert!(ChildProcess
-            .check(&node("ImportDeclaration", NodeState::Added, &[], &["import { exec } from \"child_process\";"]), &ctx())
+            .check(
+                &node(
+                    "ImportDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["import { exec } from \"child_process\";"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(ChildProcess
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["cp.execSync(cmd);"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["cp.execSync(cmd);"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(ChildProcess
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["doThing();"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["doThing();"]
+                ),
+                &ctx()
+            )
             .is_none());
     }
 
     #[test]
     fn tls_and_env() {
         assert!(TlsRejectFalse
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const o = { rejectUnauthorized: false };"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const o = { rejectUnauthorized: false };"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(TlsRejectFalse
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const o = { rejectUnauthorized: true };"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const o = { rejectUnauthorized: true };"]
+                ),
+                &ctx()
+            )
             .is_none());
         assert!(EnvTlsReject
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';"]
+                ),
+                &ctx()
+            )
             .is_some());
         // already present before the edit → not newly introduced, no fire
         assert!(EnvTlsReject
@@ -704,45 +824,141 @@ mod tests {
     #[test]
     fn cors_and_cookies() {
         assert!(BroadenedCors
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["app.use(cors({ origin: '*' }));"]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ origin: '*' }));"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(CookieHttpOnlyRemoved
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const o = { httpOnly: true };"], &["const o = {  };"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const o = { httpOnly: true };"],
+                    &["const o = {  };"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(CookieSecureRemoved
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const o = { secure: true };"], &["const o = {};"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const o = { secure: true };"],
+                    &["const o = {};"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(SameSiteWeakened
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const o = { sameSite: 'Strict' };"], &["const o = { sameSite: 'None' };"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const o = { sameSite: 'Strict' };"],
+                    &["const o = { sameSite: 'None' };"]
+                ),
+                &ctx()
+            )
             .is_some());
         // not flagged in test fixtures
         assert!(BroadenedCors
-            .check(&node("ExpressionStatement", NodeState::Added, &[], &["app.use(cors({ origin: '*' }));"]), &test_ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ origin: '*' }));"]
+                ),
+                &test_ctx()
+            )
             .is_none());
     }
 
     #[test]
     fn regex_guard_verify_sanitize_logging() {
         assert!(LooseRegex
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const p = /^[A-Z]{3}$/;"], &["const p = /.*/;"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[A-Z]{3}$/;"],
+                    &["const p = /.*/;"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(LooseRegex
-            .check(&node("VariableDeclaration", NodeState::Added, &[], &["const parser = /.*/;"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const parser = /.*/;"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(LooseRegex
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const p = /.*/;"], &["const p = /^.*$/;"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /.*/;"],
+                    &["const p = /^.*$/;"]
+                ),
+                &ctx()
+            )
             .is_none());
         assert!(RemovedIfGuard
-            .check(&node("IfStatement", NodeState::Modified, &["if (ok) {"], &["if (false) {"]), &ctx())
+            .check(
+                &node(
+                    "IfStatement",
+                    NodeState::Modified,
+                    &["if (ok) {"],
+                    &["if (false) {"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(VerifyToDecode
-            .check(&node("ReturnStatement", NodeState::Modified, &["return verify(t, KEY);"], &["return decode(t);"]), &ctx())
+            .check(
+                &node(
+                    "ReturnStatement",
+                    NodeState::Modified,
+                    &["return verify(t, KEY);"],
+                    &["return decode(t);"]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(RemovedSanitize
-            .check(&node("ExpressionStatement", NodeState::Removed, &["sanitizeInput(token);"], &[]), &ctx())
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Removed,
+                    &["sanitizeInput(token);"],
+                    &[]
+                ),
+                &ctx()
+            )
             .is_some());
         assert!(PermissiveLogging
-            .check(&node("VariableDeclaration", NodeState::Modified, &["const l = createLogger({ redact: [\"x\"] });"], &["const l = createLogger({ redact: [] });"]), &ctx())
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const l = createLogger({ redact: [\"x\"] });"],
+                    &["const l = createLogger({ redact: [] });"]
+                ),
+                &ctx()
+            )
             .is_some());
     }
 
@@ -751,26 +967,54 @@ mod tests {
         let mut deps = HashSet::new();
         deps.insert("react".to_string());
         deps.insert("@tauri-apps/api".to_string());
-        let with_deps = RuleCtx { deps, is_test_file: false };
+        let with_deps = RuleCtx {
+            deps,
+            is_test_file: false,
+        };
 
-        let mut import = node("ImportDeclaration", NodeState::Added, &[], &["import x from \"react\";"]);
+        let mut import = node(
+            "ImportDeclaration",
+            NodeState::Added,
+            &[],
+            &["import x from \"react\";"],
+        );
         import.name = "react".into();
-        assert!(UnvettedPackage.check(&import, &with_deps).is_none(), "declared dep not flagged");
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_none(),
+            "declared dep not flagged"
+        );
 
         import.name = "@tauri-apps/api/window".into();
-        assert!(UnvettedPackage.check(&import, &with_deps).is_none(), "scoped sub-path of declared dep not flagged");
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_none(),
+            "scoped sub-path of declared dep not flagged"
+        );
 
         import.name = "jwt-tiny-decode".into();
-        assert!(UnvettedPackage.check(&import, &with_deps).is_some(), "undeclared dep flagged");
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_some(),
+            "undeclared dep flagged"
+        );
 
         import.name = "./local".into();
-        assert!(UnvettedPackage.check(&import, &with_deps).is_none(), "relative import not flagged");
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_none(),
+            "relative import not flagged"
+        );
     }
 
     #[test]
     fn unvetted_package_ignores_path_aliases() {
-        let no_deps = RuleCtx { deps: HashSet::new(), is_test_file: false };
-        let mut import = node("ImportDeclaration", NodeState::Added, &[], &["import x from \"@/components/x\";"]);
+        let no_deps = RuleCtx {
+            deps: HashSet::new(),
+            is_test_file: false,
+        };
+        let mut import = node(
+            "ImportDeclaration",
+            NodeState::Added,
+            &[],
+            &["import x from \"@/components/x\";"],
+        );
 
         for module in ["@/components/x", "~/lib/x", "~utils/x", "#app/x"] {
             import.name = module.into();
@@ -782,16 +1026,35 @@ mod tests {
 
         // a real undeclared package still fires, and with the new wording
         import.name = "left-pad".into();
-        let f = UnvettedPackage.check(&import, &no_deps).expect("undeclared dep flagged");
+        let f = UnvettedPackage
+            .check(&import, &no_deps)
+            .expect("undeclared dep flagged");
         assert_eq!(f.r#type, "Undeclared import");
     }
 
     #[test]
     fn unvetted_package_ignores_node_builtins() {
-        let with_deps = RuleCtx { deps: HashSet::new(), is_test_file: false };
-        let mut import = node("ImportDeclaration", NodeState::Added, &[], &["import path from \"node:path\";"]);
+        let with_deps = RuleCtx {
+            deps: HashSet::new(),
+            is_test_file: false,
+        };
+        let mut import = node(
+            "ImportDeclaration",
+            NodeState::Added,
+            &[],
+            &["import path from \"node:path\";"],
+        );
 
-        for module in ["node:fs/promises", "node:path", "node:net", "fs", "path", "net", "os", "util"] {
+        for module in [
+            "node:fs/promises",
+            "node:path",
+            "node:net",
+            "fs",
+            "path",
+            "net",
+            "os",
+            "util",
+        ] {
             import.name = module.into();
             assert!(
                 UnvettedPackage.check(&import, &with_deps).is_none(),
@@ -810,7 +1073,12 @@ mod tests {
     fn child_process_handles_node_protocol_and_suppresses_tests() {
         let prod = ctx();
         let test = test_ctx();
-        let import = node("ImportDeclaration", NodeState::Added, &[], &["import { spawn } from \"node:child_process\";"]);
+        let import = node(
+            "ImportDeclaration",
+            NodeState::Added,
+            &[],
+            &["import { spawn } from \"node:child_process\";"],
+        );
 
         assert!(
             ChildProcess.check(&import, &prod).is_some(),
@@ -831,7 +1099,10 @@ mod tests {
             "src/auth/login.spec.ts",
             "src/auth/login.test.ts",
         ] {
-            assert!(is_test_path(path), "`{path}` should be classified as test-like");
+            assert!(
+                is_test_path(path),
+                "`{path}` should be classified as test-like"
+            );
         }
         assert!(!is_test_path("src/runtime/app.ts"));
     }
@@ -844,5 +1115,18 @@ mod tests {
             &ctx(),
         );
         assert!(f.is_some());
+    }
+
+    #[test]
+    fn registry_is_a_single_shared_instance() {
+        let a = registry();
+        let b = registry();
+        assert!(std::ptr::eq(a, b));
+        assert!(a
+            .check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(x);"]),
+                &ctx(),
+            )
+            .is_some());
     }
 }

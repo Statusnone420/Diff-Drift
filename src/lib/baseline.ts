@@ -7,6 +7,10 @@ import type { Session } from "../types";
  * assuming HEAD.
  */
 export function baselinePhrase(session: Session): string {
+  if (session.baselineSpec !== "head" && session.baselineLabel === "HEAD") {
+    return "the last commit (HEAD)";
+  }
+
   switch (session.baselineSpec) {
     case "head":
       return "the last commit (HEAD)";

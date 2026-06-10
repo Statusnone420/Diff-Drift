@@ -1,18 +1,24 @@
 {
   "name": "diff-drift",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "seed:demo": "node scripts/seed-demo.mjs",
+    "bench": "cargo bench --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:unit": "vitest run",
     "test:e2e:web": "playwright test -c playwright.web.config.ts",
     "test:e2e:tauri": "npm run tauri -- build --debug --no-bundle --ci && playwright test -c playwright.tauri.config.ts",
+    "test:visual": "playwright test -c playwright.visual.config.ts",
+    "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
     "test:verify": "npm run test:rust && npm run build && npm run test:unit && npm run test:e2e:web",
     "test:verify:native": "npm run test:e2e:tauri"
   },

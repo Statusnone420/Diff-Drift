@@ -48,12 +48,22 @@ impl CliFixture {
         git.commit(Some("HEAD"), &sig, &sig, "baseline", &tree, &[])
             .expect("commit");
 
-        CliFixture { root, repo, state_home }
+        CliFixture {
+            root,
+            repo,
+            state_home,
+        }
     }
 
     /// Uncommitted High-severity drift (the loose-regex rule).
     fn add_high_drift(&self) {
         std::fs::write(self.repo.join("parser.ts"), "const parser = /.*/;\n").expect("write drift");
+    }
+
+    fn state_file(&self) -> PathBuf {
+        self.state_home
+            .join("io.github.statusnone420.diffdrift")
+            .join("repo-state.json")
     }
 
     /// Run `diff-drift check <repo> <args…>` with the config home redirected
@@ -90,7 +100,12 @@ fn bin_check_emits_valid_json_with_severity_exit() {
     let fx = CliFixture::new();
     fx.add_high_drift();
     let out = fx.check(&["--json"]);
-    assert_eq!(out.status.code(), Some(3), "High flag → exit 3\n{}", stderr(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "High flag → exit 3\n{}",
+        stderr(&out)
+    );
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("stdout is valid JSON");
     assert!(v["schemaVersion"].is_number());
     assert_eq!(v["session"]["riskCount"], 1);
@@ -102,7 +117,12 @@ fn bin_check_emits_valid_json_with_severity_exit() {
 fn bin_check_clean_repo_exits_zero() {
     let fx = CliFixture::new();
     let out = fx.check(&["--json"]);
-    assert_eq!(out.status.code(), Some(0), "no drift → exit 0\n{}", stderr(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "no drift → exit 0\n{}",
+        stderr(&out)
+    );
     let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON");
     assert_eq!(v["session"]["riskCount"], 0);
 }
@@ -112,17 +132,32 @@ fn bin_check_rejects_unresolvable_explicit_baseline() {
     let fx = CliFixture::new();
     fx.add_high_drift();
     let out = fx.check(&["--baseline", "no-such-ref", "--json"]);
-    assert_eq!(out.status.code(), Some(64), "explicit bad baseline must fail, not fall back");
+    assert_eq!(
+        out.status.code(),
+        Some(64),
+        "explicit bad baseline must fail, not fall back"
+    );
     assert!(
         stderr(&out).contains("doesn't resolve to a commit"),
         "stderr names the cause: {}",
         stderr(&out)
     );
-    assert!(stdout(&out).is_empty(), "no report on stdout when the baseline is invalid");
+    assert!(
+        stdout(&out).is_empty(),
+        "no report on stdout when the baseline is invalid"
+    );
 
     let out = fx.check(&["--baseline", "trust-point"]);
-    assert_eq!(out.status.code(), Some(64), "trust-point with none pinned must fail");
-    assert!(stderr(&out).contains("No trust point yet"), "stderr: {}", stderr(&out));
+    assert_eq!(
+        out.status.code(),
+        Some(64),
+        "trust-point with none pinned must fail"
+    );
+    assert!(
+        stderr(&out).contains("No trust point yet"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 #[test]
@@ -155,6 +190,50 @@ fn bin_check_writes_nothing() {
         leftovers.is_empty(),
         "the CLI is read-only and must not create state: {leftovers:?}"
     );
+}
+
+#[test]
+fn bin_check_does_not_honor_legacy_wildcard_dismissals() {
+    let fx = CliFixture::new();
+    fx.add_high_drift();
+
+    let out = fx.check(&["--json"]);
+    assert_eq!(out.status.code(), Some(3));
+    let first: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON");
+    let repo_key = first["session"]["repoPath"]
+        .as_str()
+        .expect("repo path")
+        .to_string();
+    let flag_id = first["flags"][0]["id"]
+        .as_str()
+        .expect("flag id")
+        .to_string();
+
+    let state_file = fx.state_file();
+    std::fs::create_dir_all(state_file.parent().unwrap()).expect("state dir");
+    let mut repos = serde_json::Map::new();
+    repos.insert(
+        repo_key,
+        serde_json::json!({
+            "dismissed": [flag_id]
+        }),
+    );
+    std::fs::write(
+        &state_file,
+        serde_json::to_string_pretty(&serde_json::Value::Object(repos)).unwrap(),
+    )
+    .expect("write legacy state");
+
+    std::fs::write(fx.repo.join("parser.ts"), "const parser = /.+/;\n").expect("rewrite drift");
+    let out = fx.check(&["--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "legacy id-only dismissal must not hide current CLI flags"
+    );
+    let second: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON");
+    assert_eq!(second["session"]["riskCount"], 1);
+    assert_eq!(second["flags"][0]["dismissed"], false);
 }
 
 /// `remove_dir_all` that clears read-only attributes first — git object files

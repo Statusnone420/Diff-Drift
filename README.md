@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-e7a83e?style=for-the-badge">
+  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -43,7 +43,7 @@ Diff Drift runs locally and is deliberately not an LLM. It does not send reposit
 
 ## Quick Start
 
-Prerequisites: Node.js 18+, Rust stable, Microsoft C++ Build Tools, and WebView2.
+Prerequisites: Node.js 20.19.x, 22.12+, or 24+; Rust stable; Microsoft C++ Build Tools; and WebView2.
 
 ```bash
 npm install
@@ -60,7 +60,7 @@ npm run dev
 
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned. Signing and notarization are not configured.
-- Current version: `0.2.0`.
+- Current version: `0.2.1`.
 - License: [MIT](LICENSE).
 
 ## Docs

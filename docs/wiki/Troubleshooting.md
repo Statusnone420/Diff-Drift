@@ -6,11 +6,11 @@ Open a folder inside a git working tree. Diff Drift uses `git2` to discover the 
 
 ## No Drift Detected
 
-The working tree matches `HEAD`, or the current changes were reverted. Create or save an uncommitted change and wait for the watcher to update.
+The working tree matches the selected baseline, or the current changes were reverted. Check the **Review changes since** picker if you expected committed drift to remain visible, then create or save a change and wait for the watcher to update.
 
 ## Changed Files But No Analyzed Files
 
-Diff Drift only parses changed `.ts` and `.tsx` files. Other changed files can still count as changed git drift, but they will not appear as AST nodes.
+Diff Drift analyzes changed TypeScript, TSX, JavaScript, JSX, and root `package.json` dependency/script drift. Other changed files can still count as git drift, but they will not appear as AST nodes or dependency nodes.
 
 ## A Flag Looks Wrong
 

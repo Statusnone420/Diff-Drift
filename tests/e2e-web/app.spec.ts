@@ -21,7 +21,7 @@ async function expectNoAxeViolations(page: Page) {
 test.describe("Diff Drift browser-mode E2E", () => {
   test("onboarding, loaded, and dismissed states pass automated axe checks", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("v0.2.0")).toBeVisible();
+    await expect(page.getByText("v0.2.1")).toBeVisible();
     await expect(page.getByRole("button", { name: /Open a repository/ })).toBeVisible();
     await expectNoAxeViolations(page);
 

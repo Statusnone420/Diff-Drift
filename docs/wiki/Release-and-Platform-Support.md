@@ -13,7 +13,7 @@ npm run tauri -- build --bundles nsis
 Expected output:
 
 ```text
-src-tauri/target/release/bundle/nsis/Diff Drift_0.2.0_x64-setup.exe
+src-tauri/target/release/bundle/nsis/Diff Drift_0.2.1_x64-setup.exe
 ```
 
 ## macOS Status

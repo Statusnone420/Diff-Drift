@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 20.19.x, 22.12+, or 24+ and npm
 - Rust stable
 - Tauri prerequisites for your platform
 - On Windows: Microsoft C++ Build Tools and WebView2
@@ -52,6 +52,36 @@ Native E2E builds a debug Tauri app and launches it with isolated environment va
 - `DIFF_DRIFT_E2E_EXPORT_PATH`
 - `DIFF_DRIFT_E2E_STATE_FILE`
 - `DIFF_DRIFT_E2E_BIN`
+
+## Benchmarks
+
+Rust analyzer benchmarks are local-only and are not part of CI:
+
+```bash
+npm run bench
+```
+
+For optimization work, capture a Criterion baseline before changing code, then compare after:
+
+```bash
+cargo bench --manifest-path src-tauri/Cargo.toml -- --save-baseline pre-opt
+cargo bench --manifest-path src-tauri/Cargo.toml -- --baseline pre-opt
+```
+
+## Visual Baselines
+
+Visual regression checks are local-only and are not run in CI. They cover the browser mock onboarding, loaded session, and dismissed states.
+
+```bash
+npm run test:visual
+```
+
+Regenerate baselines intentionally after a reviewed UI change:
+
+```bash
+npm run test:visual:update
+npm run test:visual
+```
 
 ## CI
 

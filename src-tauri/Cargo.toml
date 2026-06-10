@@ -1,6 +1,6 @@
 [package]
 name = "diff-drift"
-version = "0.2.0"
+version = "0.2.1"
 description = "Diff Drift — AST-level security inspector for the code drift AI coding agents leave behind"
 edition = "2021"
 
@@ -12,9 +12,22 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "diff_drift_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+bench = false
+
+[[bin]]
+name = "diff-drift"
+path = "src/main.rs"
+bench = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "analysis"
+harness = false
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -32,3 +45,7 @@ tauri-plugin-dialog = "2.7.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Console"] }
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

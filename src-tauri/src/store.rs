@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 pub struct RepoState {
     /// Dismissed flag id → content hash of the flagged node at dismissal time.
     /// A dismissal only applies while the node's content still matches — a
-    /// meaningfully changed node resurfaces its flag. The empty hash means
-    /// "dismissed regardless of content" (legacy v0.2.0 entries, which were
-    /// ids only); the GUI pins those to the current content on next open.
+    /// meaningfully changed node resurfaces its flag. The empty hash marks
+    /// legacy v0.2.0 id-only entries; the GUI pins those to current content on
+    /// next open, while read-only callers treat them conservatively.
     #[serde(deserialize_with = "de_dismissed")]
     pub dismissed: BTreeMap<String, String>,
     pub approved_fingerprint: Option<String>,
@@ -59,19 +59,51 @@ where
     })
 }
 
-/// The whole file: repo root → its state. BTreeMap for stable on-disk ordering.
-type StateFile = BTreeMap<String, RepoState>;
+const STORE_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+struct StateFile {
+    version: u32,
+    repos: BTreeMap<String, RepoState>,
+}
+
+impl Default for StateFile {
+    fn default() -> Self {
+        StateFile {
+            version: STORE_VERSION,
+            repos: BTreeMap::new(),
+        }
+    }
+}
 
 fn read_all(file: &Path) -> StateFile {
-    std::fs::read_to_string(file)
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Repr {
+        Versioned(StateFile),
+        Legacy(BTreeMap<String, RepoState>),
+    }
+
+    match std::fs::read_to_string(file)
         .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .and_then(|text| serde_json::from_str::<Repr>(&text).ok())
+    {
+        Some(Repr::Versioned(mut state)) => {
+            state.version = STORE_VERSION;
+            state
+        }
+        Some(Repr::Legacy(repos)) => StateFile {
+            version: STORE_VERSION,
+            repos,
+        },
+        None => StateFile::default(),
+    }
 }
 
 /// Load the persisted state for one repo (empty default if none).
 pub fn load(file: &Path, repo_key: &str) -> RepoState {
-    read_all(file).remove(repo_key).unwrap_or_default()
+    read_all(file).repos.remove(repo_key).unwrap_or_default()
 }
 
 /// Persist one repo's state, dropping the entry entirely once it's empty.
@@ -79,9 +111,9 @@ pub fn load(file: &Path, repo_key: &str) -> RepoState {
 pub fn save(file: &Path, repo_key: &str, state: &RepoState) {
     let mut all = read_all(file);
     if state.is_empty() {
-        all.remove(repo_key);
+        all.repos.remove(repo_key);
     } else {
-        all.insert(repo_key.to_string(), state.clone());
+        all.repos.insert(repo_key.to_string(), state.clone());
     }
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -96,7 +128,8 @@ mod tests {
     use super::*;
 
     fn temp_file(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("drift-store-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("drift-store-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("repo-state.json")
     }
@@ -113,12 +146,19 @@ mod tests {
         save(
             &file,
             r"C:\repo-b",
-            &RepoState { dismissed: [("x".into(), String::new())].into(), ..Default::default() },
+            &RepoState {
+                dismissed: [("x".into(), String::new())].into(),
+                ..Default::default()
+            },
         );
 
         assert_eq!(load(&file, r"C:\repo-a"), state);
         assert!(load(&file, r"C:\repo-b").dismissed.contains_key("x"));
-        assert_eq!(load(&file, r"C:\repo-c"), RepoState::default(), "unknown repo → default");
+        assert_eq!(
+            load(&file, r"C:\repo-c"),
+            RepoState::default(),
+            "unknown repo → default"
+        );
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 
@@ -135,15 +175,90 @@ mod tests {
 
         let state = load(&file, r"C:\repo");
         assert_eq!(state.dismissed.len(), 2);
-        // Legacy ids carry the match-anything empty hash until the GUI pins them.
-        assert_eq!(state.dismissed.get("loose-regex@auth-ts:0").map(String::as_str), Some(""));
+        // Legacy ids carry an empty hash until the GUI pins them.
+        assert_eq!(
+            state
+                .dismissed
+                .get("loose-regex@auth-ts:0")
+                .map(String::as_str),
+            Some("")
+        );
         assert_eq!(state.trust_point.as_deref(), Some("abc"));
 
         // Saving rewrites in the new map shape and still loads.
         save(&file, r"C:\repo", &state);
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(text.contains(r#""loose-regex@auth-ts:0": """#), "map shape on disk: {text}");
+        assert!(
+            text.contains(r#""version": 1"#),
+            "versioned wrapper: {text}"
+        );
+        assert!(text.contains(r#""repos": {"#), "repo map is nested: {text}");
+        assert!(
+            text.contains(r#""loose-regex@auth-ts:0": """#),
+            "map shape on disk: {text}"
+        );
         assert_eq!(load(&file, r"C:\repo"), state);
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn unversioned_legacy_file_migrates_to_versioned_on_save() {
+        let file = temp_file("legacy-wrapper");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"{ "C:\\repo": { "dismissed": ["legacy-flag"], "baseline": "trust-point", "trustPoint": "abc123" } }"#,
+        )
+        .unwrap();
+
+        let mut state = load(&file, r"C:\repo");
+        assert_eq!(
+            state.dismissed.get("legacy-flag").map(String::as_str),
+            Some("")
+        );
+        state.approved_at = Some("12:30".into());
+        save(&file, r"C:\repo", &state);
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains(r#""version": 1"#),
+            "version field written: {text}"
+        );
+        assert!(
+            text.contains(r#""repos": {"#),
+            "legacy map nested under repos: {text}"
+        );
+        assert!(
+            text.contains(r#""legacy-flag": """#),
+            "dismissal array migrated: {text}"
+        );
+        assert_eq!(load(&file, r"C:\repo"), state);
+        let _ = std::fs::remove_dir_all(file.parent().unwrap());
+    }
+
+    #[test]
+    fn versioned_file_round_trips() {
+        let file = temp_file("versioned");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            r#"{ "version": 1, "repos": { "repo": { "dismissed": { "flag": "hash" }, "reviewedNodes": { "node": "hash" } } } }"#,
+        )
+        .unwrap();
+
+        let state = load(&file, "repo");
+        assert_eq!(
+            state.dismissed.get("flag").map(String::as_str),
+            Some("hash")
+        );
+        assert_eq!(
+            state.reviewed_nodes.get("node").map(String::as_str),
+            Some("hash")
+        );
+        save(&file, "repo", &state);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(r#""version": 1"#));
+        assert_eq!(load(&file, "repo"), state);
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 
@@ -157,7 +272,10 @@ mod tests {
 
         save(&file, "repo", &RepoState::default());
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(!text.contains("repo\""), "emptied repo entry should be pruned: {text}");
+        assert!(
+            !text.contains("repo\""),
+            "emptied repo entry should be pruned: {text}"
+        );
         let _ = std::fs::remove_dir_all(file.parent().unwrap());
     }
 

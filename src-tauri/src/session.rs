@@ -9,8 +9,9 @@ use crate::git;
 use crate::heuristics::scan_file;
 use crate::model::{AstNode, FileEntry, Flag, NodeState, Session, SessionData, Severity};
 use crate::parse::{self, parse_file};
-use crate::rules::{is_test_path, RuleCtx, RuleRegistry};
+use crate::rules::{is_test_path, RuleCtx};
 use crate::store::RepoState;
+use git2::Repository;
 
 /// One file's analysis, cached so a save only re-analyzes the touched file(s).
 #[derive(Clone)]
@@ -70,10 +71,16 @@ impl std::fmt::Display for BaselineError {
                 write!(f, "No trust point yet — Mark reviewed pins one.")
             }
             BaselineError::NoDefaultBranch => {
-                write!(f, "No default branch (main/master) to take a merge-base with.")
+                write!(
+                    f,
+                    "No default branch (main/master) to take a merge-base with."
+                )
             }
             BaselineError::UnknownRev(rev) => {
-                write!(f, "\"{rev}\" doesn't resolve to a commit in this repository.")
+                write!(
+                    f,
+                    "\"{rev}\" doesn't resolve to a commit in this repository."
+                )
             }
         }
     }
@@ -97,25 +104,38 @@ pub fn resolve_baseline_strict(root: &Path, state: &RepoState) -> Result<Baselin
         {
             Some(sha) => {
                 let label = format!("trust point @ {}", short(&sha));
-                Ok(Baseline { sha: Some(sha), spec, label })
+                Ok(Baseline {
+                    sha: Some(sha),
+                    spec,
+                    label,
+                })
             }
             None => Err(BaselineError::NoTrustPoint),
         },
         "merge-base" => match git::merge_base_with_default(root) {
             Some(sha) => {
                 let label = format!("merge-base @ {}", short(&sha));
-                Ok(Baseline { sha: Some(sha), spec, label })
+                Ok(Baseline {
+                    sha: Some(sha),
+                    spec,
+                    label,
+                })
             }
             None => Err(BaselineError::NoDefaultBranch),
         },
         rev => match git::resolve_rev(root, rev) {
             Some(sha) => {
-                let label = if rev.eq_ignore_ascii_case(short(&sha)) || rev.eq_ignore_ascii_case(&sha) {
-                    format!("@ {}", short(&sha))
-                } else {
-                    format!("{} @ {}", rev, short(&sha))
-                };
-                Ok(Baseline { sha: Some(sha), spec, label })
+                let label =
+                    if rev.eq_ignore_ascii_case(short(&sha)) || rev.eq_ignore_ascii_case(&sha) {
+                        format!("@ {}", short(&sha))
+                    } else {
+                        format!("{} @ {}", rev, short(&sha))
+                    };
+                Ok(Baseline {
+                    sha: Some(sha),
+                    spec,
+                    label,
+                })
             }
             None => Err(BaselineError::UnknownRev(rev.to_string())),
         },
@@ -143,10 +163,11 @@ pub fn changed_paths(root: &Path, baseline: &Baseline) -> Vec<String> {
     }
 }
 
-fn before_content(root: &Path, baseline: &Baseline, rel: &str) -> Option<String> {
+fn before_content_in(repo: Option<&Repository>, baseline: &Baseline, rel: &str) -> Option<String> {
+    let repo = repo?;
     match &baseline.sha {
-        Some(sha) => git::content_at(root, sha, rel),
-        None => git::head_content(root, rel),
+        Some(sha) => git::content_at_in(repo, sha, rel),
+        None => git::content_at_in(repo, "HEAD", rel),
     }
 }
 
@@ -158,7 +179,18 @@ pub fn analyze_file(
     deps: &HashSet<String>,
     baseline: &Baseline,
 ) -> Option<FileResult> {
-    let before_src = before_content(root, baseline, rel); // None if new/untracked
+    let repo = git::open(root);
+    analyze_file_in(root, repo.as_ref(), rel, deps, baseline)
+}
+
+fn analyze_file_in(
+    root: &Path,
+    repo: Option<&Repository>,
+    rel: &str,
+    deps: &HashSet<String>,
+    baseline: &Baseline,
+) -> Option<FileResult> {
+    let before_src = before_content_in(repo, baseline, rel); // None if new/untracked
     let after_src = git::worktree_content(root, rel); // None if deleted
     match (&before_src, &after_src) {
         (Some(b), Some(a)) if b == a => return None,
@@ -174,13 +206,20 @@ pub fn analyze_file(
     let file_id = sanitize_id(rel);
     assign_ids(&mut nodes, &file_id, "");
 
-    let registry = RuleRegistry::new();
     let ctx = RuleCtx {
         deps: deps.clone(),
         is_test_file: is_test_path(rel),
     };
     let mut flags = Vec::new();
-    scan_file(&file_id, rel, &mut nodes, None, &mut flags, &registry, &ctx);
+    scan_file(
+        &file_id,
+        rel,
+        &mut nodes,
+        None,
+        &mut flags,
+        crate::rules::registry(),
+        &ctx,
+    );
 
     let (dir, name) = split_path(rel);
     let summary = summarize(&nodes);
@@ -203,21 +242,24 @@ pub fn analyze_file(
 /// Full scan of every changed analyzable file vs the baseline → results keyed
 /// by repo-relative path. A drifted package.json gets a dependency-diff entry.
 pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResult> {
+    let repo = git::open(root);
     let deps = read_deps(root);
     let mut map = HashMap::new();
     let changed = changed_paths(root, baseline);
     for rel in changed.iter().filter(|p| git::is_analyzable(p)) {
-        if let Some(res) = analyze_file(root, rel, &deps, baseline) {
+        if let Some(res) = analyze_file_in(root, repo.as_ref(), rel, &deps, baseline) {
             map.insert(rel.clone(), res);
         }
     }
     if changed.iter().any(|p| p == "package.json") {
-        let before = before_content(root, baseline, "package.json");
+        let before = before_content_in(repo.as_ref(), baseline, "package.json");
         let after = git::worktree_content(root, "package.json");
         let lock = crate::deps_diff::lockfile_names(root);
-        if let Some(res) =
-            crate::deps_diff::analyze_package_json(before.as_deref(), after.as_deref(), lock.as_ref())
-        {
+        if let Some(res) = crate::deps_diff::analyze_package_json(
+            before.as_deref(),
+            after.as_deref(),
+            lock.as_ref(),
+        ) {
             map.insert("package.json".into(), res);
         }
     }
@@ -227,17 +269,23 @@ pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResu
 /// Build the `SessionData` from the cached per-file results, applying the user's
 /// triage state: dismissed flags are marked (and excluded from every count) and
 /// the stored approval holds only while the drift fingerprint still matches.
-pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &RepoState) -> SessionData {
+pub fn assemble(
+    results: &HashMap<String, FileResult>,
+    meta: &Meta,
+    state: &RepoState,
+) -> SessionData {
     let mut files: Vec<FileEntry> = results.values().map(|r| r.entry.clone()).collect();
     let mut flags: Vec<Flag> = results.values().flat_map(|r| r.flags.clone()).collect();
 
     // A dismissal is pinned to the node's content at dismissal time: if the
-    // node changed meaningfully since, the flag resurfaces. The empty hash is
-    // the legacy match-anything form (pinned by the GUI on next open).
+    // node changed meaningfully since, the flag resurfaces. Empty legacy hashes
+    // are intentionally not honored here; the GUI pins them on open, while the
+    // read-only CLI must fail conservative instead of hiding changed flags.
     for f in flags.iter_mut() {
-        f.dismissed = state.dismissed.get(&f.id).is_some_and(|h| {
-            h.is_empty() || flag_node_hash(results, f).as_deref() == Some(h.as_str())
-        });
+        f.dismissed = state
+            .dismissed
+            .get(&f.id)
+            .is_some_and(|h| flag_node_hash(results, f).as_deref() == Some(h.as_str()));
     }
 
     // Per-file risk counts reflect ACTIVE (non-dismissed) flags only.
@@ -249,7 +297,12 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
     for entry in files.iter_mut() {
         entry.risks = active_by_file.get(entry.id.as_str()).copied().unwrap_or(0);
         let (mut changed, mut done) = (0u32, 0u32);
-        mark_reviewed(&mut entry.nodes, &state.reviewed_nodes, &mut changed, &mut done);
+        mark_reviewed(
+            &mut entry.nodes,
+            &state.reviewed_nodes,
+            &mut changed,
+            &mut done,
+        );
         entry.changed_nodes = changed;
         entry.reviewed_nodes = done;
         changed_nodes += changed;
@@ -286,7 +339,11 @@ pub fn assemble(results: &HashMap<String, FileResult>, meta: &Meta, state: &Repo
         changed_nodes,
         reviewed_nodes,
         approved,
-        approved_at: if approved { state.approved_at.clone() } else { None },
+        approved_at: if approved {
+            state.approved_at.clone()
+        } else {
+            None
+        },
     };
     SessionData {
         schema_version: crate::model::SCHEMA_VERSION,
@@ -539,18 +596,31 @@ mod tests {
     fn analyze_fixture_repo() {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
-        let data = assemble(&analyze_all(&root, &Baseline::default()), &meta(&root, &Baseline::default()), &RepoState::default());
+        let data = assemble(
+            &analyze_all(&root, &Baseline::default()),
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
         // 6 flags: unvetted import (M), loose regex (H), if-guard (L), removed
         // sanitize (L), verify→decode (M), permissive logging (L).
         assert_eq!(data.flags.len(), 6, "expected 6 flags");
-        assert_eq!(data.session.changed_files, 3, "3 changed files (incl. formatting-only)");
+        assert_eq!(
+            data.session.changed_files, 3,
+            "3 changed files (incl. formatting-only)"
+        );
         assert_eq!(data.session.risk_count, 6);
         assert_eq!(data.session.file_count, 2, "2 files with risks");
         assert_eq!(data.session.branch, "agent/refactor-token-validation");
         assert!(!data.session.approved);
-        assert_eq!(data.flags[0].r#type, "Loose regex pattern", "highest severity first");
+        assert_eq!(
+            data.flags[0].r#type, "Loose regex pattern",
+            "highest severity first"
+        );
         let sevs: Vec<_> = data.flags.iter().map(|f| sev_rank(f.severity)).collect();
-        assert!(sevs.windows(2).all(|w| w[0] <= w[1]), "flags severity-sorted");
+        assert!(
+            sevs.windows(2).all(|w| w[0] <= w[1]),
+            "flags severity-sorted"
+        );
     }
 
     #[test]
@@ -559,14 +629,24 @@ mod tests {
         let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
         let started = std::time::Instant::now();
         let results = analyze_all(&root, &Baseline::default());
-        let data = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
         assert_eq!(data.session.changed_files, 101, "100 drifted + 1 new file");
         assert_eq!(data.files.len(), 101, "every file analyzed");
         // 100 removed-sanitize (validate call dropped) + 1 loose regex.
         assert_eq!(data.flags.len(), 101);
-        assert!(matches!(data.flags[0].severity, Severity::High), "new file's High flag sorts first");
+        assert!(
+            matches!(data.flags[0].severity, Severity::High),
+            "new file's High flag sorts first"
+        );
         // Fingerprint must stay deterministic at this scale (sorted internals).
-        assert_eq!(fingerprint(&results), fingerprint(&analyze_all(&root, &Baseline::default())));
+        assert_eq!(
+            fingerprint(&results),
+            fingerprint(&analyze_all(&root, &Baseline::default()))
+        );
         // Debug-build guardrail: a 100-file sweep is interactive work, not a batch
         // job. Generous bound so slow CI runners don't flake.
         assert!(
@@ -589,7 +669,10 @@ mod tests {
             &meta(&root, &Baseline::default()),
             &RepoState::default(),
         );
-        assert_eq!(head_data.session.risk_count, 0, "HEAD baseline is blind after a commit");
+        assert_eq!(
+            head_data.session.risk_count, 0,
+            "HEAD baseline is blind after a commit"
+        );
         assert_eq!(head_data.session.changed_files, 0);
 
         // …but the trust-point baseline still sees everything since the human last trusted.
@@ -601,7 +684,11 @@ mod tests {
         let baseline = resolve_baseline(&root, &state);
         assert_eq!(baseline.sha.as_deref(), Some(trusted.as_str()));
         assert!(baseline.label.starts_with("trust point @ "));
-        let data = assemble(&analyze_all(&root, &baseline), &meta(&root, &baseline), &state);
+        let data = assemble(
+            &analyze_all(&root, &baseline),
+            &meta(&root, &baseline),
+            &state,
+        );
         assert_eq!(data.session.risk_count, 6, "all six flags still visible");
         assert_eq!(data.session.changed_files, 3);
         assert_eq!(data.session.baseline_spec, "trust-point");
@@ -626,7 +713,10 @@ mod tests {
         }
 
         // No main/master → merge-base falls back to HEAD.
-        let mb_state = RepoState { baseline: Some("merge-base".into()), ..Default::default() };
+        let mb_state = RepoState {
+            baseline: Some("merge-base".into()),
+            ..Default::default()
+        };
         let fallback = resolve_baseline(&root, &mb_state);
         assert_eq!(fallback.sha, None, "no default branch → HEAD fallback");
         assert_eq!(fallback.label, "HEAD");
@@ -642,18 +732,37 @@ mod tests {
         let resolved = resolve_baseline(&root, &mb_state);
         assert_eq!(resolved.sha.as_deref(), Some(first.as_str()));
         assert!(resolved.label.starts_with("merge-base @ "));
-        let data = assemble(&analyze_all(&root, &resolved), &meta(&root, &resolved), &mb_state);
-        assert_eq!(data.session.risk_count, 6, "branch drift visible vs merge-base");
+        let data = assemble(
+            &analyze_all(&root, &resolved),
+            &meta(&root, &resolved),
+            &mb_state,
+        );
+        assert_eq!(
+            data.session.risk_count, 6,
+            "branch drift visible vs merge-base"
+        );
 
         // An explicit rev resolves; an unknown rev falls back to HEAD.
-        let rev_state = RepoState { baseline: Some("main".into()), ..Default::default() };
-        assert_eq!(resolve_baseline(&root, &rev_state).sha.as_deref(), Some(first.as_str()));
-        let bad_state = RepoState { baseline: Some("no-such-ref".into()), ..Default::default() };
+        let rev_state = RepoState {
+            baseline: Some("main".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_baseline(&root, &rev_state).sha.as_deref(),
+            Some(first.as_str())
+        );
+        let bad_state = RepoState {
+            baseline: Some("no-such-ref".into()),
+            ..Default::default()
+        };
         assert_eq!(resolve_baseline(&root, &bad_state).sha, None);
         assert_eq!(resolve_baseline(&root, &bad_state).label, "HEAD");
 
         // Trust-point spec without a pinned trust point → HEAD fallback.
-        let tp_state = RepoState { baseline: Some("trust-point".into()), ..Default::default() };
+        let tp_state = RepoState {
+            baseline: Some("trust-point".into()),
+            ..Default::default()
+        };
         assert_eq!(resolve_baseline(&root, &tp_state).sha, None);
     }
 
@@ -666,13 +775,19 @@ mod tests {
         assert!(resolve_baseline_strict(&root, &RepoState::default()).is_ok());
 
         // Trust-point chosen but never pinned.
-        let tp_state = RepoState { baseline: Some("trust-point".into()), ..Default::default() };
+        let tp_state = RepoState {
+            baseline: Some("trust-point".into()),
+            ..Default::default()
+        };
         let err = resolve_baseline_strict(&root, &tp_state).unwrap_err();
         assert_eq!(err, BaselineError::NoTrustPoint);
         assert!(err.to_string().contains("Mark reviewed pins one"));
 
         // Unknown custom rev.
-        let bad_state = RepoState { baseline: Some("no-such-ref".into()), ..Default::default() };
+        let bad_state = RepoState {
+            baseline: Some("no-such-ref".into()),
+            ..Default::default()
+        };
         let err = resolve_baseline_strict(&root, &bad_state).unwrap_err();
         assert_eq!(err, BaselineError::UnknownRev("no-such-ref".into()));
         assert!(err.to_string().contains("doesn't resolve to a commit"));
@@ -686,7 +801,10 @@ mod tests {
                 }
             }
         }
-        let mb_state = RepoState { baseline: Some("merge-base".into()), ..Default::default() };
+        let mb_state = RepoState {
+            baseline: Some("merge-base".into()),
+            ..Default::default()
+        };
         let err = resolve_baseline_strict(&root, &mb_state).unwrap_err();
         assert_eq!(err, BaselineError::NoDefaultBranch);
 
@@ -696,7 +814,11 @@ mod tests {
             let b = resolve_baseline(&root, state);
             assert_eq!(b.sha, None);
             assert_eq!(b.label, "HEAD");
-            assert_eq!(Some(&b.spec), state.baseline.as_ref(), "spec preserved on fallback");
+            assert_eq!(
+                Some(&b.spec),
+                state.baseline.as_ref(),
+                "spec preserved on fallback"
+            );
         }
     }
 
@@ -708,7 +830,11 @@ mod tests {
         let deps = read_deps(&root);
         let res = analyze_file(&root, "routes/session.ts", &deps, &Baseline::default());
         assert!(res.is_some());
-        assert_eq!(res.unwrap().flags.len(), 0, "formatting-only file has no flags");
+        assert_eq!(
+            res.unwrap().flags.len(),
+            0,
+            "formatting-only file has no flags"
+        );
     }
 
     #[test]
@@ -719,7 +845,8 @@ mod tests {
         std::fs::write(new_file, "const parser = /.*/;\n").unwrap();
 
         let deps = read_deps(&root);
-        let res = analyze_file(&root, "auth/parser.ts", &deps, &Baseline::default()).expect("new ts file is drift");
+        let res = analyze_file(&root, "auth/parser.ts", &deps, &Baseline::default())
+            .expect("new ts file is drift");
         assert_eq!(res.flags.len(), 1);
         assert!(matches!(res.flags[0].severity, Severity::High));
         assert_eq!(res.flags[0].r#type, "Loose regex pattern");
@@ -737,10 +864,20 @@ mod tests {
         .unwrap();
 
         let deps = read_deps(&root);
-        let res = analyze_file(&root, "auth/Badge.tsx", &deps, &Baseline::default()).expect("new tsx file is drift");
+        let res = analyze_file(&root, "auth/Badge.tsx", &deps, &Baseline::default())
+            .expect("new tsx file is drift");
         assert_eq!(res.entry.lang, "TSX");
-        assert_eq!(res.flags.len(), 0, "clean JSX must not produce garbage flags");
-        assert_eq!(res.entry.nodes.len(), 1, "JSX parses to one clean node: {:?}", res.entry.summary);
+        assert_eq!(
+            res.flags.len(),
+            0,
+            "clean JSX must not produce garbage flags"
+        );
+        assert_eq!(
+            res.entry.nodes.len(),
+            1,
+            "JSX parses to one clean node: {:?}",
+            res.entry.summary
+        );
         assert_eq!(res.entry.nodes[0].kind, "FunctionDeclaration");
         assert_eq!(res.entry.nodes[0].name, "Badge");
     }
@@ -765,7 +902,11 @@ mod tests {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root, &Baseline::default());
-        let baseline = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let baseline = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
 
         // Dismiss the single high-severity flag (loose regex), pinned to the
         // flagged node's current content.
@@ -775,15 +916,26 @@ mod tests {
         state.dismissed.insert(high_id.clone(), high_hash);
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
 
-        assert_eq!(data.session.risk_count, 5, "dismissed flag leaves the count");
-        assert_eq!(data.flags.len(), 6, "flag stays in the list, marked dismissed");
+        assert_eq!(
+            data.session.risk_count, 5,
+            "dismissed flag leaves the count"
+        );
+        assert_eq!(
+            data.flags.len(),
+            6,
+            "flag stays in the list, marked dismissed"
+        );
         let last = data.flags.last().unwrap();
         assert_eq!(last.id, high_id, "dismissed flags sort last");
         assert!(last.dismissed);
         assert!(data.flags.iter().take(5).all(|f| !f.dismissed));
         // The file that owned it now reports one fewer active risk.
         let file = data.files.iter().find(|f| f.id == last.file_id).unwrap();
-        let baseline_file = baseline.files.iter().find(|f| f.id == last.file_id).unwrap();
+        let baseline_file = baseline
+            .files
+            .iter()
+            .find(|f| f.id == last.file_id)
+            .unwrap();
         assert_eq!(file.risks, baseline_file.risks - 1);
     }
 
@@ -792,13 +944,18 @@ mod tests {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root, &Baseline::default());
-        let all = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
-        let mut state = RepoState::default();
-        state.dismissed.extend(
-            all.flags
-                .iter()
-                .map(|f| (f.id.clone(), flag_node_hash(&results, f).expect("flagged node exists"))),
+        let all = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
         );
+        let mut state = RepoState::default();
+        state.dismissed.extend(all.flags.iter().map(|f| {
+            (
+                f.id.clone(),
+                flag_node_hash(&results, f).expect("flagged node exists"),
+            )
+        }));
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
         assert_eq!(data.session.risk_count, 0);
         assert_eq!(data.session.file_count, 0);
@@ -813,7 +970,8 @@ mod tests {
     ) -> HashMap<String, FileResult> {
         let deps = read_deps(root);
         let mut changed = results.clone();
-        let updated = analyze_file(root, rel, &deps, &Baseline::default()).expect("file still drifts");
+        let updated =
+            analyze_file(root, rel, &deps, &Baseline::default()).expect("file still drifts");
         changed.insert(rel.into(), updated);
         changed
     }
@@ -823,7 +981,11 @@ mod tests {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root, &Baseline::default());
-        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let base = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
 
         // Dismiss the loose-regex High flag, pinned to current content.
         let high = base.flags[0].clone();
@@ -833,7 +995,10 @@ mod tests {
             .dismissed
             .insert(high.id.clone(), flag_node_hash(&results, &high).unwrap());
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
-        assert_eq!(data.session.risk_count, 5, "dismissed while content matches");
+        assert_eq!(
+            data.session.risk_count, 5,
+            "dismissed while content matches"
+        );
 
         // The agent rewrites the flagged node (/.*/  → /.+/): same node id, same
         // flag id, different content → the old dismissal must NOT hide it.
@@ -853,7 +1018,11 @@ function validateToken(token: string): boolean {
         .unwrap();
         let changed = reanalyzed_with(&results, &root, "auth/validateToken.ts");
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
-        let reflag = data.flags.iter().find(|f| f.id == high.id).expect("flag still fires");
+        let reflag = data
+            .flags
+            .iter()
+            .find(|f| f.id == high.id)
+            .expect("flag still fires");
         assert!(!reflag.dismissed, "content change resurfaces the flag");
         assert_eq!(data.session.risk_count, 6, "all six flags active again");
     }
@@ -863,7 +1032,11 @@ function validateToken(token: string): boolean {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root, &Baseline::default());
-        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let base = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
 
         let high = base.flags[0].clone();
         let mut state = RepoState::default();
@@ -896,30 +1069,61 @@ function log(level: Level, msg: string): void {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
         let results = analyze_all(&root, &Baseline::default());
-        let base = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
+        let base = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
         let high = base.flags[0].clone();
 
-        // A legacy (empty-hash) entry dismisses regardless of content…
+        // A legacy (empty-hash) entry is conservative until the GUI adopts it.
         let mut state = RepoState::default();
         state.dismissed.insert(high.id.clone(), String::new());
-        state.dismissed.insert("gone-rule@gone-node".into(), String::new());
+        state
+            .dismissed
+            .insert("gone-rule@gone-node".into(), String::new());
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
-        assert!(data.flags.iter().find(|f| f.id == high.id).unwrap().dismissed);
+        assert!(
+            !data
+                .flags
+                .iter()
+                .find(|f| f.id == high.id)
+                .unwrap()
+                .dismissed,
+            "legacy empty hashes do not hide flags before adoption"
+        );
 
-        // …until the GUI adopts it: the live flag's entry gets pinned to the
+        // The GUI adopts it: the live flag's entry gets pinned to the
         // current hash, entries for vanished flags stay legacy.
-        assert!(adopt_legacy_dismissals(&mut state, &results), "something was pinned");
+        assert!(
+            adopt_legacy_dismissals(&mut state, &results),
+            "something was pinned"
+        );
         assert_eq!(
             state.dismissed.get(&high.id),
             flag_node_hash(&results, &high).as_ref(),
             "live flag pinned to current content"
         );
         assert_eq!(
-            state.dismissed.get("gone-rule@gone-node").map(String::as_str),
+            state
+                .dismissed
+                .get("gone-rule@gone-node")
+                .map(String::as_str),
             Some(""),
             "vanished flag entry left as-is"
         );
-        assert!(!adopt_legacy_dismissals(&mut state, &results), "second pass is a no-op");
+        assert!(
+            !adopt_legacy_dismissals(&mut state, &results),
+            "second pass is a no-op"
+        );
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        assert!(
+            data.flags
+                .iter()
+                .find(|f| f.id == high.id)
+                .unwrap()
+                .dismissed
+        );
     }
 
     #[test]
@@ -937,17 +1141,34 @@ function log(level: Level, msg: string): void {
         std::fs::write(root.join("package-lock.json"), r#"{ "packages": {} }"#).unwrap();
 
         let results = analyze_all(&root, &Baseline::default());
-        let data = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
-
-        let js = data.files.iter().find(|f| f.name == "shim.js").expect("JS file analyzed");
-        assert_eq!(js.lang, "JavaScript");
-        assert!(
-            data.flags.iter().any(|f| f.file_path == "utils/shim.js" && f.r#type == "Dynamic code execution"),
-            "eval in new JS file is flagged: {:?}",
-            data.flags.iter().map(|f| (&f.file_path, &f.r#type)).collect::<Vec<_>>()
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
         );
 
-        let pkg = data.files.iter().find(|f| f.name == "package.json").expect("dep diff analyzed");
+        let js = data
+            .files
+            .iter()
+            .find(|f| f.name == "shim.js")
+            .expect("JS file analyzed");
+        assert_eq!(js.lang, "JavaScript");
+        assert!(
+            data.flags
+                .iter()
+                .any(|f| f.file_path == "utils/shim.js" && f.r#type == "Dynamic code execution"),
+            "eval in new JS file is flagged: {:?}",
+            data.flags
+                .iter()
+                .map(|f| (&f.file_path, &f.r#type))
+                .collect::<Vec<_>>()
+        );
+
+        let pkg = data
+            .files
+            .iter()
+            .find(|f| f.name == "package.json")
+            .expect("dep diff analyzed");
         assert_eq!(pkg.lang, "JSON");
         let dep_flag = data
             .flags
@@ -967,8 +1188,15 @@ function log(level: Level, msg: string): void {
         let results = analyze_all(&root, &Baseline::default());
 
         // Nothing reviewed yet: progress is 0 of N.
-        let data = assemble(&results, &meta(&root, &Baseline::default()), &RepoState::default());
-        assert!(data.session.changed_nodes >= 6, "fixture has plenty of changed nodes");
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+        assert!(
+            data.session.changed_nodes >= 6,
+            "fixture has plenty of changed nodes"
+        );
         assert_eq!(data.session.reviewed_nodes, 0);
         assert!(data.files.iter().all(|f| f.reviewed_nodes == 0));
 
@@ -982,7 +1210,11 @@ function log(level: Level, msg: string): void {
         state.reviewed_nodes.insert(pattern_id.clone(), hash);
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
         assert_eq!(data.session.reviewed_nodes, 1);
-        let file = data.files.iter().find(|f| f.id == data.flags[0].file_id).unwrap();
+        let file = data
+            .files
+            .iter()
+            .find(|f| f.id == data.flags[0].file_id)
+            .unwrap();
         assert_eq!(file.reviewed_nodes, 1);
         let node_reviewed = |nodes: &[crate::model::AstNode]| -> bool {
             fn find(ns: &[crate::model::AstNode], id: &str) -> Option<bool> {
@@ -1018,10 +1250,14 @@ function validateToken(token: string): boolean {
         .unwrap();
         let deps = read_deps(&root);
         let mut changed = results.clone();
-        let updated = analyze_file(&root, "auth/validateToken.ts", &deps, &Baseline::default()).unwrap();
+        let updated =
+            analyze_file(&root, "auth/validateToken.ts", &deps, &Baseline::default()).unwrap();
         changed.insert("auth/validateToken.ts".into(), updated);
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
-        assert_eq!(data.session.reviewed_nodes, 0, "content drift resets the review");
+        assert_eq!(
+            data.session.reviewed_nodes, 0,
+            "content drift resets the review"
+        );
     }
 
     #[test]
@@ -1047,9 +1283,14 @@ function validateToken(token: string): boolean {
         .unwrap();
         let deps = read_deps(&root);
         let mut changed = results.clone();
-        let updated = analyze_file(&root, "utils/logger.ts", &deps, &Baseline::default()).expect("still drifted");
+        let updated = analyze_file(&root, "utils/logger.ts", &deps, &Baseline::default())
+            .expect("still drifted");
         changed.insert("utils/logger.ts".into(), updated);
-        assert_ne!(fingerprint(&changed), fingerprint(&results), "fingerprint tracks content");
+        assert_ne!(
+            fingerprint(&changed),
+            fingerprint(&results),
+            "fingerprint tracks content"
+        );
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
         assert!(!data.session.approved, "approval revoked by drift change");
         assert!(data.session.approved_at.is_none());
@@ -1080,7 +1321,8 @@ export default router;
 
         let deps = read_deps(&root);
         let mut changed = results.clone();
-        let updated = analyze_file(&root, "routes/session.ts", &deps, &Baseline::default()).expect("signature drift");
+        let updated = analyze_file(&root, "routes/session.ts", &deps, &Baseline::default())
+            .expect("signature drift");
         assert_eq!(updated.entry.summary, "1 modified");
         changed.insert("routes/session.ts".into(), updated);
 
@@ -1090,7 +1332,10 @@ export default router;
             "signature-only drift changes the approval fingerprint"
         );
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
-        assert!(!data.session.approved, "approval revoked by signature-only drift");
+        assert!(
+            !data.session.approved,
+            "approval revoked by signature-only drift"
+        );
         assert!(data.session.approved_at.is_none());
     }
 }

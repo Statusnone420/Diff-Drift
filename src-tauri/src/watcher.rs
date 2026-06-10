@@ -52,25 +52,15 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBu
     let git_dirs = git_metadata_dirs(&root);
 
     let app2 = app.clone();
-    let shared2 = shared.clone();
-    let root2 = root.clone();
-    let git_dirs2 = git_dirs.clone();
-    let debouncer = new_debouncer(
+    let debouncer = spawn_debouncer(
+        shared.clone(),
+        root.clone(),
+        git_dirs.clone(),
         Duration::from_millis(400),
-        None,
-        move |res: DebounceEventResult| {
-            let Ok(events) = res else { return };
-            let mut paths: Vec<PathBuf> = Vec::new();
-            for e in events {
-                if matches!(e.event.kind, EventKind::Access(_)) {
-                    continue; // reads aren't drift
-                }
-                paths.extend(e.event.paths.iter().cloned());
-            }
-            on_change(&app2, &shared2, &root2, &git_dirs2, paths);
+        move |data| {
+            let _ = app2.emit("drift://updated", data);
         },
-    )
-    .ok();
+    );
 
     {
         let mut g = shared.lock().unwrap();
@@ -92,7 +82,11 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBu
     }
 
     let g = shared.lock().unwrap();
-    session::assemble(&g.results, &session::meta(&root, &g.baseline), &g.repo_state)
+    session::assemble(
+        &g.results,
+        &session::meta(&root, &g.baseline),
+        &g.repo_state,
+    )
 }
 
 /// Stable key for the persisted per-repo state.
@@ -118,7 +112,11 @@ fn update_triage(
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
-pub fn set_dismissed(shared: &Shared, flag_id: String, dismissed: bool) -> Result<SessionData, String> {
+pub fn set_dismissed(
+    shared: &Shared,
+    flag_id: String,
+    dismissed: bool,
+) -> Result<SessionData, String> {
     update_triage(shared, |state, results| {
         if dismissed {
             // Pin the flagged node's current content: a node that changes
@@ -140,7 +138,11 @@ pub fn set_dismissed(shared: &Shared, flag_id: String, dismissed: bool) -> Resul
 
 /// Mark one node reviewed (pinning its current content hash) or unreviewed.
 /// A reviewed node whose content later changes reads as unreviewed again.
-pub fn set_node_reviewed(shared: &Shared, node_id: String, reviewed: bool) -> Result<SessionData, String> {
+pub fn set_node_reviewed(
+    shared: &Shared,
+    node_id: String,
+    reviewed: bool,
+) -> Result<SessionData, String> {
     update_triage(shared, |state, results| {
         if reviewed {
             if let Some(hash) = results
@@ -170,7 +172,11 @@ pub fn dismiss_all(shared: &Shared) -> Result<SessionData, String> {
 /// it survives the agent committing afterwards. When the active baseline IS the
 /// trust point, the baseline advances with it (re-analyzed before fingerprinting,
 /// so the approval doesn't instantly self-revoke). Revoking keeps the trust point.
-pub fn set_approved(shared: &Shared, approved: bool, approved_at: Option<String>) -> Result<SessionData, String> {
+pub fn set_approved(
+    shared: &Shared,
+    approved: bool,
+    approved_at: Option<String>,
+) -> Result<SessionData, String> {
     if !approved {
         return update_triage(shared, |state, _| {
             state.approved_fingerprint = None;
@@ -210,7 +216,9 @@ pub fn set_approved(shared: &Shared, approved: bool, approved_at: Option<String>
     state.approved_at = approved_at;
     // Reviewing the whole drift reviews every node in it — and rebuilding the
     // map from the current drift prunes entries for nodes that no longer exist.
-    state.reviewed_nodes = session::changed_node_hashes(&g.results).into_iter().collect();
+    state.reviewed_nodes = session::changed_node_hashes(&g.results)
+        .into_iter()
+        .collect();
     g.repo_state = state;
     g.baseline = baseline;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
@@ -258,25 +266,24 @@ pub fn current_data(shared: &Shared) -> Result<SessionData, String> {
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
-fn on_change(
-    app: &AppHandle,
+fn process_change(
     shared: &Shared,
     root: &Path,
     git_dirs: &[PathBuf],
     paths: Vec<PathBuf>,
-) {
+) -> Option<SessionData> {
     let change = classify_paths_with_git_dirs(root, git_dirs, paths);
     if change.rels.is_empty() && !change.full_scan {
-        return;
+        return None;
     }
 
     // Late event from a replaced watcher (repo was switched) → never merge old-repo
     // results into the new repo's state.
     if shared.lock().unwrap().root.as_path() != root {
-        return;
+        return None;
     }
 
-    let data = if change.full_scan {
+    Some(if change.full_scan {
         // Git state and deps can change the whole session → full re-scan. The
         // baseline re-resolves too: HEAD moves on commit, merge-bases shift.
         let deps = session::read_deps(root);
@@ -285,7 +292,7 @@ fn on_change(
         let results = session::analyze_all(root, &baseline);
         let mut g = shared.lock().unwrap();
         if g.root.as_path() != root {
-            return; // repo switched while we were scanning
+            return None; // repo switched while we were scanning
         }
         g.deps = deps;
         g.baseline = baseline;
@@ -307,7 +314,7 @@ fn on_change(
             .collect();
         let mut g = shared.lock().unwrap();
         if g.root.as_path() != root {
-            return; // repo switched while we were analyzing
+            return None; // repo switched while we were analyzing
         }
         for (rel, res) in updates {
             match res {
@@ -321,8 +328,32 @@ fn on_change(
         }
         let meta = session::meta(root, &g.baseline);
         session::assemble(&g.results, &meta, &g.repo_state)
-    };
-    let _ = app.emit("drift://updated", data);
+    })
+}
+
+fn spawn_debouncer(
+    shared: Shared,
+    root: PathBuf,
+    git_dirs: Vec<PathBuf>,
+    debounce: Duration,
+    emit: impl Fn(SessionData) + Send + 'static,
+) -> Option<Deb> {
+    let root2 = root.clone();
+    let git_dirs2 = git_dirs.clone();
+    new_debouncer(debounce, None, move |res: DebounceEventResult| {
+        let Ok(events) = res else { return };
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for e in events {
+            if matches!(e.event.kind, EventKind::Access(_)) {
+                continue; // reads aren't drift
+            }
+            paths.extend(e.event.paths.iter().cloned());
+        }
+        if let Some(data) = process_change(&shared, &root2, &git_dirs2, paths) {
+            emit(data);
+        }
+    })
+    .ok()
 }
 
 #[derive(Default)]
@@ -442,6 +473,8 @@ fn relativize(root: &Path, p: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::{self, Receiver};
+    use std::time::Instant;
 
     fn root() -> PathBuf {
         PathBuf::from(r"C:\repo")
@@ -517,7 +550,11 @@ mod tests {
 
     fn shared_for(root: &Path) -> (Shared, PathBuf) {
         let state_file = std::env::temp_dir()
-            .join(format!("drift-watcher-test-{}-{:p}", std::process::id(), &root))
+            .join(format!(
+                "drift-watcher-test-{}-{:p}",
+                std::process::id(),
+                &root
+            ))
             .join("repo-state.json");
         let baseline = session::resolve_baseline(root, &RepoState::default());
         let shared = new_shared();
@@ -530,6 +567,118 @@ mod tests {
             g.state_file = state_file.clone();
         }
         (shared, state_file)
+    }
+
+    fn recv_matching(
+        rx: &Receiver<SessionData>,
+        description: &str,
+        predicate: impl Fn(&SessionData) -> bool,
+    ) -> SessionData {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut last: Option<SessionData> = None;
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                panic!(
+                    "timed out waiting for {description}; last update present: {}",
+                    last.is_some()
+                );
+            }
+            let timeout = (deadline - now).min(Duration::from_millis(500));
+            match rx.recv_timeout(timeout) {
+                Ok(data) if predicate(&data) => return data,
+                Ok(data) => last = Some(data),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("debouncer channel closed while waiting for {description}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn real_debouncer_delivers_incremental_update_for_an_edited_file() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+        let git_dirs = git_metadata_dirs(&root);
+        let (tx, rx) = mpsc::channel();
+        let mut debouncer = spawn_debouncer(
+            shared.clone(),
+            root.clone(),
+            git_dirs,
+            Duration::from_millis(150),
+            move |data| {
+                let _ = tx.send(data);
+            },
+        )
+        .expect("debouncer starts");
+        debouncer
+            .watch(&root, RecursiveMode::Recursive)
+            .expect("watch root");
+        std::thread::sleep(Duration::from_millis(50));
+
+        std::fs::write(
+            root.join("routes/session.ts"),
+            "function handleSession(req: Request, res: Response) {\n  eval(payload);\n  return res.json({ ok: true });\n}\n\nexport default router;\n",
+        )
+        .unwrap();
+
+        let data = recv_matching(&rx, "incremental eval flag", |data| {
+            data.flags
+                .iter()
+                .any(|f| f.file_path == "routes/session.ts" && f.r#type == "Dynamic code execution")
+        });
+        assert!(data.flags.iter().any(|f| {
+            f.file_path == "routes/session.ts" && f.r#type == "Dynamic code execution"
+        }));
+
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn real_debouncer_full_scans_when_the_manifest_changes() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+        let git_dirs = git_metadata_dirs(&root);
+        let (tx, rx) = mpsc::channel();
+        let mut debouncer = spawn_debouncer(
+            shared.clone(),
+            root.clone(),
+            git_dirs,
+            Duration::from_millis(150),
+            move |data| {
+                let _ = tx.send(data);
+            },
+        )
+        .expect("debouncer starts");
+        debouncer
+            .watch(&root, RecursiveMode::Recursive)
+            .expect("watch root");
+        std::thread::sleep(Duration::from_millis(50));
+
+        std::fs::write(
+            root.join("package.json"),
+            r#"{ "name": "payments-api", "dependencies": { "left-pad": "^1.3.0" } }"#,
+        )
+        .unwrap();
+
+        let data = recv_matching(&rx, "package.json full-scan entry", |data| {
+            data.files.iter().any(|f| f.name == "package.json")
+        });
+        assert!(data
+            .files
+            .iter()
+            .any(|f| f.name == "package.json" && f.lang == "JSON"));
+        assert!(data
+            .flags
+            .iter()
+            .any(|f| { f.file_path == "package.json" && f.r#type == "New dependency" }));
+
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
 
     #[test]
@@ -576,10 +725,17 @@ mod tests {
         // "Mark reviewed" reviews the whole drift.
         let data = set_approved(&shared, true, Some("12:30".into())).unwrap();
         assert_eq!(data.session.reviewed_nodes, total, "everything reviewed");
-        assert!(data.files.iter().all(|f| f.reviewed_nodes == f.changed_nodes));
+        assert!(data
+            .files
+            .iter()
+            .all(|f| f.reviewed_nodes == f.changed_nodes));
         {
             let g = shared.lock().unwrap();
-            assert_eq!(g.repo_state.reviewed_nodes.len() as u32, total, "map rebuilt + pruned");
+            assert_eq!(
+                g.repo_state.reviewed_nodes.len() as u32,
+                total,
+                "map rebuilt + pruned"
+            );
         }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
@@ -597,32 +753,46 @@ mod tests {
         crate::test_fixture::commit_all(&root, "agent commits the drift");
 
         let err = set_baseline(&shared, "nonsense-ref".into()).unwrap_err();
-        assert!(err.contains("doesn't resolve"), "unknown rev errors clearly: {err}");
+        assert!(
+            err.contains("doesn't resolve"),
+            "unknown rev errors clearly: {err}"
+        );
 
         let data = set_baseline(&shared, "trust-point".into()).unwrap();
         assert_eq!(data.session.baseline_spec, "trust-point");
         assert!(data.session.baseline_label.starts_with("trust point @ "));
-        assert_eq!(data.session.risk_count, 6, "committed drift visible vs trust point");
+        assert_eq!(
+            data.session.risk_count, 6,
+            "committed drift visible vs trust point"
+        );
         // The commit changed WHERE the drift lives, not WHAT it is — the
         // reviewed fingerprint still matches, so the review survives the commit.
-        assert!(data.session.approved, "identical drift content keeps the review");
+        assert!(
+            data.session.approved,
+            "identical drift content keeps the review"
+        );
 
         // The agent then writes NEW drift → the review revokes.
-        std::fs::write(
-            root.join("routes/audit.ts"),
-            "const auditEvery = /.*/;\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("routes/audit.ts"), "const auditEvery = /.*/;\n").unwrap();
         let data = set_baseline(&shared, "trust-point".into()).unwrap();
         assert_eq!(data.session.risk_count, 7, "new file adds a seventh flag");
-        assert!(!data.session.approved, "new drift since approval → review revoked");
+        assert!(
+            !data.session.approved,
+            "new drift since approval → review revoked"
+        );
 
         // Mark reviewed again: trust point advances to the new HEAD; only the
         // still-uncommitted file remains as drift, and it is fingerprinted as
         // reviewed — so the approval holds.
         let data = set_approved(&shared, true, Some("12:45".into())).unwrap();
-        assert!(data.session.approved, "approval holds after advancing the trust point");
-        assert_eq!(data.session.risk_count, 1, "only the uncommitted file drifts vs the new trust point");
+        assert!(
+            data.session.approved,
+            "approval holds after advancing the trust point"
+        );
+        assert_eq!(
+            data.session.risk_count, 1,
+            "only the uncommitted file drifts vs the new trust point"
+        );
 
         let back = set_baseline(&shared, "head".into()).unwrap();
         assert_eq!(back.session.baseline_spec, "head");

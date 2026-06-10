@@ -10,22 +10,31 @@ describe("baselinePhrase", () => {
   });
 
   it("names the pinned trust point for the trust-point baseline", () => {
-    const s = makeSession({ baselineSpec: "trust-point", trustPoint: "ab12cd3" });
+    const s = makeSession({
+      baselineSpec: "trust-point",
+      baselineLabel: "trust point @ ab12cd3",
+      trustPoint: "ab12cd3",
+    });
     expect(baselinePhrase(s)).toBe("your last review (trust point ab12cd3)");
   });
 
-  it("stays readable when trust-point is selected but nothing is pinned", () => {
+  it("uses HEAD copy when trust-point is selected but nothing is pinned", () => {
     const s = makeSession({ baselineSpec: "trust-point" });
-    expect(baselinePhrase(s)).toBe("your last review (trust point)");
+    expect(baselinePhrase(s)).toBe("the last commit (HEAD)");
   });
 
   it("names the branch start for the merge-base baseline", () => {
-    const s = makeSession({ baselineSpec: "merge-base" });
+    const s = makeSession({ baselineSpec: "merge-base", baselineLabel: "merge-base @ ab12cd3" });
     expect(baselinePhrase(s)).toBe("the branch start (merge-base)");
   });
 
   it("quotes a custom ref verbatim", () => {
-    const s = makeSession({ baselineSpec: "release/v1.2" });
+    const s = makeSession({ baselineSpec: "release/v1.2", baselineLabel: "release/v1.2 @ ab12cd3" });
     expect(baselinePhrase(s)).toBe('"release/v1.2"');
+  });
+
+  it("uses HEAD copy when an unresolved persisted baseline fell back to HEAD", () => {
+    const s = makeSession({ baselineSpec: "gone-ref", baselineLabel: "HEAD" });
+    expect(baselinePhrase(s)).toBe("the last commit (HEAD)");
   });
 });

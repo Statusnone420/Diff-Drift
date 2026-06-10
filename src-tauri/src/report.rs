@@ -149,10 +149,10 @@ fn plural(n: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{analyze_all, assemble, fingerprint, meta, Baseline};
+    use crate::git;
+    use crate::session::{analyze_all, assemble, fingerprint, flag_node_hash, meta, Baseline};
     use crate::store::RepoState;
     use crate::test_fixture;
-    use crate::git;
 
     fn fixture_data(state: &RepoState) -> SessionData {
         let fixture = test_fixture::payments_api();
@@ -175,25 +175,46 @@ mod tests {
         assert!(md.contains("- **Review:** not reviewed"));
         assert!(md.contains("### High severity"));
         assert!(md.contains("Loose regex pattern"));
-        assert!(md.contains("```diff"), "flagged nodes include before/after diff");
-        assert!(md.contains("- const pattern ="), "before lines render as removals");
-        assert!(md.contains("+ const pattern = /.*/;"), "after lines render as additions");
+        assert!(
+            md.contains("```diff"),
+            "flagged nodes include before/after diff"
+        );
+        assert!(
+            md.contains("- const pattern ="),
+            "before lines render as removals"
+        );
+        assert!(
+            md.contains("+ const pattern = /.*/;"),
+            "after lines render as additions"
+        );
         assert!(md.contains("## Analyzed files"));
         assert!(
             md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).")
         );
         assert!(md.contains("`routes/session.ts` — Formatting only"));
-        assert!(!md.contains("## Dismissed"), "no dismissed section when nothing dismissed");
+        assert!(
+            !md.contains("## Dismissed"),
+            "no dismissed section when nothing dismissed"
+        );
     }
 
     #[test]
     fn markdown_report_shows_dismissed_and_approval() {
-        let base = fixture_data(&RepoState::default());
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        let base = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
         let mut state = RepoState::default();
-        state.dismissed.insert(base.flags[0].id.clone(), String::new());
-        state.approved_fingerprint = Some("CURRENT".into());
+        let hash = flag_node_hash(&results, &base.flags[0]).expect("flagged node exists");
+        state.dismissed.insert(base.flags[0].id.clone(), hash);
         state.approved_at = Some("12:30".into());
-        let md = render_markdown(&fixture_data(&state), "now");
+        state.approved_fingerprint = Some(fingerprint(&results));
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        let md = render_markdown(&data, "now");
         assert!(md.contains("- **Review:** reviewed at 12:30"));
         assert!(md.contains("## Dismissed (1)"));
         assert!(md.contains("~~Loose regex pattern~~"));
