@@ -9,6 +9,7 @@ mod report;
 mod rules;
 pub mod session;
 pub mod store;
+mod structural;
 #[cfg(test)]
 mod test_fixture;
 mod watcher;

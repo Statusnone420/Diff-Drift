@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::model::{AstNode, NodeState, Severity};
+use crate::parse::Lang;
 
 /// Per-file context a rule may consult.
 pub struct RuleCtx {
@@ -16,6 +17,8 @@ pub struct RuleCtx {
     pub deps: HashSet<String>,
     /// Whether this file looks like a test/fixture (suppresses noisy rules).
     pub is_test_file: bool,
+    /// The file's language, for structural (tree-sitter query) matching.
+    pub lang: Lang,
 }
 
 pub struct Finding {
@@ -132,19 +135,31 @@ impl Rule for HardcodedSecret {
     }
 }
 
-/// CWE-95 — code injection via eval.
+/// CWE-95 — code injection via eval. Structural: matches a real call to `eval`
+/// (bare or via member like `window.eval`), never the word inside a string or
+/// comment. Falls back to the text pattern when the snippet can't be parsed.
 struct EvalCall;
+
+const EVAL_CALL_QUERY: &str = r#"
+(call_expression function: (identifier) @callee (#eq? @callee "eval"))
+(call_expression
+  function: (member_expression property: (property_identifier) @prop (#eq? @prop "eval")))
+"#;
+
 impl Rule for EvalCall {
     fn id(&self) -> &'static str {
         "eval-call"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\beval\s*\(").unwrap());
-        let after = joined(&node.after);
-        if RE.is_match(&after) && !RE.is_match(&joined(&node.before)) {
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, EVAL_CALL_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -625,12 +640,14 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         }
     }
     fn test_ctx() -> RuleCtx {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            lang: Lang::Ts,
         }
     }
 
@@ -733,6 +750,42 @@ mod tests {
                 &ctx()
             )
             .is_some());
+    }
+
+    #[test]
+    fn eval_structural_catches_text_evasions() {
+        // Forms the old text pattern missed: optional chaining, member calls.
+        for src in ["eval?.(payload);", "window.eval(payload);", "globalThis.eval(payload);"] {
+            assert!(
+                EvalCall
+                    .check(
+                        &node("ExpressionStatement", NodeState::Added, &[], &[src]),
+                        &ctx()
+                    )
+                    .is_some(),
+                "structural match should catch: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn eval_structural_ignores_strings_and_comments() {
+        // Forms the old text pattern wrongly flagged.
+        for src in [
+            "const msg = \"calls eval(x) at runtime\";",
+            "// eval(input) was removed in the refactor",
+            "log(`avoid eval(${name})`);",
+        ] {
+            assert!(
+                EvalCall
+                    .check(
+                        &node("ExpressionStatement", NodeState::Added, &[], &[src]),
+                        &ctx()
+                    )
+                    .is_none(),
+                "no real call, must not flag: {src}"
+            );
+        }
     }
 
     #[test]
@@ -970,6 +1023,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps,
             is_test_file: false,
+            lang: Lang::Ts,
         };
 
         let mut import = node(
@@ -1008,6 +1062,7 @@ mod tests {
         let no_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         };
         let mut import = node(
             "ImportDeclaration",
@@ -1037,6 +1092,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         };
         let mut import = node(
             "ImportDeclaration",

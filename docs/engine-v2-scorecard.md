@@ -7,17 +7,21 @@ are ignored.
 
 ## Battery results by phase
 
-| Metric | Baseline (Phase 0) |
-| --- | --- |
-| `cargo test` | 104 passed, 0 failed |
-| `cargo clippy --all-targets -D warnings` | clean |
-| `npm run eval:engine` | 15/15 |
-| `npm run test:unit` | 54 passed |
-| `npm run test:e2e:web` | 2 passed (incl. axe) |
-| `npm run eval:fp-replay` (this repo vs `main`) | 0 changed files, 0 flags |
-| bench `parse_file/100_line_ts` | 408 µs |
-| bench `diff_nodes/representative_ts` | 33.1 µs |
-| bench `analyze_all/25_drifted_files` | 21.4 ms |
+| Metric | Baseline (Phase 0) | Phase 1 (structural core) |
+| --- | --- | --- |
+| `cargo test` | 104 passed, 0 failed | 112 passed, 0 failed |
+| `cargo clippy --all-targets -D warnings` | clean | clean |
+| `npm run eval:engine` | 15/15 | 15/15 |
+| `npm run test:unit` | 54 passed | 54 passed |
+| `npm run test:e2e:web` | 2 passed (incl. axe) | 2 passed |
+| `npm run eval:fp-replay` (this repo vs `main`) | 0 changed files, 0 flags | 9 changed files, 0 flags |
+| bench `parse_file/100_line_ts` | 408 µs | 402 µs |
+| bench `diff_nodes/representative_ts` | 33.1 µs | 33.4 µs |
+| bench `analyze_all/25_drifted_files` | 21.4 ms | 22.5 ms (+5.1%) |
+
+Phase 1 adds `structural.rs` (tree-sitter query matching with cached compiled queries,
+text-fallback contract) and ports `eval-call` to it: `eval?.()`, `window.eval`,
+`globalThis.eval` now caught; `eval(` inside strings/comments no longer flags.
 
 Note: fp-replay measures this branch against `main`; at Phase 0 the branch has no engine
 changes yet, so 0/0 is expected. The meaningful fp-replay reads come at later phases once

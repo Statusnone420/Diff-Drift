@@ -41,6 +41,7 @@ git2 = "0.21.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 regex = "1.12.4"
+streaming-iterator = "0.1"
 tauri-plugin-dialog = "2.7.1"
 
 [target.'cfg(windows)'.dependencies]
