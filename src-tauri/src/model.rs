@@ -106,8 +106,9 @@ pub struct Session {
 
 /// Version of this data contract. Bump when the shape of `SessionData` changes
 /// in a way consumers (JSON export, headless check) could misread. v0.1 shipped
-/// without the field (implicitly 1).
-pub const SCHEMA_VERSION: u32 = 2;
+/// without the field (implicitly 1); v3 added `session.skippedFiles` and
+/// `files[].skipped` for the oversized-file guard.
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
