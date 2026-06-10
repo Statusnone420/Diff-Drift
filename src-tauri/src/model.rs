@@ -65,6 +65,9 @@ pub struct FileEntry {
     pub lang: String,
     pub risks: u32,
     pub summary: String,
+    /// True when the file was too large to analyze — listed but not parsed.
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    pub skipped: bool,
     /// Changed (added/modified/removed) nodes in this file, including children.
     pub changed_nodes: u32,
     /// How many of those the user has marked reviewed (content still matching).
@@ -88,6 +91,9 @@ pub struct Session {
     pub changed_files: u32,
     pub risk_count: u32,
     pub file_count: u32,
+    /// Files listed but not analyzed because they exceed the parse-size cap —
+    /// surfaced so "0 active flags" can't read as "fully analyzed clean".
+    pub skipped_files: u32,
     /// Review progress across the whole drift: changed nodes vs reviewed nodes.
     pub changed_nodes: u32,
     pub reviewed_nodes: u32,
@@ -100,8 +106,9 @@ pub struct Session {
 
 /// Version of this data contract. Bump when the shape of `SessionData` changes
 /// in a way consumers (JSON export, headless check) could misread. v0.1 shipped
-/// without the field (implicitly 1).
-pub const SCHEMA_VERSION: u32 = 2;
+/// without the field (implicitly 1); v3 added `session.skippedFiles` and
+/// `files[].skipped` for the oversized-file guard.
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

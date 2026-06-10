@@ -11,6 +11,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     changedFiles: 0,
     riskCount: 0,
     fileCount: 0,
+    skippedFiles: 0,
     changedNodes: 0,
     reviewedNodes: 0,
     approved: false,

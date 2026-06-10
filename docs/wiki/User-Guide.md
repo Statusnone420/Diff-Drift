@@ -8,12 +8,12 @@ Browser mode (`npm run dev`) uses mock data. Native mode (`npm run tauri dev`) t
 
 ## Choose a Baseline
 
-The toolbar's **Review changes since** picker sets what the drift is measured against:
+The toolbar's **Scope** menu sets what the drift is measured against:
 
-- **Last commit (HEAD)** — uncommitted changes only (the default).
-- **Last review (trust point)** — everything since you last clicked **Mark reviewed**. This is the right baseline when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
-- **Branch start (merge-base)** — everything this branch adds over `main`/`master`.
-- **Custom ref…** — type any branch, tag, or SHA, then press Enter.
+- **Current work** — uncommitted changes only (the default).
+- **Since last review** — everything since you last clicked **Mark reviewed**. This is the right scope when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
+- **Entire branch** — everything this branch adds over `main`/`master`.
+- **Custom ref** — type any branch, tag, or SHA, then press Enter.
 
 Unresolvable choices (unknown ref, no trust point yet) show an error and keep the current baseline.
 
@@ -30,7 +30,7 @@ The top toolbar shows the current repo, branch, baseline, review progress, flag 
 ## Understand Counts
 
 - **Changed files**: every path git reports as different from the baseline, any file type.
-- **Analyzed files**: changed TS/TSX/JS/JSX files Diff Drift parsed, plus `package.json` when its dependencies or scripts drifted.
+- **Analyzed files**: changed TS/TSX/JS/JSX files Diff Drift parsed, plus `package.json` when its dependencies or scripts drifted. Files over 2 MB are not parsed — they stay in the list with the summary "Skipped — file too large to analyze" so the limit is visible. Review giant generated bundles by other means.
 - **Flags**: active heuristic findings. Dismissed flags stay in the session but do not count as active.
 - **Reviewed**: changed nodes you've marked reviewed vs the total ( shown per file as `n/m` and drift-wide in the toolbar).
 - **Node legend**: added, modified, and removed AST nodes inside the selected analyzed file.
@@ -77,6 +77,45 @@ It prints the session (JSON by default) and exits with the highest active severi
 ```bash
 diff-drift check . --baseline trust-point || echo "drift needs review"
 ```
+
+## CI and Hook Recipes
+
+The contract that makes these safe to wire up: the CLI is **read-only** (never writes triage state), dismissed flags don't count, and an explicit `--baseline` that can't resolve exits `64` loudly instead of silently falling back to `HEAD`. Exit codes: `0` none, `1` low, `2` medium, `3` high.
+
+**Pre-commit hook** (`.git/hooks/pre-commit`) — block commits that introduce high-severity drift:
+
+```bash
+#!/bin/sh
+diff-drift check . --json > /dev/null
+code=$?
+if [ "$code" -ge 3 ]; then
+  echo "diff-drift: high-severity drift — review in the app or run: diff-drift check . --md"
+  exit 1
+fi
+```
+
+**Agent hook** (e.g. a Claude Code Stop/PostToolUse hook) — make the agent's own loop fail until drift is reviewed:
+
+```powershell
+diff-drift check . --baseline trust-point --md
+if ($LASTEXITCODE -ge 2) { exit 2 }  # surface medium+ drift back to the agent loop
+```
+
+With the `trust-point` baseline the gate keeps seeing everything since *you* last clicked **Mark reviewed**, even while the agent commits as it works.
+
+**GitHub Actions** (Windows runner) — gate a PR on medium+ drift vs the merge-base. Build the CLI from source in CI (or restore it from a cache/artifact); it's the same binary the app installs:
+
+```yaml
+- run: cargo build --release --manifest-path src-tauri/Cargo.toml --bin diff-drift
+- name: Drift gate (medium+ fails)
+  shell: pwsh
+  run: |
+    & src-tauri/target/release/diff-drift.exe check . --baseline merge-base --md
+    if ($LASTEXITCODE -ge 2) { exit 1 }
+    if ($LASTEXITCODE -eq 64) { exit 1 }
+```
+
+Pick the threshold deliberately: `-ge 3` gates only High (low triage burden), `-ge 1` gates everything (strictest). Markdown output (`--md`) pastes well into PR comments and agent transcripts.
 
 ## What Diff Drift Is Not
 

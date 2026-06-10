@@ -1,0 +1,24 @@
+{
+  "caseId": "dynamic-code-execution",
+  "decision": "block",
+  "confidence": 0.97,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [
+    {
+      "title": "Untrusted input passed directly to eval()",
+      "severity": "high",
+      "filePath": "src/renderExpression.ts",
+      "riskType": "Dynamic code execution",
+      "evidence": "The raw diff replaces `return input.trim();` with `return eval(input);` in the exported function renderExpression(input: string). Any caller-supplied string is executed as arbitrary JavaScript with the worker's full privileges — a textbook code-injection sink, especially concerning in a billing-worker context. There is no sandboxing, allowlisting, or expression parser; the function's string-in/string-out signature also means eval's untyped return is silently coerced, so even the nominal typing is unsound."
+    }
+  ],
+  "notes": [
+    "Diff Drift's single high-severity flag is corroborated exactly by the raw git diff; the report's quoted diff matches the patch line-for-line with no other changes in the changeset.",
+    "Remediation suggestion for the author: use a dedicated safe expression evaluator (e.g. a small parser/interpreter or a vetted library like jsep with a whitelisted evaluator) instead of eval.",
+    "The change is only 1 file / 1 line, so the blast radius is easy to audit — the block is due to the severity of the pattern, not the size of the drift."
+  ]
+}

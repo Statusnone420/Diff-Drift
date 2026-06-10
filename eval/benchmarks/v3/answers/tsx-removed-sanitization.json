@@ -1,0 +1,23 @@
+{
+  "caseId": "tsx-removed-sanitization",
+  "decision": "investigate",
+  "confidence": 0.76,
+  "findings": [
+    {
+      "title": "Comment body now renders unsanitized input",
+      "severity": "low",
+      "filePath": "src/components/CommentBody.tsx",
+      "riskType": "Removed sanitization",
+      "evidence": "CommentBody removes const safe = sanitizeHtml(raw) and now renders {raw} directly in the comment body."
+    }
+  ],
+  "notes": [
+    "Because the value is rendered as a normal React text expression rather than dangerouslySetInnerHTML, HTML escaping may mitigate direct XSS; this still warrants review because explicit sanitization was removed from user comment content.",
+    "src/components/Avatar.tsx appears to contain formatting-only drift."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-c",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

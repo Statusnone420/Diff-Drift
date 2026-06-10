@@ -1,0 +1,20 @@
+{
+  "caseId": "broadened-cors",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "CORS allowlist opened to all origins",
+      "severity": "high",
+      "filePath": "src/cors.ts",
+      "riskType": "Broadened CORS",
+      "evidence": "The raw diff changes origin from [\"https://admin.example.com\"] to \"*\"; Diff Drift flags this as High severity Broadened CORS."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-a",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

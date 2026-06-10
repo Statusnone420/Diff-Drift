@@ -5,6 +5,10 @@ const severityScore = new Map([
 ]);
 
 const flagAliases = new Map([
+  // "secret" alone was too broad — it appears in evidence for unrelated risks
+  // and let a non-secret finding match this type. The specific phrases below
+  // still recognize a hardcoded-secret description.
+  ["Hardcoded secret", ["hardcoded secret", "credential", "access key", "aws access key", "api key"]],
   ["Dependency not in lockfile", ["dependency not in lockfile", "lockfile", "dependency drift"]],
   ["npm script changed", ["npm script", "install script", "postinstall"]],
   ["Weakened cookie flags", ["weakened cookie flags", "cookie flags", "httponly", "secure", "samesite"]],
@@ -95,6 +99,9 @@ export function scoreAgentAnswer(caseDef, answer) {
   const required = caseDef.oracle.requiredFlags ?? [];
   const findings = answer.findings;
   const matched = new Set();
+  // Global: a reported finding can be credited to AT MOST ONE expected risk.
+  // Once consumed it is unavailable to every other expectation, so one finding
+  // cannot satisfy multiple risks (no cross-type or duplicate reuse).
   const usedFindings = new Set();
   const matchedExpectations = [];
   const missedExpectations = [];
@@ -124,7 +131,18 @@ export function scoreAgentAnswer(caseDef, answer) {
   });
 
   const unmatchedFindings = findings.filter((_finding, index) => !usedFindings.has(index));
-  const falsePositives = unmatchedFindings.length;
+  const relatedFindings = [];
+  const falsePositiveFindings = [];
+  for (const finding of unmatchedFindings) {
+    if (findingDuplicatesMatchedExpectation(finding, required, matched)) {
+      falsePositiveFindings.push(finding);
+    } else if (required.some((expected) => findingRelatedToExpected(finding, expected))) {
+      relatedFindings.push(finding);
+    } else {
+      falsePositiveFindings.push(finding);
+    }
+  }
+  const falsePositives = falsePositiveFindings.length;
   const expectedDecision = caseDef.agent?.expectedDecision ?? inferDecision(required);
   const acceptedDecisions = acceptedDecisionSet(caseDef, expectedDecision);
   const decisionAccepted = acceptedDecisions.includes(normalize(answer.decision));
@@ -153,11 +171,78 @@ export function scoreAgentAnswer(caseDef, answer) {
     topRisk,
     benignWrongDecision,
     matchedFindings: matched.size,
+    matchedReportedFindings: usedFindings.size,
+    totalFindings: findings.length,
     requiredFindings: required.length,
     matchedExpectations,
     missedExpectations,
     mislocalizedExpectations,
-    unmatchedFindings: unmatchedFindings.map((finding) => finding.title),
+    unmatchedFindings: falsePositiveFindings.map((finding) => finding.title),
+    relatedFindings: relatedFindings.map((finding) => finding.title),
+    // Per-expectation hit/miss, keyed by flag type — feeds per-rule recall.
+    expectationDetails: required.map((expected, index) => ({
+      type: expected.type ?? describeFlagExpectation(expected),
+      severity: normalize(expected.severity) || null,
+      matched: matched.has(index),
+    })),
+  };
+}
+
+// Aggregate blind-agent case scores into the scorecard summary: decision
+// accuracy, weighted recall, localization, precision (matched findings over
+// all findings the reviewers reported), false-positive total, and recall per
+// flag type across every case that required it.
+export function summarizeAgentScores(scores) {
+  const average = (values) =>
+    values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
+  const matchedFindings = scores.reduce((sum, score) => sum + (score.matchedFindings ?? 0), 0);
+  const matchedReportedFindings = scores.reduce(
+    (sum, score) => sum + (score.matchedReportedFindings ?? score.matchedFindings ?? 0),
+    0,
+  );
+  const totalRelatedFindings = scores.reduce((sum, score) => sum + (score.relatedFindings?.length ?? 0), 0);
+  const totalFindings = scores.reduce(
+    (sum, score) =>
+      sum +
+      (score.totalFindings ??
+        (score.matchedFindings ?? 0) +
+          (score.falsePositives ?? 0) +
+          (score.relatedFindings?.length ?? 0)),
+    0,
+  );
+
+  const perRule = new Map();
+  for (const score of scores) {
+    for (const detail of score.expectationDetails ?? []) {
+      const entry = perRule.get(detail.type) ?? { required: 0, matched: 0 };
+      entry.required += 1;
+      entry.matched += detail.matched ? 1 : 0;
+      perRule.set(detail.type, entry);
+    }
+  }
+  const perRuleRecall = Object.fromEntries(
+    [...perRule.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([type, entry]) => [
+        type,
+        { required: entry.required, matched: entry.matched, recall: entry.matched / entry.required },
+      ]),
+  );
+
+  return {
+    decisionAccuracy: average(scores.map((score) => (score.decisionAccepted ? 1 : 0))),
+    averageRecall: average(scores.map((score) => score.recall)),
+    averageLocalization: average(scores.map((score) => score.localization)),
+    // Precision = fraction of reported findings that actually matched a
+    // required risk. Near-miss "related" findings did NOT match, so they lower
+    // precision (they sit in the denominator, never the numerator).
+    precision: totalFindings === 0 ? 1 : matchedReportedFindings / totalFindings,
+    matchedFindings,
+    matchedReportedFindings,
+    totalFindings,
+    totalRelatedFindings,
+    totalFalsePositives: scores.reduce((sum, score) => sum + (score.falsePositives ?? 0), 0),
+    perRuleRecall,
   };
 }
 
@@ -175,8 +260,22 @@ export function validateAgentAnswer(answer) {
     if (!finding || typeof finding !== "object") {
       throw new Error(`answer.findings[${index}] must be an object`);
     }
-    if (typeof finding.title !== "string" || finding.title.trim() === "") {
-      throw new Error(`answer.findings[${index}].title is required`);
+    // The packet prompt requires the full shape; a title-only "finding"
+    // cannot claim the cite-evidence-and-location credit the rubric awards.
+    for (const field of ["title", "filePath", "riskType", "evidence"]) {
+      if (typeof finding[field] !== "string" || finding[field].trim() === "") {
+        throw new Error(`answer.findings[${index}].${field} is required`);
+      }
+    }
+    if (!severityScore.has(normalize(finding.severity))) {
+      throw new Error(`answer.findings[${index}].severity must be high, medium, or low`);
+    }
+  }
+  // Benchmark v2: benign observations live in `notes`, which scoring ignores
+  // entirely (no credit, no penalty) — only its shape is validated.
+  if (answer.notes !== undefined) {
+    if (!Array.isArray(answer.notes) || answer.notes.some((note) => typeof note !== "string")) {
+      throw new Error("answer.notes must be an array of strings when present");
     }
   }
 }
@@ -206,7 +305,7 @@ export function flagMatches(flag, expected) {
 function bestFindingIndex(findings, usedFindings, expected) {
   const candidates = findings
     .map((finding, index) => ({ finding, index }))
-    .filter(({ finding, index }) => !usedFindings.has(index) && findingMatchesRisk(finding, expected));
+    .filter(({ finding, index }) => !usedFindings.has(index) && findingMatchesExpected(finding, expected));
 
   const localized = candidates.find(({ finding }) => findingFileMatches(finding, expected));
   return (localized ?? candidates[0])?.index ?? -1;
@@ -217,8 +316,29 @@ function findingMatchesRisk(finding, expected) {
   return expected.type ? expectedTerms(expected).some((term) => haystack.includes(term)) : true;
 }
 
+function findingMatchesExpected(finding, expected) {
+  return findingMatchesRisk(finding, expected) && findingSeverityMatches(finding, expected);
+}
+
+function findingSeverityMatches(finding, expected) {
+  return expected.severity ? severityWeight(finding.severity) >= severityWeight(expected.severity) : true;
+}
+
 function findingFileMatches(finding, expected) {
   return expected.filePath ? normalize(finding.filePath) === normalize(expected.filePath) : true;
+}
+
+function findingRelatedToExpected(finding, expected) {
+  return findingFileMatches(finding, expected) && findingMatchesRisk(finding, expected);
+}
+
+function findingDuplicatesMatchedExpectation(finding, required, matched) {
+  return required.some(
+    (expected, index) =>
+      matched.has(index) &&
+      findingFileMatches(finding, expected) &&
+      findingMatchesRisk(finding, expected),
+  );
 }
 
 function topRiskRankedFirst(findings, required) {
@@ -232,7 +352,7 @@ function topRiskRankedFirst(findings, required) {
   const first = findings[0];
   return required
     .filter((expected) => severityWeight(expected.severity) === maxWeight)
-    .some((expected) => findingMatchesRisk(first, expected));
+    .some((expected) => findingMatchesExpected(first, expected) && findingFileMatches(first, expected));
 }
 
 function inferDecision(required) {

@@ -1,0 +1,34 @@
+{
+  "caseId": "weakened-cookie-flags",
+  "decision": "block",
+  "confidence": 0.98,
+  "findings": [
+    {
+      "title": "Access cookie loses httpOnly",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "accessCookie changes from { httpOnly: true } to an empty object, allowing scripts to read the cookie."
+    },
+    {
+      "title": "Refresh cookie loses secure flag",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "refreshCookie changes from { secure: true } to an empty object, allowing the cookie to be sent over plain HTTP."
+    },
+    {
+      "title": "CSRF cookie sameSite downgraded",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "csrfCookie changes sameSite from \"Strict\" to \"None\", weakening CSRF protection."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-c",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

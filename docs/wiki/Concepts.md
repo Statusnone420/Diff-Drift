@@ -8,14 +8,14 @@ The default baseline is `HEAD`, which scopes drift to uncommitted changes. Other
 
 ## Baseline
 
-The baseline is the "before" side of every comparison. Per repo, it can be:
+The baseline is the "before" side of every comparison. In the toolbar this is exposed as **Scope**:
 
-- **Last commit (HEAD)** (default): uncommitted drift only.
-- **Last review (trust point)**: the commit pinned by the last **Mark reviewed** — everything since you last trusted the code.
-- **Branch start (merge-base)**: the common ancestor with `main`/`master` — everything this branch adds.
+- **Current work** (default): uncommitted drift since the last commit (`HEAD`).
+- **Since last review**: the commit pinned by the last **Mark reviewed** — everything since you last trusted the code. This keeps drift visible when an agent commits as it works.
+- **Entire branch**: the common ancestor with `main`/`master` — everything this branch adds.
 - **Custom ref**: any branch, tag, or SHA.
 
-The choice persists per repo via the toolbar's **Review changes since** picker. Choices that can't resolve (no trust point yet, no default branch, unknown ref) are rejected with a message; analysis never silently changes baselines.
+The choice persists per repo via the toolbar's **Scope** menu. Choices that can't resolve (no trust point yet, no default branch, unknown ref) are rejected with a message; analysis never silently changes baselines.
 
 ## Trust Point
 

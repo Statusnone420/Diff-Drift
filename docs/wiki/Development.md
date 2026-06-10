@@ -84,17 +84,25 @@ Generate blind-review packets for another agent or human:
 npm run eval:packets
 ```
 
-Packets are written to `.eval/packets/<case-id>/` with a prompt, Diff Drift markdown report, raw git diff, and metadata without the oracle. Save blind-agent JSON answers under `.eval/answers/<case-id>.json`, then score them:
+Packets are written to `.eval/packets/<case-id>/` with a prompt, Diff Drift markdown report, raw git diff, and metadata without the oracle. Save blind-agent JSON answers under `.eval/answers/<case-id>.json` — include an `evaluator: { id, kind: "model" | "human", note }` field so the scorecard can attribute them — then score:
 
 ```bash
 npm run eval:score-agent
 ```
 
-Blind-agent scoring writes `.eval/results/agents/latest.json`, `.eval/results/agents/latest.md`, and `.eval/results/agents/latest.html`. This scorecard is advisory, not a blocker: use it to see whether reviewers reach the right decisions, cite the right evidence, and where the report or rubric is confusing. Engine eval remains the CI gate; blind-agent scorecards are local product-quality telemetry with no network calls and no committed generated output.
+Blind-agent scoring writes `.eval/results/agents/latest.json`, `.eval/results/agents/latest.md`, and `.eval/results/agents/latest.html`. This scorecard is advisory, not a blocker: use it to see whether reviewers reach the right decisions, cite the right evidence, and where the report or rubric is confusing. Engine eval remains the CI gate; blind-agent scorecards are local product-quality telemetry with no network calls. Working outputs under `.eval/` stay uncommitted; the one exception is published benchmark snapshots in `eval/benchmarks/<version>/` (answers + scorecard), which exist so anyone can rescore the headline number from a fresh clone: `npm run eval:score-agent -- eval/benchmarks/v3/answers`. The scorecard reports decision accuracy, severity-weighted recall, localization, precision, and per-rule recall, lists every evaluator, and shows an "independent external validation pending" banner until a non-project human evaluator has contributed. The rubric, aliases, and accepted decisions are frozen before answers are generated; scorer changes start a new benchmark version instead of rewriting older scores. See [Eval Methodology](Eval-Methodology.md) for the contract and [A/B Study Design](AB-Study-Design.md) for the planned packet-vs-raw-diff study.
 
 ![Diff Drift blind-agent benchmark scorecard](../assets/diff-drift-blind-agent-scorecard.png)
 
 Use `--case <case-id>` with `eval:engine` or `eval:packets` to narrow a run while developing a fixture. Use `--keep` to preserve the generated temp repo path printed by the script for debugging.
+
+Measure flag noise on real repos you choose (nothing bundled, nothing uploaded):
+
+```bash
+npm run eval:fp-replay
+```
+
+It reads `fp-replay.config.json` (copy `fp-replay.config.example.json`) and writes per-rule flag counts to `.eval/results/fp-replay/latest.md` — see [Eval Methodology](Eval-Methodology.md#fp-replay-measuring-noise-on-your-own-repos).
 
 ## Visual Baselines
 

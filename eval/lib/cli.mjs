@@ -53,6 +53,14 @@ export function diffDriftCommand(checkArgs) {
   };
 }
 
+// Build the debug binary if this checkout hasn't yet (no-op with
+// DIFF_DRIFT_EVAL_BIN set). Callers that spawn the binary directly —
+// like scripts/fp-replay.mjs — must run this once first, or a clean
+// checkout fails with a missing-binary error.
+export function ensureDiffDriftBuilt() {
+  prepareDiffDriftCommand(diffDriftCommand([]));
+}
+
 export function diffDriftRuntimeEnv(stateHome) {
   return {
     ...process.env,

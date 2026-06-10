@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "../types";
 import { baselinePhrase } from "../lib/baseline";
 import { Ico } from "../lib/icons";
@@ -16,11 +16,61 @@ const KNOWN_BASELINES = ["head", "trust-point", "merge-base"];
 export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, onSetBaseline }: ToolbarProps) {
   const zero = session.riskCount === 0;
   const noDrift = session.changedFiles === 0;
+  const skippedFiles = session.skippedFiles ?? 0;
+  const hasSkippedFiles = skippedFiles > 0;
+  const skippedCopy = `${skippedFiles} skipped file${skippedFiles === 1 ? "" : "s"} not analyzed`;
+  const summaryClassName = [
+    "summary-pill",
+    zero ? "calm" : "",
+    zero && hasSkippedFiles ? "skipped" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const isCustom = !KNOWN_BASELINES.includes(session.baselineSpec);
-  const [refOpen, setRefOpen] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const [refValue, setRefValue] = useState("");
+  const scopeRef = useRef<HTMLSpanElement | null>(null);
 
-  const selectValue = refOpen || isCustom ? "custom" : session.baselineSpec;
+  useEffect(() => {
+    if (!scopeOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!scopeRef.current?.contains(event.target as Node)) {
+        setScopeOpen(false);
+        setCustomOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [scopeOpen]);
+
+  const scopeTitle = isCustom
+    ? `Custom: ${session.baselineSpec}`
+    : session.baselineSpec === "trust-point"
+      ? "Since last review"
+      : session.baselineSpec === "merge-base"
+        ? "Entire branch"
+        : "Current work";
+
+  const scopeDescription = isCustom
+    ? baselinePhrase(session)
+    : session.baselineSpec === "trust-point"
+      ? "Agent commits stay visible"
+      : session.baselineSpec === "merge-base"
+        ? "Everything this branch adds"
+        : "Uncommitted changes";
+
+  const applyScope = (spec: string) => {
+    setScopeOpen(false);
+    setCustomOpen(false);
+    onSetBaseline(spec);
+  };
+
+  const openCustom = () => {
+    setRefValue(isCustom ? session.baselineSpec : "");
+    setCustomOpen(true);
+  };
+
   return (
     <div className="toolbar">
       <div className="crumb">
@@ -34,55 +84,114 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           {session.branch}
         </span>
         <span className="sep">·</span>
-        <span className="baseline" title={`Comparing the working tree to ${session.baselineLabel}`}>
-          <label className="baseline-label" htmlFor="baseline-select">
-            Review changes since
-          </label>
-          <select
-            id="baseline-select"
-            data-testid="baseline-select"
-            className="baseline-select"
-            value={selectValue}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === "custom") {
-                setRefValue(isCustom ? session.baselineSpec : "");
-                setRefOpen(true);
-              } else {
-                setRefOpen(false);
-                onSetBaseline(v);
-              }
+        <span
+          ref={scopeRef}
+          className="baseline"
+          title={`Compare scope: ${baselinePhrase(session)}. Use this when an agent commits as it works, or when you want to review the whole branch.`}
+        >
+          <button
+            type="button"
+            className="scope-trigger"
+            data-testid="scope-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={scopeOpen}
+            onClick={() => {
+              setScopeOpen((open) => !open);
+              setCustomOpen(false);
             }}
           >
-            <option value="head">Last commit (HEAD)</option>
-            <option value="trust-point" disabled={!session.trustPoint}>
-              {session.trustPoint
-                ? `Last review (trust point ${session.trustPoint})`
-                : "Last review — none pinned yet"}
-            </option>
-            <option value="merge-base">Branch start (merge-base)</option>
-            <option value="custom">
-              {isCustom && !refOpen ? `Custom ref: ${session.baselineSpec}` : "Custom ref…"}
-            </option>
-          </select>
-          {refOpen && (
-            <input
-              className="baseline-ref"
-              aria-label="Custom baseline ref"
-              placeholder="branch, tag, or SHA — Enter to apply"
-              value={refValue}
-              autoFocus
-              onChange={(e) => setRefValue(e.target.value)}
+            <span className="scope-label">Scope</span>
+            <span className="scope-value">
+              <b>{scopeTitle}</b>
+              <span>{scopeDescription}</span>
+            </span>
+            <span className="scope-chevron" aria-hidden="true">
+              {Ico.chevron}
+            </span>
+          </button>
+          {scopeOpen && (
+            <div
+              className="scope-popover"
+              role="dialog"
+              aria-label="Analysis scope"
               onKeyDown={(e) => {
-                if (e.key === "Enter" && refValue.trim()) {
-                  setRefOpen(false);
-                  onSetBaseline(refValue.trim());
-                } else if (e.key === "Escape") {
-                  setRefOpen(false);
+                if (e.key === "Escape") {
+                  setScopeOpen(false);
+                  setCustomOpen(false);
                 }
               }}
-              onBlur={() => setRefOpen(false)}
-            />
+            >
+              <div className="scope-popover-head">
+                <b>Analysis scope</b>
+                <span>Choose what the current working tree is compared against.</span>
+              </div>
+              <button
+                type="button"
+                className={"scope-option" + (session.baselineSpec === "head" ? " active" : "")}
+                onClick={() => applyScope("head")}
+              >
+                <span>
+                  <b>Current work</b>
+                  <em>Uncommitted changes since the last commit.</em>
+                </span>
+                {!session.trustPoint && <i>Default</i>}
+              </button>
+              <button
+                type="button"
+                className={"scope-option" + (session.baselineSpec === "trust-point" ? " active" : "")}
+                disabled={!session.trustPoint}
+                onClick={() => applyScope("trust-point")}
+              >
+                <span>
+                  <b>Since last review</b>
+                  <em>
+                    {session.trustPoint
+                      ? `Keeps drift visible after agent commits. Trust point ${session.trustPoint}.`
+                      : "Available after you mark a drift reviewed."}
+                  </em>
+                </span>
+                {session.trustPoint && <i>Agent-safe</i>}
+              </button>
+              <button
+                type="button"
+                className={"scope-option" + (session.baselineSpec === "merge-base" ? " active" : "")}
+                onClick={() => applyScope("merge-base")}
+              >
+                <span>
+                  <b>Entire branch</b>
+                  <em>Everything this branch adds over the default branch.</em>
+                </span>
+                <i>PR check</i>
+              </button>
+              <button type="button" className={"scope-option" + (isCustom ? " active" : "")} onClick={openCustom}>
+                <span>
+                  <b>Custom ref</b>
+                  <em>Compare against a branch, tag, or SHA.</em>
+                </span>
+              </button>
+              {customOpen && (
+                <div className="scope-custom">
+                  <input
+                    className="baseline-ref"
+                    aria-label="Custom baseline ref"
+                    placeholder="branch, tag, or SHA"
+                    value={refValue}
+                    autoFocus
+                    onChange={(e) => setRefValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && refValue.trim()) {
+                        applyScope(refValue.trim());
+                      } else if (e.key === "Escape") {
+                        setCustomOpen(false);
+                      }
+                    }}
+                  />
+                  <button type="button" className="btn tiny" disabled={!refValue.trim()} onClick={() => applyScope(refValue.trim())}>
+                    Apply
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </span>
       </div>
@@ -95,19 +204,31 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           {session.reviewedNodes}/{session.changedNodes} reviewed
         </span>
       )}
-      <div className={"summary-pill" + (zero ? " calm" : "")} data-testid="summary-pill">
+      <div className={summaryClassName} data-testid="summary-pill">
         <span className="dot" />
         <span>
           {session.approved ? (
             <>
               <b>Reviewed</b>
               {session.approvedAt ? ` at ${session.approvedAt}` : ""} —{" "}
-              {zero
-                ? "no open flags"
-                : `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open`}
+              {zero ? (
+                hasSkippedFiles ? (
+                  <>no open flags; {skippedCopy}</>
+                ) : (
+                  "no open flags"
+                )
+              ) : (
+                `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open${
+                  hasSkippedFiles ? `; ${skippedCopy}` : ""
+                }`
+              )}
             </>
           ) : zero ? (
-            noDrift ? (
+            hasSkippedFiles ? (
+              <>
+                <b>No flags</b> — {skippedCopy}
+              </>
+            ) : noDrift ? (
               <>
                 <b>Clean</b> — no changes since {baselinePhrase(session)}
               </>
@@ -135,7 +256,13 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
           className="btn"
           onClick={onDismissAll}
           disabled={zero}
-          title={zero ? "No active flags to dismiss" : "Dismiss every active flag (persisted for this repo)"}
+          title={
+            zero
+              ? hasSkippedFiles
+                ? `No active flags to dismiss; ${skippedCopy}`
+                : "No active flags to dismiss"
+              : "Dismiss every active flag (persisted for this repo)"
+          }
         >
           Dismiss all
         </button>

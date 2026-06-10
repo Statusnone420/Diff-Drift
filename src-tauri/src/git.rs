@@ -107,6 +107,22 @@ pub fn content_at_in(repo: &Repository, rev: &str, rel: &str) -> Option<String> 
     Some(String::from_utf8_lossy(blob.content()).into_owned())
 }
 
+/// Object id of `rel`'s blob at a commit-ish, from the tree entry alone —
+/// blob content stays unread. `None` if the path doesn't exist there.
+pub fn blob_oid_at_in(repo: &Repository, rev: &str, rel: &str) -> Option<git2::Oid> {
+    let commit = repo.revparse_single(rev).ok()?.peel_to_commit().ok()?;
+    let tree = commit.tree().ok()?;
+    Some(tree.get_path(Path::new(rel)).ok()?.id())
+}
+
+/// Size of an object from its header alone — content stays unread. This is
+/// what lets the oversized-file guard skip a file before allocating it.
+pub fn blob_size_in(repo: &Repository, oid: git2::Oid) -> Option<u64> {
+    let odb = repo.odb().ok()?;
+    let (size, _kind) = odb.read_header(oid).ok()?;
+    Some(size as u64)
+}
+
 /// Full SHA of the current HEAD commit. `None` on an unborn branch.
 pub fn head_sha(root: &Path) -> Option<String> {
     resolve_rev(root, "HEAD")

@@ -1,0 +1,16 @@
+{
+  "caseId": "oversized-file-skip",
+  "decision": "approve",
+  "confidence": 0.85,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [],
+  "notes": [
+    "Diff Drift skipped dist/bundle.js (3.0 MB > 2 MB parse guard), so no AST analysis was performed; per the contract this is not a finding by itself.",
+    "The raw git diff shows the entire change is a single appended comment line ('// agent appended this line') at the end of the bundle — no executable code, no minified payload, no dependency or source changes.",
+    "Mild process observation: editing a generated artifact directly (rather than regenerating it from source) is unusual hygiene-wise, but it introduces no concrete trust risk here and the report's '0 active flags' is consistent with the raw diff."
+  ]
+}

@@ -18,6 +18,9 @@ dist-ssr
 # Generated benchmark repos, packets, answers, and reports
 /.eval/
 
+# Per-machine FP-replay config (copy fp-replay.config.example.json)
+/fp-replay.config.json
+
 # Verification scratch
 /.shots/
 /.test-results/
@@ -25,6 +28,7 @@ dist-ssr
 /playwright-report/
 
 # Editor directories and files
+.claude/
 .vscode/*
 !.vscode/extensions.json
 .idea

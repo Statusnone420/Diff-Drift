@@ -4,8 +4,17 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { diffDriftCommand, diffDriftRuntimeEnv } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
+import {
+  externalValidationPending,
+  summarizeExternalValidation,
+} from "../../eval/lib/evaluators.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
-import { scoreAgentAnswer, scoreEngineResult, validateAgentAnswer } from "../../eval/lib/score.mjs";
+import {
+  scoreAgentAnswer,
+  scoreEngineResult,
+  summarizeAgentScores,
+  validateAgentAnswer,
+} from "../../eval/lib/score.mjs";
 
 const caseDef = {
   id: "synthetic-risk",
@@ -104,12 +113,14 @@ describe("blind-agent answer scoring", () => {
         findings: [
           {
             title: "Dependency added without lockfile entry",
+            severity: "high",
             filePath: "package.json",
             riskType: "Dependency drift / lockfile inconsistency",
             evidence: "ghost-payments-sdk is not in the lockfile",
           },
           {
             title: "New install-time script",
+            severity: "medium",
             filePath: "package.json",
             riskType: "npm script drift",
             evidence: "postinstall runs node scripts/bootstrap.js",
@@ -141,18 +152,21 @@ describe("blind-agent answer scoring", () => {
         findings: [
           {
             title: "Access cookie lost HttpOnly",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "httpOnly removed",
           },
           {
             title: "Refresh cookie lost Secure",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "secure removed",
           },
           {
             title: "CSRF cookie downgraded SameSite",
+            severity: "high",
             filePath: "src/cookies.ts",
             riskType: "weakened-cookie-flags",
             evidence: "sameSite Strict became None",
@@ -164,6 +178,107 @@ describe("blind-agent answer scoring", () => {
     expect(score.score).toBe(100);
     expect(score.matchedFindings).toBe(3);
     expect(score.falsePositives).toBe(0);
+  });
+
+  it("does not let one finding satisfy duplicate same-type expectations", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Session cookies lost hardening",
+            severity: "high",
+            filePath: "src/cookies.ts",
+            riskType: "weakened-cookie-flags",
+            evidence: "httpOnly and secure were removed from cookie options.",
+          },
+        ],
+      },
+    );
+
+    expect(score.matchedFindings).toBe(1);
+    expect(score.requiredFindings).toBe(2);
+    expect(score.missedExpectations).toEqual([
+      "high / Weakened cookie flags / src/cookies.ts",
+    ]);
+    expect(score.recall).toBe(0.5);
+  });
+
+  it("does not let one finding satisfy multiple distinct-type risks", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Loose regex pattern", severity: "high", filePath: "src/auth.ts" },
+            { type: "Disabled guard", severity: "low", filePath: "src/auth.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Validation accepts every token",
+            severity: "high",
+            filePath: "src/auth.ts",
+            riskType: "Loose regex pattern / Disabled guard",
+            evidence: "`/.*/` accepts any string and `if (false)` makes the rejection branch unreachable.",
+          },
+        ],
+      },
+    );
+
+    // One finding is credited to ONE expected risk; the second distinct-type
+    // risk stays missed. (high weight 3 of 4 total → recall 0.75.)
+    expect(score.matchedFindings).toBe(1);
+    expect(score.requiredFindings).toBe(2);
+    expect(score.missedExpectations).toEqual(["low / Disabled guard / src/auth.ts"]);
+    expect(score.recall).toBe(0.75);
+    expect(score.score).toBe(85);
+  });
+
+  it("does not let a keyword-stuffed finding cover two unrelated risks", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Hardcoded secret", severity: "high", filePath: "src/a.ts" },
+            { type: "Disabled TLS verification", severity: "high", filePath: "src/a.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Multiple problems",
+            severity: "high",
+            filePath: "src/a.ts",
+            riskType: "Hardcoded secret / Disabled TLS verification",
+            evidence: "A hardcoded secret and rejectUnauthorized: false both appear.",
+          },
+        ],
+      },
+    );
+
+    // Two equal-weight risks, one finding → only one credited (recall 0.5).
+    expect(score.matchedFindings).toBe(1);
+    expect(score.recall).toBe(0.5);
+    expect(score.missedExpectations.length).toBe(1);
   });
 
   it("penalizes always-block decisions on benign cases", () => {
@@ -206,7 +321,269 @@ describe("blind-agent answer scoring", () => {
     expect(score.matchedFindings).toBe(1);
     expect(score.missedExpectations).toEqual([]);
     expect(score.mislocalizedExpectations).toEqual(["high / Loose regex pattern / src/auth.ts"]);
+    // A mislocalized first finding does NOT earn the top-risk bonus.
+    expect(score.topRisk).toBe(false);
+    expect(score.score).toBe(80);
+  });
+
+  it("rejects severity understatements", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.recall).toBe(0);
+    expect(score.localization).toBe(0);
+    expect(score.topRisk).toBe(false);
+    expect(score.matchedFindings).toBe(0);
+    expect(score.falsePositives).toBe(0);
+    expect(score.missedExpectations).toEqual(["high / Loose regex pattern / src/auth.ts"]);
+    expect(score.unmatchedFindings).toEqual([]);
+    expect(score.relatedFindings).toEqual(["Loose regex pattern disables validation"]);
+    expect(score.score).toBe(20);
+  });
+
+  it("allows conservative severity escalation", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [{ type: "Removed sanitization", severity: "low", filePath: "src/comments.ts" }],
+        },
+        agent: { expectedDecision: "investigate" },
+      },
+      {
+        decision: "investigate",
+        findings: [
+          {
+            title: "Sanitization removed from user-controlled HTML",
+            severity: "high",
+            filePath: "src/comments.ts",
+            riskType: "Removed sanitization",
+            evidence: "sanitizeHtml(body) was removed before rendering the comment body.",
+          },
+        ],
+      },
+    );
+
+    expect(score.recall).toBe(1);
+    expect(score.localization).toBe(1);
+    expect(score.matchedFindings).toBe(1);
+    expect(score.falsePositives).toBe(0);
+    expect(score.score).toBe(100);
+  });
+
+  it("does not let severity escalation make a lower-priority risk the top risk", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Loose regex pattern", severity: "high", filePath: "src/auth.ts" },
+            { type: "Removed sanitization", severity: "low", filePath: "src/comments.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Sanitization removed from user-controlled HTML",
+            severity: "high",
+            filePath: "src/comments.ts",
+            riskType: "Removed sanitization",
+            evidence: "sanitizeHtml(body) was removed before rendering the comment body.",
+          },
+          {
+            title: "Loose regex pattern disables validation",
+            severity: "high",
+            filePath: "src/auth.ts",
+            riskType: "Loose regex pattern",
+            evidence: "pattern changed to /.*/",
+          },
+        ],
+      },
+    );
+
+    expect(score.recall).toBe(1);
+    expect(score.topRisk).toBe(false);
     expect(score.score).toBe(90);
+  });
+
+  it("summarizes precision, false positives, and per-rule recall across cases", () => {
+    const hit = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Suspicious but unrelated observation",
+          severity: "low",
+          filePath: "src/other.ts",
+          riskType: "Speculation",
+          evidence: "not an expected flag",
+        },
+      ],
+    });
+    const miss = scoreAgentAnswer(caseDef, { decision: "block", findings: [] });
+
+    const summary = summarizeAgentScores([hit, miss]);
+    expect(summary.matchedFindings).toBe(1);
+    expect(summary.totalFindings).toBe(2);
+    expect(summary.precision).toBe(0.5);
+    expect(summary.totalFalsePositives).toBe(1);
+    expect(summary.perRuleRecall["Loose regex pattern"]).toEqual({
+      required: 2,
+      matched: 1,
+      recall: 0.5,
+    });
+  });
+
+  it("tracks related near-miss findings without counting them as false positives", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    // A near-miss (right risk, understated severity) is not a hard false
+    // positive, but it did not match — so it does NOT earn precision.
+    expect(score.falsePositives).toBe(0);
+    expect(score.relatedFindings).toEqual(["Loose regex pattern disables validation"]);
+
+    const summary = summarizeAgentScores([score]);
+    expect(summary.precision).toBe(0);
+    expect(summary.matchedReportedFindings).toBe(0);
+    expect(summary.totalRelatedFindings).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+  });
+
+  it("related findings lower precision without being false positives", () => {
+    const matchedCase = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+    const nearMissCase = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    const summary = summarizeAgentScores([matchedCase, nearMissCase]);
+    // 1 matched of 2 reported → precision 0.5; the near-miss is not an FP.
+    expect(summary.precision).toBe(0.5);
+    expect(summary.matchedReportedFindings).toBe(1);
+    expect(summary.totalRelatedFindings).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+  });
+
+  it("penalizes duplicate copies of an already matched finding", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Loose regex pattern repeated",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "same pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.matchedFindings).toBe(1);
+    expect(score.relatedFindings).toEqual([]);
+    expect(score.unmatchedFindings).toEqual(["Loose regex pattern repeated"]);
+    expect(score.falsePositives).toBe(1);
+    expect(score.score).toBe(95);
+
+    const summary = summarizeAgentScores([score]);
+    expect(summary.precision).toBe(0.5);
+    expect(summary.totalRelatedFindings).toBe(0);
+    expect(summary.totalFalsePositives).toBe(1);
+  });
+
+  it("penalizes lower-severity duplicate copies of an already matched finding", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Loose regex pattern repeated at low severity",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "same pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.matchedFindings).toBe(1);
+    expect(score.relatedFindings).toEqual([]);
+    expect(score.unmatchedFindings).toEqual(["Loose regex pattern repeated at low severity"]);
+    expect(score.falsePositives).toBe(1);
+  });
+
+  it("treats a clean benign run as perfect precision", () => {
+    const summary = summarizeAgentScores([
+      scoreAgentAnswer(
+        { ...caseDef, oracle: { ...caseDef.oracle, requiredFlags: [] }, agent: { expectedDecision: "approve" } },
+        { decision: "approve", findings: [] },
+      ),
+    ]);
+    expect(summary.precision).toBe(1);
+    expect(summary.totalFindings).toBe(0);
+    expect(summary.perRuleRecall).toEqual({});
   });
 
   it("renders advisory scorecards separate from CI gating", () => {
@@ -236,8 +613,142 @@ describe("blind-agent answer scoring", () => {
     expect(md).toContain("Overall score");
     expect(md).toContain("missed Undeclared import");
     expect(html).toContain("Blind-agent scorecard");
-    expect(html).toContain("Score distribution");
+    expect(html).toContain("Case score histogram");
     expect(html).toContain("synthetic-risk");
+  });
+
+  it("labels evaluators and surfaces the external-validation banner", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 95,
+      summary: {
+        decisionAccuracy: 1,
+        averageRecall: 0.95,
+        averageLocalization: 1,
+        precision: 0.9,
+        matchedFindings: 9,
+        totalFindings: 10,
+        totalFalsePositives: 1,
+        perRuleRecall: {
+          "Loose regex pattern": { required: 2, matched: 2, recall: 1 },
+          "Undeclared import": { required: 2, matched: 1, recall: 0.5 },
+        },
+      },
+      evaluators: [{ id: "claude-fable-5", kind: "model", cases: 10, averageScore: 95 }],
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    expect(md).toContain("claude-fable-5 (model, 10 cases)");
+    expect(md).toContain("Independent external validation pending");
+    expect(md).toContain("Per-rule recall");
+    expect(md).toContain("| Undeclared import | 1/2 | 50% |");
+    expect(md).toContain("Precision: 90%");
+
+    const html = renderAgentDashboard(result);
+    expect(html).toContain("Independent external validation pending");
+    expect(html).toContain("Precision");
+    expect(html).toContain("claude-fable-5 (model, 10)");
+  });
+
+  it("does not call pending internal-human panels model-only", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [
+        { id: "model-batch", kind: "model", cases: 5, averageScore: 100 },
+        { id: "maintainer-pass", kind: "human", external: false, cases: 5, averageScore: 100 },
+      ],
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    expect(md).toContain("Human answers are present, but no human evaluator is marked external.");
+    expect(html).toContain("Human answers are present, but no human evaluator is marked external.");
+    expect(html).not.toContain("model-only panel");
+  });
+
+  it("keeps validation pending until a human evaluator is explicitly external", () => {
+    const internal = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "model-batch", kind: "model" } },
+      { caseId: "a", evaluator: { id: "maintainer-pass", kind: "human" } },
+    ]);
+    expect(externalValidationPending(internal)).toBe(true);
+
+    const external = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "model-batch", kind: "model" } },
+      { caseId: "a", evaluator: { id: "outside-reviewer", kind: "human", external: true } },
+    ]);
+    expect(externalValidationPending(external)).toBe(false);
+  });
+
+  it("keeps validation pending for partial external coverage", () => {
+    // External human reviewed case a only; model covers a and b.
+    const coverage = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "a", evaluator: { id: "model", kind: "model" } },
+      { caseId: "b", evaluator: { id: "model", kind: "model" } },
+    ]);
+    expect(coverage).toEqual({ evaluatorCount: 2, externalCases: 1, totalCases: 2 });
+    expect(externalValidationPending(coverage)).toBe(true);
+  });
+
+  it("clears validation only when every case has external review", () => {
+    const coverage = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "b", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "a", evaluator: { id: "model", kind: "model" } },
+      { caseId: "b", evaluator: { id: "model", kind: "model" } },
+    ]);
+    expect(coverage).toEqual({ evaluatorCount: 2, externalCases: 2, totalCases: 2 });
+    expect(externalValidationPending(coverage)).toBe(false);
+  });
+
+  it("reads a single external human with full coverage as needing a second evaluator", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [{ id: "outside", kind: "human", external: true, cases: 2, averageScore: 100 }],
+      externalValidation: { evaluatorCount: 1, externalCases: 2, totalCases: 2 },
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    // Full external coverage but only one evaluator → say so, without the
+    // contradictory "covers N of N; full coverage pending" wording.
+    expect(md).toContain("single external human reviewed all 2 cases");
+    expect(md).toContain("second evaluator");
+    expect(md).not.toContain("full independent coverage is pending");
+    expect(md).not.toContain("no human evaluator is marked external");
+    expect(html).toContain("single external human reviewed all 2 cases");
+  });
+
+  it("reads a single external human as partial coverage, not none", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [
+        { id: "model", kind: "model", cases: 3, averageScore: 100 },
+        { id: "outside", kind: "human", external: true, cases: 1, averageScore: 100 },
+      ],
+      externalValidation: { evaluatorCount: 2, externalCases: 1, totalCases: 3 },
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    expect(md).toContain("External human review covers 1 of 3 cases");
+    expect(html).toContain("External human review covers 1 of 3 cases");
+    expect(md).not.toContain("no human evaluator is marked external");
   });
 
   it("rejects malformed answers", () => {
@@ -245,6 +756,133 @@ describe("blind-agent answer scoring", () => {
       "answer.decision",
     );
     expect(() => validateAgentAnswer({ decision: "approve" })).toThrow("answer.findings");
+  });
+
+  it("enforces the full finding shape the packet prompt requires", () => {
+    // The prompt asks for severity, filePath, riskType, and evidence; a
+    // title-only finding must not be scoreable.
+    const full = {
+      title: "Loose regex pattern disables validation",
+      severity: "high",
+      filePath: "src/auth.ts",
+      riskType: "Loose regex pattern",
+      evidence: "pattern changed to /.*/",
+    };
+    expect(() =>
+      validateAgentAnswer({ decision: "block", findings: [full] }),
+    ).not.toThrow();
+
+    for (const missing of ["severity", "filePath", "riskType", "evidence"] as const) {
+      const { [missing]: _omitted, ...partial } = full;
+      expect(() => validateAgentAnswer({ decision: "block", findings: [partial] })).toThrow(
+        `answer.findings[0].${missing}`,
+      );
+    }
+    expect(() =>
+      validateAgentAnswer({ decision: "block", findings: [{ ...full, severity: "fatal" }] }),
+    ).toThrow("answer.findings[0].severity");
+  });
+
+  it("accepts scoring-ignored notes and validates their shape", () => {
+    // Notes carry benign observations without costing precision or recall.
+    const benign = {
+      ...caseDef,
+      oracle: { ...caseDef.oracle, requiredFlags: [] },
+      agent: { expectedDecision: "approve" },
+    };
+    const score = scoreAgentAnswer(benign, {
+      decision: "approve",
+      findings: [],
+      notes: ["Formatting-only change; report matches the raw diff."],
+    });
+    expect(score.score).toBe(100);
+    expect(score.falsePositives).toBe(0);
+
+    expect(() =>
+      validateAgentAnswer({ decision: "approve", findings: [], notes: "not an array" }),
+    ).toThrow("answer.notes");
+    expect(() =>
+      validateAgentAnswer({ decision: "approve", findings: [], notes: [42] }),
+    ).toThrow("answer.notes");
+  });
+});
+
+describe("answer file collection", () => {
+  it("expands a directory argument into its sorted .json answers", async () => {
+    const { collectAnswerFiles } = await import("../../eval/lib/answers.mjs");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+
+    const dir = mkdtempSync(join(tmpdir(), "drift-answers-"));
+    try {
+      writeFileSync(join(dir, "b-case.json"), "{}");
+      writeFileSync(join(dir, "a-case.json"), "{}");
+      writeFileSync(join(dir, "notes.txt"), "ignored");
+
+      // A directory arg expands to its .json files, sorted.
+      const fromDir = collectAnswerFiles([dir], dir);
+      expect(fromDir).toEqual([join(dir, "a-case.json"), join(dir, "b-case.json")]);
+
+      // A file arg passes through; mixing works.
+      const single = collectAnswerFiles([join(dir, "b-case.json")], dir);
+      expect(single).toEqual([join(dir, "b-case.json")]);
+
+      // No args falls back to the default directory.
+      expect(collectAnswerFiles([], dir)).toEqual([
+        join(dir, "a-case.json"),
+        join(dir, "b-case.json"),
+      ]);
+
+      // A missing default directory yields an empty list, not a throw.
+      expect(collectAnswerFiles([], join(dir, "missing"))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("v3 benchmark reproduces the committed scorecard", () => {
+  it("rescores the committed answers to the published headline", async () => {
+    const { loadCases, projectRoot } = await import("../../eval/lib/cases.mjs");
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const answersDir = join(projectRoot, "eval", "benchmarks", "v3", "answers");
+    const cases = await loadCases();
+    const byId = new Map(cases.map((caseDef) => [caseDef.id, caseDef]));
+
+    const scores = readdirSync(answersDir)
+      .filter((file) => file.endsWith(".json"))
+      .sort()
+      .map((file) => {
+        const answer = JSON.parse(readFileSync(join(answersDir, file), "utf8"));
+        const caseId = answer.caseId ?? file.replace(/\.json$/i, "");
+        const caseDef = byId.get(caseId);
+        if (!caseDef) throw new Error(`No eval case for committed answer ${caseId}`);
+        return { caseId, evaluator: answer.evaluator, ...scoreAgentAnswer(caseDef, { ...answer, caseId }) };
+      });
+
+    const summary = summarizeAgentScores(scores);
+    const averageScore = Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length);
+    const coverage = summarizeExternalValidation(scores);
+    const committed = JSON.parse(
+      readFileSync(join(projectRoot, "eval", "benchmarks", "v3", "scorecard.json"), "utf8"),
+    );
+
+    // The committed snapshot must equal what the live scorer produces — this
+    // catches any future scorer change that silently drifts the headline.
+    expect(averageScore).toBe(committed.averageScore);
+    expect(summary.precision).toBe(committed.summary.precision);
+    expect(summary.averageRecall).toBe(committed.summary.averageRecall);
+    expect(summary.totalFalsePositives).toBe(committed.summary.totalFalsePositives);
+    expect(externalValidationPending(coverage)).toBe(committed.externalValidationPending);
+
+    // And the published headline is the honest one.
+    expect(averageScore).toBe(100);
+    expect(summary.precision).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+    expect(externalValidationPending(coverage)).toBe(true);
   });
 });
 

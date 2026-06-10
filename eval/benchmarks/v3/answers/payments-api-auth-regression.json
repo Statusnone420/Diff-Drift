@@ -1,0 +1,57 @@
+{
+  "caseId": "payments-api-auth-regression",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Token format validation accepts everything",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Loose regex pattern",
+      "evidence": "The token pattern changes from /^[A-Za-z0-9_\\-]{32,}$/ to /.*/, allowing any string to match."
+    },
+    {
+      "title": "Signature verification replaced with decoding",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Crypto downgrade",
+      "evidence": "validateToken now returns decode(token) instead of verify(token, PUBLIC_KEY), so token signatures are no longer verified."
+    },
+    {
+      "title": "Malformed token guard disabled",
+      "severity": "low",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Disabled guard",
+      "evidence": "The validation guard changed from if (!pattern.test(token)) to if (false), making the malformed-token error unreachable."
+    },
+    {
+      "title": "Token sanitization removed",
+      "severity": "low",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Removed sanitization",
+      "evidence": "sanitizeInput(token) was removed from validateToken."
+    },
+    {
+      "title": "Token decoder import is undeclared",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Undeclared import",
+      "evidence": "The diff adds import { decode } from \"jwt-tiny-decode\" and the report states it is not declared in package.json."
+    },
+    {
+      "title": "Sensitive logging protections removed",
+      "severity": "low",
+      "filePath": "utils/logger.ts",
+      "riskType": "Permissive logging config",
+      "evidence": "Logger config changes from level \"info\" with redaction of authorization headers and token to level \"debug\" with redact: []."
+    }
+  ],
+  "notes": [
+    "routes/session.ts appears to contain formatting-only drift."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-c",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

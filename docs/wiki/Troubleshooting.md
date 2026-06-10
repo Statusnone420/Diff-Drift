@@ -6,11 +6,15 @@ Open a folder inside a git working tree. Diff Drift uses `git2` to discover the 
 
 ## No Drift Detected
 
-The working tree matches the selected baseline, or the current changes were reverted. Check the **Review changes since** picker if you expected committed drift to remain visible, then create or save a change and wait for the watcher to update.
+The working tree matches the selected baseline, or the current changes were reverted. Check the toolbar **Scope** menu if you expected committed drift to remain visible, then create or save a change and wait for the watcher to update.
 
 ## Changed Files But No Analyzed Files
 
 Diff Drift analyzes changed TypeScript, TSX, JavaScript, JSX, and root `package.json` dependency/script drift. Other changed files can still count as git drift, but they will not appear as AST nodes or dependency nodes.
+
+## A File Shows "Skipped — file too large to analyze"
+
+Files over 2 MB on either side of the drift are not parsed — this is a guard against giant generated bundles exhausting memory or CPU. The file stays in the list so the skip is visible. There is no override; review oversized files by other means (and consider whether a 2 MB+ source file should be in the drift at all).
 
 ## A Flag Looks Wrong
 

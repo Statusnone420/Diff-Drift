@@ -20,6 +20,9 @@ export function EmptyState({ error, onOpen }: { error: string | null; onOpen: ()
         Open a git repository to inspect the AST-level security drift in its changes — measured
         against the last commit, your last review, or any ref you choose.
       </div>
+      <div className="es-steps">
+        Pick a baseline → review the changed nodes → dismiss flags or mark the drift reviewed.
+      </div>
       <button className="btn primary es-open" onClick={onOpen}>
         {Ico.folder}
         Open a repository…

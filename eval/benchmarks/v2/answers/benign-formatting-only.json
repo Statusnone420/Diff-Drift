@@ -1,0 +1,16 @@
+{
+  "caseId": "benign-formatting-only",
+  "decision": "approve",
+  "confidence": 0.97,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [],
+  "notes": [
+    "The raw diff touches a single file (src/routes/profile.ts) and changes only leading whitespace on one return statement (2-space to 4-space indent); no tokens, logic, exports, or dependencies change.",
+    "Diff Drift's report is consistent with the raw diff: 1 changed file, classified 'Formatting only', 0 active flags — no discrepancy between the tool's claims and the evidence.",
+    "No skipped or unanalyzed files; the analyzed-files list covers the entire drift."
+  ]
+}

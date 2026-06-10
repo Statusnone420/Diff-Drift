@@ -1,0 +1,16 @@
+{
+  "caseId": "test-fixture-suppression",
+  "decision": "approve",
+  "confidence": 0.85,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [],
+  "notes": [
+    "The only change is a single-line new file tests/fixtures/provider.test.ts exporting fakeAwsKey = \"AKIA0123456789ABCDEF\". The value matches the AWS access-key-id format (AKIA prefix, 20 chars), but the suffix is the sequential placeholder 0123456789ABCDEF, the constant is explicitly named fakeAwsKey, and it lives under tests/fixtures — all strong signals of a deliberately fake fixture rather than a leaked credential.",
+    "Diff Drift's report (1 changed file, 0 active flags) is consistent with the raw diff; suppressing a flag here appears to be correct behavior, not a missed detection.",
+    "Residual caution: some secret scanners (e.g., AWS git-secrets, GitHub push protection) will still flag AKIA-prefixed strings even when fake; using an AWS-documented example key such as AKIAIOSFODNN7EXAMPLE would avoid downstream false positives, but that is hygiene, not a trust risk."
+  ]
+}

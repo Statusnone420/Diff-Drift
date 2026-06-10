@@ -121,7 +121,7 @@
   font-size: 12.5px;
   white-space: nowrap;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .crumb .sep {
   color: var(--text-mute);
@@ -134,6 +134,10 @@
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text-dim);
+  min-width: 0;
+  max-width: min(26vw, 360px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .crumb .branch svg {
   vertical-align: -2px;
@@ -144,57 +148,168 @@
   flex: 1;
 }
 
-/* baseline picker — what the drift is measured against */
+/* analysis scope — what the drift is measured against */
 .crumb .baseline {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
 }
-.crumb .baseline-label {
-  color: var(--text-mute);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.baseline-select {
-  appearance: none;
-  background: var(--bg-elevated);
-  color: var(--text-dim);
+.scope-trigger {
+  height: 30px;
+  min-width: 188px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  font: inherit;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  height: 24px;
-  padding: 0 8px;
-  cursor: pointer;
-  max-width: 210px;
-}
-.baseline-select:hover,
-.baseline-select:focus-visible {
-  color: var(--text);
-  border-color: var(--border-strong);
-  outline: none;
-}
-.baseline-select:focus-visible {
-  border-color: var(--accent);
-}
-.baseline-ref {
   background: var(--bg-elevated);
   color: var(--text);
-  border: 1px solid var(--accent);
+  font: inherit;
+  cursor: default;
+}
+.scope-trigger:hover,
+.scope-trigger:focus-visible,
+.scope-trigger[aria-expanded="true"] {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.045);
+  outline: none;
+}
+.scope-trigger:focus-visible {
+  border-color: var(--accent);
+}
+.scope-label {
+  color: var(--text-mute);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.scope-value {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+}
+.scope-value b {
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+}
+.scope-value span {
+  color: var(--text-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+}
+.scope-chevron {
+  color: var(--text-mute);
+  display: inline-flex;
+  margin-left: auto;
+  transform: rotate(90deg);
+}
+.scope-popover {
+  position: absolute;
+  z-index: 20;
+  top: 36px;
+  left: 0;
+  width: 330px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: #11131a;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.38);
+}
+.scope-popover-head {
+  display: grid;
+  gap: 3px;
+  padding: 2px 4px 9px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.scope-popover-head b {
+  color: var(--text);
+  font-size: 12.5px;
+}
+.scope-popover-head span {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.scope-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+}
+.scope-option:hover:not(:disabled),
+.scope-option:focus-visible {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--border);
+  outline: none;
+}
+.scope-option.active {
+  background: rgba(231, 168, 62, 0.09);
+  border-color: rgba(231, 168, 62, 0.32);
+}
+.scope-option:disabled {
+  opacity: 0.48;
+}
+.scope-option span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.scope-option b {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+.scope-option em {
+  color: var(--text-mute);
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.35;
+}
+.scope-option i {
+  flex: none;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-style: normal;
+}
+.scope-custom {
+  display: flex;
+  gap: 7px;
+  padding: 8px 2px 2px;
+}
+.baseline-ref {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   font-family: var(--mono);
   font-size: 11.5px;
   height: 24px;
   padding: 0 8px;
-  width: 190px;
+  width: 100%;
+  min-width: 0;
 }
 .baseline-ref::placeholder {
   color: var(--text-mute);
+}
+.btn.tiny {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11px;
 }
 
 .review-progress {
@@ -1191,6 +1306,12 @@
   max-width: 360px;
   line-height: 1.6;
 }
+.es-steps {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  max-width: 420px;
+  line-height: 1.6;
+}
 .es-open {
   height: 34px;
   padding: 0 16px;
@@ -1256,6 +1377,18 @@
 .summary-pill.calm .dot {
   background: var(--live);
   box-shadow: 0 0 8px var(--live);
+}
+.summary-pill.skipped {
+  background: rgba(231, 168, 62, 0.14);
+  border-color: rgba(231, 168, 62, 0.34);
+  color: #f0c069;
+}
+.summary-pill.skipped b {
+  color: #ffe1a3;
+}
+.summary-pill.skipped .dot {
+  background: var(--modified);
+  box-shadow: 0 0 8px rgba(231, 168, 62, 0.7);
 }
 
 /* footer transient — "Updated just now" after a live re-scan */

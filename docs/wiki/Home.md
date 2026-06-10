@@ -6,13 +6,19 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Start Here
 
-- [User Guide](User-Guide.md): open a repo, read the panels, review flags, export a report.
+- [User Guide](User-Guide.md): open a repo, read the panels, review flags, export a report, CI/hook recipes.
 - [Concepts](Concepts.md): drift, sessions, nodes, flags, dismissed, reviewed.
 - [Rule Reference](Rule-Reference.md): what each security heuristic means.
+- [FAQ](FAQ.md): triage burden, false positives, skipped files, CI integration.
 - [Architecture](Architecture.md): codebase map for contributors and AI agents.
 - [Development](Development.md): setup, commands, tests, fixtures.
-- [Release and Platform Support](Release-and-Platform-Support.md): Windows, macOS status, bundle identity.
+- [Eval Methodology](Eval-Methodology.md): how the engine benchmark and blind-agent scorecards work, and their limits.
+- [A/B Study Design](AB-Study-Design.md): pre-registered design for the packet-vs-raw-diff study (no results yet).
+- [Threat Model](Threat-Model.md): trust boundaries, attack surface, explicit non-goals.
+- [Privacy and Data Flow](Privacy-and-Data-Flow.md): what is read, what is written, what leaves the machine (nothing).
+- [Release and Platform Support](Release-and-Platform-Support.md): Windows, macOS status, release runbook, signing, winget.
 - [Troubleshooting](Troubleshooting.md): common setup and app behavior issues.
+- [Changelog](../../CHANGELOG.md) and [Security Policy](../../SECURITY.md).
 - [GitHub Discussions](https://github.com/Statusnone420/Diff-Drift/discussions): questions, ideas, and support.
 
 ## Current Status

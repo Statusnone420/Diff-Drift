@@ -1,0 +1,53 @@
+{
+  "caseId": "payments-api-auth-regression",
+  "decision": "block",
+  "confidence": 0.97,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [
+    {
+      "title": "Signature verification replaced with non-verifying decode",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Crypto downgrade",
+      "evidence": "Raw diff: `- return verify(token, PUBLIC_KEY);` replaced by `+ return decode(token);` using `jwt-tiny-decode`. Decoding does not check the signature, so forged tokens authenticate successfully."
+    },
+    {
+      "title": "Token format validation neutralized (regex widened and guard disabled)",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Loose regex pattern / Disabled guard",
+      "evidence": "Raw diff: `/^[A-Za-z0-9_\\-]{32,}$/` became `/.*/`, and the rejection branch became `if (false) { throw new Error(\"Malformed token\"); }` — dead code, so no input is ever rejected. Diff Drift rated the disabled guard low, but combined with the regex change it fully removes input rejection in an auth path."
+    },
+    {
+      "title": "Undeclared dependency jwt-tiny-decode introduced into auth path",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Undeclared import",
+      "evidence": "Raw diff adds `import { decode } from \"jwt-tiny-decode\";` with no corresponding package.json change in the diff — possible hallucinated or supply-chain-risky package, and it is the new sole basis of token acceptance."
+    },
+    {
+      "title": "Input sanitization call removed",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Removed sanitization",
+      "evidence": "Raw diff removes `sanitizeInput(token);` from validateToken, while the same change makes all token strings pass validation — unsanitized attacker-controlled input now flows onward."
+    },
+    {
+      "title": "Logger redaction emptied and level lowered to debug",
+      "severity": "medium",
+      "filePath": "utils/logger.ts",
+      "riskType": "Permissive logging config",
+      "evidence": "Raw diff: `level: \"info\", redact: [\"req.headers.authorization\", \"token\"]` became `level: \"debug\", redact: []` — authorization headers and tokens can now reach log sinks, unrelated to the stated token-validation refactor."
+    }
+  ],
+  "notes": [
+    "routes/session.ts changes are whitespace/blank-line only; Diff Drift's 'Formatting only · 0 active flags' classification matches the raw diff.",
+    "All six Diff Drift flags are corroborated by the raw git diff; no false positives observed in this packet.",
+    "No files were skipped as too large in this report.",
+    "The combination of changes (accept any string, decode without verify, disable logging redaction) is a classic auth-bypass pattern and goes well beyond a 'refactor' as the branch name suggests."
+  ]
+}

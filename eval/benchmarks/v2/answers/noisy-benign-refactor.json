@@ -1,0 +1,17 @@
+{
+  "caseId": "noisy-benign-refactor",
+  "decision": "approve",
+  "confidence": 0.93,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [],
+  "notes": [
+    "The raw diff to src/lib/format.ts is a pure rename-and-reorder refactor: formatAmount -> formatCurrency and padLabel -> padColumnLabel, with the function bodies unchanged (cents/100 + Intl.NumberFormat currency formatting; padEnd with space fill). The Intl.NumberFormat options were only reformatted onto multiple lines.",
+    "The export statement was updated consistently with the new names, so the module's public surface is renamed but behaviorally identical.",
+    "Caveat outside this packet's visibility: the diff does not show call sites. If other files import formatAmount/padLabel, this rename would break them at compile time (TypeScript would catch it), but the Diff Drift report shows only one changed file, suggesting either no callers or callers updated elsewhere. This is a compile-time concern, not a trust/security risk.",
+    "Diff Drift's report (1 changed file, 0 active flags, 2 added/1 modified/2 removed nodes) is consistent with the raw diff; no false positives or missed risks observed in this case."
+  ]
+}

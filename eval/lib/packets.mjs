@@ -29,15 +29,41 @@ export function renderAgentScorecard(result) {
     "",
     "> Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.",
     "",
+  ];
+  if (result.evaluators?.length) {
+    lines.push(
+      `Evaluators: ${result.evaluators
+        .map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases} case${e.cases === 1 ? "" : "s"})`)
+        .join(", ")}`,
+      "",
+    );
+  }
+  if (result.externalValidationPending) {
+    lines.push(
+      `> **Independent external validation pending.** ${pendingValidationText(validationCoverage(result), result.evaluators)} Treat the score as an internal product-quality signal, not third-party validation.`,
+      "",
+    );
+  }
+  lines.push(
     `Overall score: ${bar(result.averageScore)} ${result.averageScore}/100`,
     "",
     `- Decision accuracy: ${percent(summary.decisionAccuracy)}`,
     `- Finding recall: ${percent(summary.averageRecall)}`,
     `- Localization: ${percent(summary.averageLocalization)}`,
+  );
+  if (summary.precision !== undefined) {
+    const matchedReported = summary.matchedReportedFindings ?? summary.matchedFindings ?? 0;
+    const related = summary.totalRelatedFindings ?? 0;
+    const falsePositives = summary.totalFalsePositives ?? 0;
+    lines.push(
+      `- Precision: ${percent(summary.precision)} — ${matchedReported} matched of ${summary.totalFindings} reported (${related} near-miss, ${falsePositives} false positives; both lower precision)`,
+    );
+  }
+  lines.push(
     "",
     "| Case | Score | Decision | Recall | Notes |",
     "| --- | ---: | --- | ---: | --- |",
-  ];
+  );
 
   for (const score of sortedScores(result.scores)) {
     lines.push(
@@ -45,6 +71,22 @@ export function renderAgentScorecard(result) {
         score.recall,
       )} | ${notesFor(score)} |`,
     );
+  }
+
+  const perRule = Object.entries(summary.perRuleRecall ?? {});
+  if (perRule.length > 0) {
+    lines.push(
+      "",
+      "## Per-rule recall",
+      "",
+      "Across every case that required the flag type:",
+      "",
+      "| Flag type | Matched / Required | Recall |",
+      "| --- | ---: | ---: |",
+    );
+    for (const [type, entry] of perRule) {
+      lines.push(`| ${type} | ${entry.matched}/${entry.required} | ${percent(entry.recall)} |`);
+    }
   }
 
   lines.push(
@@ -55,7 +97,6 @@ export function renderAgentScorecard(result) {
     "- Add harder cases and keep benign cases in the mix so the score cannot rise by always blocking.",
     "- Treat scorer changes as rubric calibration: aliases and accepted decisions should reflect defensible human review, not hide misses.",
     "- Review misses in `missedExpectations` and unmatched findings before changing the product or rubric.",
-    "",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -63,8 +104,28 @@ export function renderAgentScorecard(result) {
 export function renderAgentDashboard(result) {
   const summary = result.summary ?? {};
   const score = clampScore(result.averageScore);
-  const rows = sortedScores(result.scores).map(renderCaseCard).join("\n");
-  const dots = sortedScores(result.scores).map(renderScoreDot).join("\n");
+  const scores = sortedScores(result.scores);
+  const caseRows = scores.map(renderCaseRow).join("\n");
+  const histogram = renderScoreHistogram(scores);
+  const scoreRange = describeScoreRange(scores);
+  const caseCount = result.scores?.length ?? 0;
+  const evaluatorCount = result.evaluators?.length ?? 0;
+  const panelKind = panelKindText(result.evaluators);
+  const answerCount =
+    result.evaluators?.reduce((sum, evaluator) => sum + (evaluator.cases ?? 0), 0) ?? caseCount;
+  const falsePositives = summary.totalFalsePositives ?? 0;
+  const metrics = [
+    metric("Decision accuracy", summary.decisionAccuracy, "var(--green)"),
+    metric("Finding recall", summary.averageRecall, "var(--teal)"),
+    metric("Localization", summary.averageLocalization, "var(--blue)"),
+    ...(summary.precision !== undefined ? [metric("Precision", summary.precision, "var(--purple)")] : []),
+  ];
+  const evaluatorLine = result.evaluators?.length
+    ? `<span>${escapeHtml(result.evaluators.map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases})`).join(" | "))}</span>`
+    : "<span>No evaluator metadata</span>";
+  const pendingBanner = result.externalValidationPending
+    ? `<p class="pending"><b>Independent external validation pending.</b> ${escapeHtml(pendingValidationText(validationCoverage(result), result.evaluators))} Treat this as an internal product-quality signal, not third-party validation.</p>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -73,50 +134,56 @@ export function renderAgentDashboard(result) {
   <title>Diff Drift Blind-Agent Scorecard</title>
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #0b0c0f;
-      --panel: #101116;
-      --panel-2: #16181f;
-      --border: #20232b;
-      --border-strong: #2c303a;
-      --text: #e9ebef;
-      --dim: #a5a9b3;
-      --mute: #8f95a3;
-      --accent: #e7a83e;
-      --green: #4ec46a;
-      --red: #f2604c;
-      --blue: #6f8bc4;
+      color-scheme: light;
+      --page: #f6f8fb;
+      --surface: #ffffff;
+      --surface-quiet: #f0f4f8;
+      --border: #d9e1eb;
+      --border-strong: #b9c6d6;
+      --ink: #152032;
+      --text: #2b3547;
+      --dim: #566276;
+      --mute: #718096;
+      --accent: #d89024;
+      --amber-soft: #fff4dc;
+      --green: #15824f;
+      --green-soft: #e7f6ee;
+      --teal: #15858f;
+      --teal-soft: #e4f6f8;
+      --blue: #3468c7;
+      --blue-soft: #e8effd;
+      --purple: #7650bd;
+      --purple-soft: #f0eafa;
+      --red: #c24135;
+      --red-soft: #fff0ee;
       --mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
       --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background:
-        linear-gradient(180deg, rgba(231, 168, 62, 0.035), transparent 280px),
-        var(--bg);
+      background: var(--page);
       color: var(--text);
       font-family: var(--ui);
-      font-size: 14px;
-      line-height: 1.55;
+      font-size: 13px;
+      line-height: 1.45;
     }
-    main { max-width: 1160px; margin: 0 auto; padding: 34px 22px 44px; }
+    main { max-width: 1800px; min-width: 1180px; margin: 0 auto; padding: 18px 28px 20px; }
     .topline {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 18px;
-      margin-bottom: 28px;
+      margin-bottom: 10px;
       color: var(--dim);
       font-size: 12px;
     }
-    .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; }
     .mark {
       width: 24px;
       height: 24px;
-      border-radius: 7px;
+      border-radius: 6px;
       background: linear-gradient(145deg, #2a2d37, #15171d);
-      border: 1px solid var(--border-strong);
       position: relative;
     }
     .mark:after {
@@ -127,97 +194,259 @@ export function renderAgentDashboard(result) {
       border-left: 2px solid var(--accent);
       transform: rotate(45deg);
     }
-    .brief {
-      border-top: 1px solid var(--border-strong);
-      border-bottom: 1px solid var(--border);
-      padding: 28px 0 26px;
+    .run-meta {
+      max-width: 720px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 380px;
-      gap: 42px;
-      align-items: end;
-      margin-bottom: 26px;
+      grid-template-columns: minmax(0, 1fr) 560px;
+      gap: 28px;
+      align-items: stretch;
+      margin-bottom: 10px;
+    }
+    .hero-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .label-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .label {
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: var(--surface-quiet);
+      color: var(--dim);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .label.good {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: #b8e5cc;
     }
     h1 {
-      margin: 0 0 14px;
-      font-size: clamp(34px, 4.4vw, 64px);
-      line-height: 1;
-      letter-spacing: -0.035em;
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 44px;
+      line-height: 1.02;
+      letter-spacing: 0;
       text-wrap: balance;
     }
-    .lede { max-width: 70ch; margin: 0; color: var(--dim); font-size: 15px; }
-    .score-summary { display: grid; gap: 14px; }
-    .score-number { display: flex; align-items: baseline; gap: 10px; justify-content: flex-end; }
-    .score-number strong { font-size: 74px; line-height: 0.9; letter-spacing: -0.05em; }
-    .score-number span { color: var(--dim); font-family: var(--mono); }
-    .score-track { height: 12px; border-radius: 999px; background: #242730; overflow: hidden; }
-    .score-track i { display: block; height: 100%; width: ${score}%; background: var(--accent); }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-    .metric { border-top: 1px solid var(--border); padding-top: 9px; }
-    .metric b { display: block; font-size: 20px; letter-spacing: -0.02em; }
-    .metric span { color: var(--dim); font-size: 12px; }
-    .distribution {
+    .lede { max-width: 72ch; margin: 0; color: var(--dim); font-size: 15px; }
+    .pending {
+      margin: 12px 0 0;
+      padding: 8px 10px;
+      border: 1px solid #e7bf79;
+      border-radius: 8px;
+      background: var(--amber-soft);
+      color: #6f4a10;
+      font-size: 13px;
+      max-width: 78ch;
+    }
+    .score-panel {
       border: 1px solid var(--border);
-      border-radius: 12px;
-      background: rgba(16, 17, 22, 0.78);
-      padding: 16px;
-      margin-bottom: 24px;
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
     }
-    .axis {
-      position: relative;
-      height: 72px;
-      border-bottom: 1px solid var(--border-strong);
-      margin: 8px 8px 0;
+    .score-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
     }
-    .axis:before, .axis:after {
-      content: "";
-      position: absolute;
-      bottom: -4px;
-      width: 1px;
+    .score-head h2 {
+      margin: 0 0 2px;
+      color: var(--ink);
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .score-head p {
+      margin: 0;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .score-value {
+      text-align: right;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .score-value strong {
+      display: block;
+      color: var(--ink);
+      font-family: var(--ui);
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+    .score-bar {
       height: 8px;
-      background: var(--border-strong);
+      border-radius: 999px;
+      background: #dfe6ef;
+      overflow: hidden;
     }
-    .axis:before { left: 0; }
-    .axis:after { right: 0; }
-    .dot {
-      position: absolute;
-      left: var(--x);
-      top: var(--y);
-      width: 11px;
-      height: 11px;
-      margin-left: -5px;
-      border-radius: 50%;
+    .score-bar i {
+      display: block;
+      height: 100%;
+      width: ${score}%;
       background: var(--accent);
-      border: 2px solid var(--bg);
     }
-    .axis-labels { display: flex; justify-content: space-between; color: var(--mute); font: 11px var(--mono); margin: 8px 8px 0; }
-    .section-head {
+    .metric-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px 12px;
+    }
+    .metric-row {
+      display: grid;
+      grid-template-columns: 104px minmax(0, 1fr) 44px;
+      gap: 8px;
+      align-items: center;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .metric-row strong {
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+      text-align: right;
+    }
+    .metric-track,
+    .hist-track {
+      height: 7px;
+      border-radius: 999px;
+      background: #dfe6ef;
+      overflow: hidden;
+    }
+    .metric-track i,
+    .hist-track i {
+      display: block;
+      height: 100%;
+      width: var(--value);
+      background: var(--fill);
+    }
+    .panel-title {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       gap: 12px;
-      margin: 0 0 12px;
+      margin-bottom: 8px;
+      color: var(--ink);
+      font-weight: 700;
     }
-    h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
-    .hint { color: var(--mute); font-size: 12px; }
-    .cases { display: grid; gap: 12px; }
-    .case {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: rgba(16, 17, 22, 0.86);
-      padding: 14px 16px;
+    .hint { color: var(--mute); font-size: 12px; font-weight: 500; }
+    .distribution {
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+    .histogram {
       display: grid;
-      grid-template-columns: 250px minmax(0, 1fr) 250px;
+      gap: 5px;
+    }
+    .hist-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 34px;
+      gap: 8px;
+      align-items: center;
+      color: var(--mute);
+      font: 11px var(--mono);
+    }
+    .hist-row.active {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .hist-row.active .hist-track {
+      background: var(--amber-soft);
+    }
+    .cases-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .cases-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 18px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+    h2 { margin: 0; color: var(--ink); font-size: 17px; letter-spacing: 0; }
+    .case-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .case-table th {
+      text-align: left;
+      color: var(--mute);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+    }
+    .case-table td {
+      padding: 4px 14px;
+      border-bottom: 1px solid #edf1f6;
+      vertical-align: middle;
+    }
+    .case-table tr:last-child td { border-bottom: 0; }
+    .case-name {
+      color: var(--ink);
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+    .case-sub {
+      color: var(--mute);
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-top: 1px;
+      display: none;
+    }
+    .score-cell {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 10px;
       align-items: center;
     }
-    .case-title { font-weight: 700; margin-bottom: 5px; overflow-wrap: anywhere; }
-    .case-meta { color: var(--dim); font-size: 12px; font-family: var(--mono); }
-    .barline { display: grid; gap: 7px; }
-    .bar-label { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; }
-    .bar {
-      height: 8px;
+    .score-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 26px;
       border-radius: 999px;
-      background: #23262f;
+      background: var(--amber-soft);
+      color: #6f4a10;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .bar {
+      height: 7px;
+      border-radius: 999px;
+      background: #dfe6ef;
       overflow: hidden;
     }
     .bar > i {
@@ -226,31 +455,57 @@ export function renderAgentDashboard(result) {
       width: var(--value);
       background: var(--fill);
     }
-    .chips { display: flex; flex-wrap: wrap; gap: 7px; }
-    .chip {
-      border: 1px solid var(--border-strong);
+    .mini-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .mini-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       border-radius: 999px;
-      padding: 3px 8px;
-      font-size: 12px;
+      padding: 2px 7px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
       color: var(--dim);
+      font-size: 11px;
       white-space: nowrap;
     }
-    .chip.ok { color: #9ce0aa; border-color: rgba(78, 196, 106, 0.35); background: rgba(78, 196, 106, 0.08); }
-    .chip.miss { color: #f49c8e; border-color: rgba(242, 96, 76, 0.35); background: rgba(242, 96, 76, 0.08); }
-    .why { color: var(--dim); font-size: 12px; margin: 10px 0 0; }
-    .why b { color: var(--text); }
-    .callout {
-      margin-top: 20px;
-      border-top: 1px solid var(--border);
-      padding-top: 16px;
-      color: #c5d3ef;
+    .mini-row b { color: var(--ink); font-weight: 650; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 18px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 10.5px;
+      font-weight: 650;
+      white-space: nowrap;
     }
-    .callout h2 { margin-bottom: 8px; }
-    .callout ul { margin: 0; padding-left: 18px; }
-    @media (max-width: 900px) {
-      .hero, .case { grid-template-columns: 1fr; }
-      .score-ring { width: 150px; }
-      .metrics { grid-template-columns: 1fr; }
+    .chip.ok { color: var(--green); border-color: #b8e5cc; background: var(--green-soft); }
+    .chip.miss { color: var(--red); border-color: #f0bbb6; background: var(--red-soft); }
+    .finding-stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .finding-stack .chip { color: var(--dim); background: #f9fbfd; }
+    .why {
+      color: var(--dim);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @media (max-width: 1180px) {
+      main { min-width: 0; }
+      .hero { grid-template-columns: 1fr; }
+      .metric-list { grid-template-columns: 1fr; }
+      .case-table { min-width: 980px; }
+      .cases-panel { overflow-x: auto; }
     }
   </style>
 </head>
@@ -258,44 +513,64 @@ export function renderAgentDashboard(result) {
   <main>
     <div class="topline">
       <div class="brand"><span class="mark"></span><span>Diff Drift benchmark</span></div>
+      <div class="run-meta">${evaluatorLine}</div>
       <div>${escapeHtml(result.generatedAt)}</div>
     </div>
-    <section class="brief">
-      <div>
-        <h1>Blind-agent scorecard</h1>
-        <p class="lede">This advisory benchmark checks whether reviewers can use Diff Drift packets to make the right trust decision and cite the right evidence. It is designed to improve the product, not to block releases.</p>
-      </div>
-      <aside class="score-summary" aria-label="Overall score">
-        <div class="score-number"><strong>${score}</strong><span>/100</span></div>
-        <div class="score-track" aria-hidden="true"><i></i></div>
-        <div class="metrics">
-          ${metric("Decision", summary.decisionAccuracy)}
-          ${metric("Recall", summary.averageRecall)}
-          ${metric("Location", summary.averageLocalization)}
+    <section class="hero">
+      <div class="hero-copy">
+        <div>
+          <div class="label-row">
+            <span class="label good">${caseCount} cases</span>
+            <span class="label">${evaluatorCount} evaluator${evaluatorCount === 1 ? "" : "s"}</span>
+            <span class="label">${answerCount} blind answers</span>
+            <span class="label">${falsePositives} false positives</span>
+          </div>
+          <h1>Blind-agent scorecard</h1>
+          <p class="lede">Can a reviewer use Diff Drift packets to make the right trust decision and cite the right evidence? This report scores that reviewer workflow. It is advisory evidence for product quality, not a release gate.</p>
         </div>
+        ${pendingBanner}
+      </div>
+      <aside class="score-panel" aria-label="Benchmark summary">
+        <div class="score-head">
+          <div>
+            <h2>Benchmark summary</h2>
+            <p>${escapeHtml(panelKind)}</p>
+          </div>
+          <div class="score-value"><strong>${score}</strong>/100</div>
+        </div>
+        <div class="score-bar" aria-hidden="true"><i></i></div>
+        <div class="metric-list">
+          ${metrics.join("\n          ")}
+        </div>
+        <section class="distribution" aria-label="Case score distribution">
+          <div class="panel-title">
+            <span>Case score histogram</span>
+            <span class="hint">${escapeHtml(scoreRange)}</span>
+          </div>
+          <div class="histogram">${histogram}</div>
+        </section>
       </aside>
     </section>
-    <section class="distribution" aria-label="Case score distribution">
-      <div class="section-head">
-        <h2>Score distribution</h2>
-        <div class="hint">Each point is one blind-review packet.</div>
+    <section class="cases-panel" aria-label="Case results">
+      <div class="cases-head">
+        <h2>Case results</h2>
+        <div class="hint">Weighted recall, decision accuracy, top-risk ranking, localization, and unmatched findings.</div>
       </div>
-      <div class="axis">${dots}</div>
-      <div class="axis-labels"><span>0</span><span>50</span><span>100</span></div>
-    </section>
-    <div class="section-head">
-      <h2>Case results</h2>
-      <div class="hint">Scores combine weighted finding recall, decision accuracy, top-risk ranking, localization, and unmatched findings.</div>
-    </div>
-    <section class="cases">${rows}</section>
-    <section class="callout">
-      <h2>Improvement loop</h2>
-      <ul>
-        <li>Improve the report until blind reviewers cite the intended risky nodes with less prompting.</li>
-        <li>Calibrate aliases and accepted decisions only when they match defensible review behavior.</li>
-        <li>Keep benign cases in the suite so always-blocking cannot win.</li>
-        <li>Add harder cases as the score rises, especially near-miss and low-signal drift.</li>
-      </ul>
+      <table class="case-table">
+        <thead>
+          <tr>
+            <th style="width: 23%">Case</th>
+            <th style="width: 18%">Score</th>
+            <th style="width: 11%">Decision</th>
+            <th style="width: 22%">Coverage</th>
+            <th style="width: 13%">Findings</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${caseRows}
+        </tbody>
+      </table>
     </section>
   </main>
 </body>
@@ -332,6 +607,14 @@ export function writeBlindPacket(caseDef, fixture) {
 function promptFor(caseDef) {
   return `${caseDef.blindPrompt ?? defaultPrompt(caseDef)}
 
+What counts as a finding (benchmark v3 contract):
+
+- \`findings\` is for concrete, actionable trust risks in the changed code only — things that would make a reviewer block or investigate.
+- Benign observations, formatting remarks, mitigating context, and feedback about Diff Drift's report itself belong in \`notes\`, never in \`findings\`.
+- If your decision is \`approve\`, \`findings\` should normally be an empty array.
+- A file the report marks "Skipped — file too large to analyze" is not by itself a finding when its raw diff shows no concrete risk; weigh it in your decision and mention it in \`notes\`.
+- Severity is scored. For risks that correspond directly to Diff Drift flags, use the report severity; lower severity misses the finding. Conservative escalation is accepted only when your evidence supports a higher severity.
+
 Return only JSON with this shape:
 
 \`\`\`json
@@ -347,7 +630,8 @@ Return only JSON with this shape:
       "riskType": "Diff Drift flag type or your concise category",
       "evidence": "Specific code or report evidence"
     }
-  ]
+  ],
+  "notes": ["Optional benign observations or report feedback — not risks."]
 }
 \`\`\`
 `;
@@ -406,46 +690,157 @@ function expectationShortName(expectation) {
   return parts[1] ?? parts[0] ?? expectation;
 }
 
-function renderCaseCard(score) {
+function renderCaseRow(score) {
   const recall = Math.round((score.recall ?? 0) * 100);
   const localization = Math.round((score.localization ?? 0) * 100);
   const notes = notesFor(score);
-  return `<article class="case">
-  <div>
-    <div class="case-title">${escapeHtml(score.caseId)}</div>
-    <div class="case-meta">score ${score.score}/100</div>
-  </div>
-  <div class="barline">
-    ${barLine("Score", score.score, "var(--accent)")}
-    ${barLine("Finding recall", recall, "var(--green)")}
-    ${barLine("Localization", localization, "var(--blue)")}
-  </div>
-  <div>
-    <div class="chips">
-      <span class="chip ${score.decisionAccepted ? "ok" : "miss"}">decision ${score.decisionAccepted ? "ok" : "miss"}</span>
-      <span class="chip">${score.matchedFindings}/${score.requiredFindings} findings</span>
-      <span class="chip">${score.falsePositives} unmatched</span>
+  const related = score.relatedFindings?.length ?? 0;
+  const unmatched = score.falsePositives ?? 0;
+  const findingChips = [
+    `<span class="chip">${score.matchedFindings}/${score.requiredFindings}</span>`,
+    `<span class="chip">${unmatched} unmatched</span>`,
+    ...(related ? [`<span class="chip">${related} related</span>`] : []),
+  ].join("\n      ");
+  return `<tr>
+  <td>
+    <div class="case-name">${escapeHtml(score.caseId)}</div>
+    <div class="case-sub">score ${score.score}/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">${score.score}</span>
+      ${barLine(score.score, "var(--accent)")}
     </div>
-    <p class="why"><b>Why:</b> ${escapeHtml(notes)}</p>
-  </div>
-</article>`;
+  </td>
+  <td><span class="chip ${score.decisionAccepted ? "ok" : "miss"}">${score.decisionAccepted ? "ok" : "miss"}</span></td>
+  <td>
+    <div class="mini-metrics">
+      ${miniMetric("Recall", recall)}
+      ${miniMetric("Locate", localization)}
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      ${findingChips}
+    </div>
+  </td>
+  <td><div class="why">${escapeHtml(notes)}</div></td>
+</tr>`;
 }
 
-function renderScoreDot(score, index) {
-  const x = clampScore(score.score);
-  const y = 12 + (index % 4) * 12;
-  return `<span class="dot" title="${escapeHtml(score.caseId)}: ${score.score}" style="--x: ${x}%; --y: ${y}px"></span>`;
+function barLine(value, fill) {
+  return `<div class="bar" style="--fill: ${fill}; --value: ${clampScore(value)}%"><i></i></div>`;
 }
 
-function barLine(label, value, fill) {
-  return `<div>
-    <div class="bar-label"><span>${escapeHtml(label)}</span><span>${value}%</span></div>
-    <div class="bar" style="--fill: ${fill}; --value: ${clampScore(value)}%"><i></i></div>
+function miniMetric(label, value) {
+  return `<div class="mini-row">
+    <b>${escapeHtml(label)}</b>
+    <span>${value}%</span>
   </div>`;
 }
 
-function metric(label, value) {
-  return `<div class="metric"><b>${percent(value)}</b><span>${escapeHtml(label)}</span></div>`;
+function metric(label, value, fill) {
+  const amount = Math.round((value ?? 0) * 100);
+  return `<div class="metric-row">
+    <span>${escapeHtml(label)}</span>
+    <div class="metric-track" style="--fill: ${fill}; --value: ${clampScore(amount)}%"><i></i></div>
+    <strong>${amount}%</strong>
+  </div>`;
+}
+
+function renderScoreHistogram(scores) {
+  const buckets = [
+    { label: "0-59", min: 0, max: 59 },
+    { label: "60-79", min: 60, max: 79 },
+    { label: "80-89", min: 80, max: 89 },
+    { label: "90-99", min: 90, max: 99 },
+    { label: "100", min: 100, max: 100 },
+  ];
+  const counts = buckets.map(
+    (bucket) =>
+      scores.filter((score) => {
+        const value = clampScore(score.score);
+        return value >= bucket.min && value <= bucket.max;
+      }).length,
+  );
+  const maxCount = Math.max(1, ...counts);
+  return buckets
+    .map((bucket, index) => {
+      const count = counts[index];
+      return `<div class="hist-row ${count > 0 ? "active" : ""}">
+    <span>${escapeHtml(bucket.label)}</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: ${Math.round((count / maxCount) * 100)}%"><i></i></div>
+    <strong>${count}</strong>
+  </div>`;
+    })
+    .join("\n");
+}
+
+function evaluatorKind(evaluator) {
+  return evaluator.external === true ? `external ${evaluator.kind}` : evaluator.kind;
+}
+
+function pendingValidationText(coverage, evaluators = []) {
+  const externalCases = coverage?.externalCases ?? 0;
+  const totalCases = coverage?.totalCases ?? 0;
+  const evaluatorCount = coverage?.evaluatorCount ?? evaluators.length;
+  if (externalCases > 0) {
+    if (externalCases >= totalCases && evaluatorCount < 2) {
+      // Full external coverage, but a single evaluator is not independent —
+      // what's missing is a second reviewer, not more coverage.
+      return `A single external human reviewed all ${totalCases} case${totalCases === 1 ? "" : "s"}; independent validation needs a second evaluator.`;
+    }
+    if (externalCases < totalCases) {
+      // Some, but not all, cases have external review.
+      return `External human review covers ${externalCases} of ${totalCases} cases; full independent coverage is pending.`;
+    }
+    // Unreachable from externalValidationPending() (full coverage + ≥2
+    // evaluators clears it). Defensive, non-contradictory text in case a
+    // hand-edited result forces the pending flag.
+    return `Verify evaluator metadata: full external coverage is reported but the pending flag is set.`;
+  }
+  const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
+  if (hasHuman) {
+    return "Human answers are present, but no human evaluator is marked external.";
+  }
+  return "No external human evaluator has contributed answers yet.";
+}
+
+// Coverage off the result, with a no-external fallback so render-only callers
+// (and older result snapshots) resolve to the evaluator-based copy.
+function validationCoverage(result) {
+  return (
+    result.externalValidation ?? {
+      externalCases: 0,
+      totalCases: result.scores?.length ?? 0,
+      evaluatorCount: result.evaluators?.length ?? 0,
+    }
+  );
+}
+
+function panelKindText(evaluators = []) {
+  const hasExternalHuman = evaluators.some(
+    (evaluator) => evaluator.kind === "human" && evaluator.external === true,
+  );
+  const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
+  if (hasExternalHuman) {
+    return "Packet-only blind review, external human panel";
+  }
+  if (hasHuman) {
+    return "Packet-only blind review, internal human panel";
+  }
+  return "Packet-only blind review, model-only panel";
+}
+
+function describeScoreRange(scores) {
+  if (scores.length === 0) {
+    return "No cases";
+  }
+  const values = scores.map((score) => clampScore(score.score)).sort((a, b) => a - b);
+  const min = values[0];
+  const max = values[values.length - 1];
+  const median = values[Math.floor(values.length / 2)];
+  return `range ${min}-${max}; median ${median}`;
 }
 
 function clampScore(value) {

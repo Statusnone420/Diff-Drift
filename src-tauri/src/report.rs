@@ -15,12 +15,21 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     out.push_str(&format!("- **Baseline:** {}\n", s.baseline_label));
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
+    let skipped_note = if s.skipped_files > 0 {
+        format!(
+            " · {} skipped (too large to analyze)",
+            s.skipped_files
+        )
+    } else {
+        String::new()
+    };
     out.push_str(&format!(
-        "- **Drift:** {} changed file{} · {} active flag{}\n",
+        "- **Drift:** {} changed file{} · {} active flag{}{}\n",
         s.changed_files,
         plural(s.changed_files),
         s.risk_count,
-        plural(s.risk_count)
+        plural(s.risk_count),
+        skipped_note
     ));
     out.push_str(&match (&s.approved, &s.approved_at) {
         (true, Some(at)) => format!("- **Review:** reviewed at {at}\n"),
@@ -196,6 +205,36 @@ mod tests {
             !md.contains("## Dismissed"),
             "no dismissed section when nothing dismissed"
         );
+    }
+
+    #[test]
+    fn markdown_report_calls_out_skipped_files() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        // An oversized committed file, truncated on disk → one skipped entry.
+        let big = "const padding_value = 1;\n".repeat(crate::session::MAX_PARSE_BYTES / 25 + 1);
+        test_fixture::commit_file_from_memory(&root, "huge.ts", big.as_bytes(), "big bundle");
+        std::fs::write(root.join("huge.ts"), "const tiny = 1;\n").unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+        assert_eq!(data.session.skipped_files, 1);
+        assert!(data.files.iter().any(|f| f.skipped));
+
+        let md = render_markdown(&data, "2026-06-10 09:00");
+        assert!(
+            md.contains("· 1 skipped (too large to analyze)"),
+            "drift line names the skip: {md}"
+        );
+        assert!(md.contains("Skipped — file too large to analyze"));
+
+        // No skipped files → no skipped note on the drift line.
+        let clean = render_markdown(&fixture_data(&RepoState::default()), "2026-06-10 09:00");
+        assert!(!clean.contains("skipped (too large"));
     }
 
     #[test]

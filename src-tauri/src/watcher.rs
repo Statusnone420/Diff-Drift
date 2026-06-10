@@ -392,17 +392,21 @@ fn classify_paths_with_git_dirs(
             change.full_scan = true;
             continue;
         }
-        if is_ignored(&p) {
+        if is_always_ignored(&p) || is_temp_file(&p) {
             continue;
         }
         let Some(rel) = relativize(root, &p) else {
             continue;
         };
+        let analyzable = git::is_analyzable(&rel);
+        if is_generated_path(&p) && !analyzable {
+            continue;
+        }
         // package.json drift depends on the lockfile (phantom-dep flags), so a
         // root-level change to either forces a full re-scan.
         if rel == "package.json" || crate::deps_diff::LOCKFILE_NAMES.contains(&rel.as_str()) {
             change.full_scan = true;
-        } else if git::is_analyzable(&rel) {
+        } else if analyzable {
             change.rels.push(rel);
         }
     }
@@ -429,18 +433,21 @@ fn is_git_state_rel(rel: String) -> bool {
         || rel.starts_with("refs/remotes/")
 }
 
-fn is_ignored(p: &Path) -> bool {
-    // skip noisy / generated directories
-    let in_ignored_dir = p.components().any(|c| {
-        matches!(c, Component::Normal(s) if matches!(
-            s.to_string_lossy().as_ref(),
-            ".git" | "node_modules" | "dist" | "build" | "target" | ".next" | "coverage" | "out" | ".turbo"
-        ))
-    });
-    if in_ignored_dir {
-        return true;
-    }
-    // skip editor temp / lock files (atomic-save churn)
+fn is_always_ignored(p: &Path) -> bool {
+    has_component(p, &[".git", "node_modules", ".turbo"])
+}
+
+fn is_generated_path(p: &Path) -> bool {
+    has_component(p, &["dist", "build", "target", ".next", "coverage", "out"])
+}
+
+fn has_component(p: &Path, names: &[&str]) -> bool {
+    p.components().any(|c| {
+        matches!(c, Component::Normal(s) if names.contains(&s.to_string_lossy().as_ref()))
+    })
+}
+
+fn is_temp_file(p: &Path) -> bool {
     if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
         let n = name.to_lowercase();
         if n.ends_with('~')
@@ -473,6 +480,7 @@ fn relativize(root: &Path, p: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
     use std::sync::mpsc::{self, Receiver};
     use std::time::Instant;
 
@@ -546,6 +554,20 @@ mod tests {
         );
         assert!(!change.full_scan);
         assert_eq!(change.rels, vec!["src/App.tsx"]);
+    }
+
+    #[test]
+    fn analyzable_generated_paths_remain_incremental() {
+        let change = classify_paths(
+            &root(),
+            Some(&git_dir()),
+            vec![
+                root().join("dist").join("bundle.js"),
+                root().join("dist").join("styles.css"),
+            ],
+        );
+        assert!(!change.full_scan);
+        assert_eq!(change.rels, vec!["dist/bundle.js"]);
     }
 
     fn shared_for(root: &Path) -> (Shared, PathBuf) {
@@ -812,5 +834,38 @@ mod tests {
         );
         assert!(!change.full_scan);
         assert!(change.rels.is_empty());
+    }
+
+    #[test]
+    fn skipped_generated_file_update_revokes_approval() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let rel = "dist/bundle.js";
+        let path = root.join("dist").join("bundle.js");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, vec![b'a'; session::MAX_PARSE_BYTES + 1]).unwrap();
+
+        let baseline = session::resolve_baseline(&root, &RepoState::default());
+        let skipped = session::analyze_file(&root, rel, &HashSet::new(), &baseline)
+            .expect("oversized generated file is surfaced as skipped");
+        assert!(skipped.entry.skipped);
+
+        let (shared, state_file) = shared_for(&root);
+        {
+            let mut g = shared.lock().unwrap();
+            g.results = HashMap::from([(rel.to_string(), skipped)]);
+            g.baseline = baseline;
+        }
+        let approved = set_approved(&shared, true, Some("12:00".into())).unwrap();
+        assert!(approved.session.approved, "precondition: drift is reviewed");
+
+        std::fs::write(&path, vec![b'b'; session::MAX_PARSE_BYTES + 1]).unwrap();
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("generated JS change should be re-analyzed");
+        assert!(
+            !data.session.approved,
+            "editing a skipped generated file must revoke approval"
+        );
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
 }

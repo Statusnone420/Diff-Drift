@@ -1,0 +1,163 @@
+name: Release
+
+# Tag-driven releases: push vX.Y.Z and this builds the Windows NSIS installer,
+# signs it when signing is configured (see docs/wiki/Release-and-Platform-Support.md),
+# generates SHA256 checksums + CycloneDX SBOMs, and opens a DRAFT GitHub Release.
+# A human smoke-tests the draft installer before publishing — never auto-publish.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    name: Windows installer (NSIS + checksums + SBOM)
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Refuse to release when the tag disagrees with ANY of the three
+      # version sources the runbook says must stay aligned.
+      - name: Check tag matches all version fields
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME -replace '^v', ''
+          $versions = [ordered]@{
+            'package.json'              = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            'src-tauri/tauri.conf.json' = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+            # Anchored at line start: only the [package] version matches —
+            # dependency versions are inline-table fields, not line-leading.
+            'src-tauri/Cargo.toml'      = ([regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
+          }
+          $mismatches = $versions.GetEnumerator() | Where-Object { $_.Value -ne $tag }
+          if ($mismatches) {
+            $detail = ($mismatches | ForEach-Object { "$($_.Key) = $($_.Value)" }) -join '; '
+            Write-Error "Tag v$tag does not match: $detail. Align all three versions before tagging."
+          }
+          "All version fields match v$tag"
+
+      - run: npm ci
+
+      - name: Build NSIS installer
+        run: npm run tauri -- build --bundles nsis --ci
+
+      - name: Collect artifacts
+        id: artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-release | Out-Null
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe"
+          if ($installer.Count -ne 1) { Write-Error "Expected exactly one NSIS installer, found $($installer.Count)" }
+          Copy-Item $installer.FullName dist-release/
+          "installer=dist-release/$($installer.Name)" >> $env:GITHUB_OUTPUT
+
+      # --- Code signing (skipped unless configured) -------------------------
+      # Gate on the repo VARIABLE `WINDOWS_SIGNING` ('azure' | 'pfx' | unset).
+      # Secrets referenced below must exist for the chosen path; see
+      # docs/wiki/Release-and-Platform-Support.md. With WINDOWS_SIGNING unset
+      # both steps are skipped and the release is published as UNSIGNED.
+
+      - name: Sign installer (Azure Trusted Signing)
+        if: vars.WINDOWS_SIGNING == 'azure'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TS_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_TS_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TS_PROFILE }}
+          files-folder: dist-release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Sign installer (Authenticode PFX)
+        if: vars.WINDOWS_SIGNING == 'pfx'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_B64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
+          & $signtool sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "${{ steps.artifacts.outputs.installer }}"
+          Remove-Item $pfx -Force
+
+      - name: Verify signature
+        if: vars.WINDOWS_SIGNING == 'azure' || vars.WINDOWS_SIGNING == 'pfx'
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
+          & $signtool verify /pa "${{ steps.artifacts.outputs.installer }}"
+
+      # --- SBOMs + checksums -------------------------------------------------
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with:
+          # Pinned: 0.5.7 emits "<crate>.cdx.json" next to the manifest, which
+          # the copy below locates. The glob also handles the "bom.json" name
+          # other versions use, so a bump won't silently break the release.
+          tool: cargo-cyclonedx@0.5.7
+
+      - name: Generate SBOMs (CycloneDX)
+        shell: pwsh
+        run: |
+          cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
+          # cargo-cyclonedx writes the BOM next to each manifest; the filename
+          # varies by version ("<crate>.cdx.json" or "bom.json"). Find it
+          # rather than assuming, and fail loudly if nothing was produced.
+          $bom = Get-ChildItem src-tauri -Recurse -File -Include '*.cdx.json', 'bom.json' |
+            Select-Object -First 1
+          if (-not $bom) { Write-Error 'cargo-cyclonedx produced no JSON BOM under src-tauri' }
+          Copy-Item $bom.FullName dist-release/diff-drift-rust.cdx.json
+          npm sbom --sbom-format cyclonedx --omit dev | Out-File -Encoding utf8NoBOM dist-release/diff-drift-npm.cdx.json
+
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        working-directory: dist-release
+        run: |
+          Get-ChildItem -File | Where-Object Name -ne 'SHA256SUMS.txt' | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Out-File -Encoding utf8NoBOM SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      # --- Draft release -----------------------------------------------------
+
+      - name: Create draft GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $signed = ('${{ vars.WINDOWS_SIGNING }}' -eq 'azure' -or '${{ vars.WINDOWS_SIGNING }}' -eq 'pfx')
+          $signingNote = if ($signed) { "Installer is Authenticode-signed (verified with signtool in CI)." }
+            else { "**This build is UNSIGNED** — SmartScreen will warn on first run. Verify your download against SHA256SUMS.txt." }
+          $notes = @"
+          Draft release for $env:GITHUB_REF_NAME. Smoke-test the installer per the release runbook before publishing, then paste in the CHANGELOG section for this version.
+
+          $signingNote
+
+          Artifacts: NSIS installer, SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
+          "@
+          # Pass the multiline body via a file — avoids any PowerShell/native
+          # argument quoting or newline-encoding pitfalls.
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $notesPath -Value $notes -Encoding utf8NoBOM
+          $assets = Get-ChildItem dist-release -File | ForEach-Object FullName
+          gh release create $env:GITHUB_REF_NAME --draft --title "Diff Drift $env:GITHUB_REF_NAME" --notes-file $notesPath $assets

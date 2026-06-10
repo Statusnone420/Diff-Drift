@@ -42,7 +42,7 @@ The shared TypeScript shape is in `src/types.ts`; the Rust mirror is in `src-tau
 
 Important objects:
 
-- `SessionData`: full payload sent to React; carries `schemaVersion` (currently 2 — bump it when the shape changes in ways consumers could misread).
+- `SessionData`: full payload sent to React; carries `schemaVersion` (currently 3 — bump it when the shape changes in ways consumers could misread).
 - `Session`: repo, branch, baseline (spec/label/trust point), counts, review progress, reviewed state.
 - `FileEntry`: analyzed file metadata, review progress, and node tree.
 - `AstNode`: parsed structure, before/after lines, and per-node `reviewed` state.
