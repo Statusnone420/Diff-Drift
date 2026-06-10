@@ -2,7 +2,7 @@
 
 ## How much triage work should I expect?
 
-Flags are review prompts, not verdicts. On a typical agent change touching a handful of files, expect a few flags; a security-sensitive refactor will raise more. The intended loop is fast: read the flag, look at the node's before/after, then either dismiss it (reviewed, not actionable) or fix the code. Dismissals are remembered per repo, so re-runs only surface new or changed drift.
+A few flags on a typical agent change; more on a security-sensitive refactor. Flags are review prompts, not verdicts, and the loop is fast: read the flag, check the node's before/after, then dismiss or fix. Dismissals are remembered per repo, so re-runs only surface new or changed drift.
 
 To measure noise on *your* codebase instead of guessing, run the [FP-replay script](Eval-Methodology.md#fp-replay-measuring-noise-on-your-own-repos) over a few recent commit ranges.
 

@@ -1,37 +1,17 @@
 # Security Policy
 
-## Supported Versions
+## Reporting
 
-| Version | Supported |
-| --- | --- |
-| Latest 0.2.x release | Yes |
-| Older releases | No — update to the latest release |
+Report vulnerabilities privately via [GitHub Security Advisories](https://github.com/Statusnone420/Diff-Drift/security/advisories/new) — please don't open a public issue for an unpatched bug. Include the version, reproduction steps, and ideally a proof-of-concept repo, since the main attack surface is the repository content Diff Drift parses.
 
-Diff Drift has no auto-update mechanism. Check the [Releases page](https://github.com/Statusnone420/Diff-Drift/releases) for new versions.
-
-## Reporting a Vulnerability
-
-Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/Statusnone420/Diff-Drift/security/advisories/new). Do not open a public issue for an unpatched vulnerability.
-
-Include what you can: affected version, reproduction steps, and impact. A proof-of-concept repo is ideal — Diff Drift's main attack surface is the repository content it parses.
-
-This is a single-maintainer project. Reports are handled on a best-effort basis; there is no SLA. You can expect an acknowledgment, an honest assessment, and a fix or documented mitigation for confirmed issues in a subsequent release.
+This is a single-maintainer project: reports are handled best-effort, with an honest assessment and a fix or documented mitigation for confirmed issues. Only the latest 0.2.x release is supported — there is no auto-update, so check [Releases](https://github.com/Statusnone420/Diff-Drift/releases).
 
 ## Scope
 
-In scope:
+In scope: the desktop app and the `diff-drift check` CLI; crashes, hangs, or memory exhaustion triggered by repo content; anything that contradicts the local-only posture (network calls, data leaving the machine, writes outside the documented state and export paths); and the release pipeline and published artifacts.
 
-- The desktop app and the `diff-drift check` CLI.
-- Parsing of untrusted repository content (source files, `package.json`, lockfiles, git metadata) — crashes, hangs, or memory exhaustion triggered by repo content.
-- Anything that contradicts the local-only posture: network calls, data leaving the machine, or writes outside the documented state and export paths.
-- The release pipeline and published artifacts (checksums, SBOMs).
+Out of scope: tampering with `repo-state.json` by something that already has write access to your profile (plain JSON by design — see the [Threat Model](docs/wiki/Threat-Model.md)); vulnerabilities in the code Diff Drift reviews (flags are heuristic prompts, and missed findings are a quality topic, not a vulnerability); and macOS hardening while macOS builds are experimental.
 
-Out of scope:
+## Posture
 
-- Tampering with `repo-state.json` by a user or process that already has write access to your profile directory. The triage state is plain JSON by design — see [Threat Model](docs/wiki/Threat-Model.md).
-- Vulnerabilities in the code Diff Drift reviews. Flags are heuristic review prompts; missed findings in your code are a product-quality topic, not a security vulnerability in Diff Drift.
-- macOS hardening. macOS builds are experimental and unsigned; see [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md).
-
-## Posture Summary
-
-Diff Drift is local-only: no telemetry, no model calls, no repository upload, and no HTTP client compiled into the app (the Tauri framework lists one in `Cargo.lock` for other platforms; it is not in the Windows build and nothing uses it). The renderer's CSP only allows IPC to the local backend. CI gates `cargo audit` and `npm audit` on every push. See [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md) for how to verify this yourself.
+Local-only: no telemetry, no model calls, no upload, and no HTTP client compiled into the app. [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md) shows how to verify that yourself.

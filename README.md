@@ -44,20 +44,20 @@ Diff Drift runs locally and is deliberately not an LLM. It does not send reposit
 
 Diff Drift complements these tools; it doesn't replace them.
 
-| Tool | What it's for | What Diff Drift adds or concedes |
+| Tool | Its job | Diff Drift's lane |
 | --- | --- | --- |
-| `git diff` | Exact text changes | Adds structure (AST nodes, not hunks), persistent triage, trust-point baselines, severity exit codes. Concedes nothing — it shows you the raw diff's meaning. |
-| Human PR review | Judgment and context | Diff Drift is the prep pass: it points reviewers at the risky nodes first. It never replaces judgment. |
-| Semgrep | Rule-based SAST, many languages, big rule ecosystem | Semgrep is deeper and broader. Diff Drift is drift-scoped, zero-config, desktop-local, and tracks your review state across agent commits. |
-| CodeQL | Deep dataflow analysis in CI | CodeQL finds vulnerability classes Diff Drift never will. Diff Drift answers a different question: "what did the agent just change, and what needs my eyes?" |
+| `git diff` | Exact text changes | Structure instead of hunks, plus triage state and exit codes |
+| PR review | Judgment | Points reviewers at the risky nodes first — never replaces them |
+| Semgrep | Broad rule-based SAST | Drift-scoped, zero-config, local; tracks review across agent commits |
+| CodeQL | Deep dataflow analysis | Answers a different question: "what did the agent just change?" |
 
-If you need a full static analyzer, run one — alongside, not instead.
+Need a full static analyzer? Run one — alongside, not instead.
 
 ## Install
 
-**From a release:** download the Windows installer from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) and verify it against the published `SHA256SUMS.txt`. Releases are currently **unsigned** — SmartScreen will warn on first run; see [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md) for the signing status and reproducible-build instructions if your environment requires building from source.
+Download the Windows installer from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) and check it against `SHA256SUMS.txt`. Releases are currently unsigned, so SmartScreen will warn on first run — details and reproducible builds in [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md).
 
-The CLI is the same installed `diff-drift.exe` — no separate install. Add `%LOCALAPPDATA%\Diff Drift` to `PATH` and `diff-drift check` works in any terminal ([details](docs/wiki/User-Guide.md#headless-check-for-scripts-and-agents)).
+The CLI is the same installed `diff-drift.exe` — add `%LOCALAPPDATA%\Diff Drift` to `PATH` and `diff-drift check` works anywhere ([details](docs/wiki/User-Guide.md#headless-check-for-scripts-and-agents)).
 
 ## Quick Start (from source)
 
@@ -85,16 +85,15 @@ Dismissed flags don't count, the CLI never writes state, and an unresolvable `--
 
 ## Evaluation
 
-Two separate measurements, deliberately not confused with each other:
+The CI gate is deterministic: 15 fixture cases through the real binary, exact expected flags and exit codes (`npm run eval:engine`).
 
-- **Engine eval** (CI gate): 15 fixture cases run through the real binary must match their expected flags, counts, and exit codes exactly. `npm run eval:engine`.
-- **Blind-agent scorecard** (advisory): can a reviewer who sees only Diff Drift's output reach the right decision? Current run (benchmark v2): **98/100 over 15 synthetic cases, single model evaluator (blind), independent external validation pending.** Decision accuracy 15/15. Rubric, case list, limitations, and version history (v1 scored 72 before the prompt contract was fixed): [Eval Methodology](docs/wiki/Eval-Methodology.md).
+The blind-agent scorecard below is advisory: **98/100 over 15 synthetic cases** (benchmark v2), one blind model evaluator, independent external validation pending. Rubric, limits, and version history in [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
 <p align="center">
   <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 98/100 over 15 cases (benchmark v2), single model evaluator, external validation pending" width="920">
 </p>
 
-Measure flag noise on your own repos with `npm run eval:fp-replay` — that number, not the scorecard, predicts your triage burden.
+To predict your own triage burden, run `npm run eval:fp-replay` on your repos — that's the number that matters for you.
 
 ## Status
 

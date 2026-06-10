@@ -6,17 +6,21 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 
 ### Added
 
-- Evaluation harness: deterministic engine benchmark (`npm run eval:engine`, a CI gate), blind-review packet generation, and advisory blind-agent scorecards with evaluator metadata, precision, and per-rule recall.
-- Eval cases covering TSX, JSX, and `.mjs` drift, a noisy benign refactor, and oversized-file skip behavior.
-- Release workflow: tag-triggered NSIS installer build with SHA256 checksums, CycloneDX SBOMs, and a draft GitHub Release. Code signing is scaffolded but not yet configured.
-- Oversized-file guard: files larger than 2 MB are skipped before parsing and surfaced as "Skipped — file too large to analyze" instead of being parsed or silently ignored.
-- Parsed lockfile matching for `yarn.lock` and `pnpm-lock.yaml` (previously a loose substring check that could let a hallucinated package ride on a similarly named real one).
-- FP-replay script (`npm run eval:fp-replay`) to measure flag noise over your own repos and commit ranges.
+- Evaluation harness: a CI-gated engine benchmark (`npm run eval:engine`), blind-review packets, and advisory scorecards with evaluator attribution, precision, and per-rule recall.
+- Eval cases for TSX, JSX, and `.mjs` drift, a noisy benign refactor, and the oversized-file skip.
+- Tag-triggered release workflow producing an NSIS installer, SHA256 checksums, CycloneDX SBOMs, and a draft GitHub Release (signing scaffolded, not yet configured).
+- Oversized-file guard: files over 2 MB are skipped before any content is read and shown as "Skipped — file too large to analyze".
+- Skipped-file counts in session data and reports, so "0 active flags" can't be mistaken for "fully analyzed".
+- Exact entry-name parsing for `yarn.lock` and `pnpm-lock.yaml` (the old substring check let similar names vouch for each other).
+- FP-replay script (`npm run eval:fp-replay`) to measure flag noise on your own repos; it builds the CLI if missing.
 - Trust documentation: `SECURITY.md`, threat model, privacy/data-flow page, eval methodology, A/B study design, FAQ, and this changelog.
 
 ### Changed
 
-- README: problem-first lead, tool comparison table, install-from-release section, CI/hook examples, and an honestly captioned eval scorecard.
+- README rewritten: problem-first lead, tool comparison, install-from-release, CI/hook examples, honestly captioned scorecard.
+- Blind-agent benchmark moved to v2 (findings/notes prompt contract, realistic JSX fixture); v1's 72/100 is preserved in the methodology history, v2 scores 98/100.
+- The release workflow refuses tags that don't match all three version fields.
+- Privacy/security docs now state the verifiable claim: no HTTP client in the compiled Windows binary (the framework lists one for other platforms).
 
 ## [0.2.1] — 2026-06-09
 
