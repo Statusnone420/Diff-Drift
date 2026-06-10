@@ -38,6 +38,8 @@ jobs:
       - run: npm ci
       - name: Type-check and build
         run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       - name: Web E2E
@@ -48,3 +50,49 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  native:
+    name: Native (Tauri build smoke + E2E)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Exercises tauri.conf.json (mainBinaryName, bundle config validation)
+      # and the frontend embed — release-only breakage surfaces here, not at
+      # tag time. --no-bundle keeps it cheap; this also produces the binary
+      # the native E2E launches.
+      - name: Tauri build smoke (debug, no bundle)
+        run: npm run tauri -- build --debug --no-bundle --ci
+      # First CI exposure for the WebView2/CDP suite — advisory until it
+      # proves stable on hosted runners, then drop continue-on-error.
+      - name: Native E2E (advisory)
+        continue-on-error: true
+        run: npx playwright test -c playwright.tauri.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-tauri-report
+          path: playwright-report/tauri/
+          retention-days: 7
+
+  audit:
+    name: Dependency audits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      # Fails on actual vulnerability advisories; unmaintained crates warn.
+      - name: cargo audit
+        run: cargo audit --file src-tauri/Cargo.lock
+      # Gate only high/critical advisories in production dependencies —
+      # moderate dev-tooling noise should not redden main.
+      - name: npm audit (prod, high+)
+        run: npm audit --omit=dev --audit-level=high
