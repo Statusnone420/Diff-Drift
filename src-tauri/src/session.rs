@@ -19,8 +19,9 @@ pub struct FileResult {
     pub entry: FileEntry,
     pub flags: Vec<Flag>,
     /// Content identity for SKIPPED (oversized) files, whose `entry.nodes` are
-    /// empty: baseline oid + sizes + worktree mtime. Folded into the approval
-    /// fingerprint so a skipped file's change still revokes a review.
+    /// empty: the baseline and worktree git blob oids. Folded into the approval
+    /// fingerprint so any change to a skipped file — including a same-size or
+    /// same-mtime rewrite — still revokes a review.
     pub skip_marker: Option<String>,
 }
 
@@ -221,20 +222,23 @@ fn analyze_file_in(
 
     let largest = before_size.unwrap_or(0).max(after_size.unwrap_or(0)) as usize;
     if largest > MAX_PARSE_BYTES {
-        if !oversized_drifted(before_oid, before_size, after_size, &abs) {
+        // Worktree content identity as a git blob oid, computed WITHOUT holding
+        // the whole file in memory (see `worktree_blob_oid`). Exact, so a
+        // same-size — even same-mtime — rewrite produces a different oid.
+        let after_oid = worktree_blob_oid(&abs, after_size);
+        // Drift unless both sides exist with identical content. The watcher
+        // re-runs on every save, so an unchanged over-cap file must NOT
+        // resurface as phantom drift.
+        let drifted = match (before_oid, after_oid) {
+            (Some(b), Some(a)) => b != a,
+            _ => true, // a missing side; both-missing was caught above
+        };
+        if !drifted {
             return None;
         }
-        // Identity of the skipped drift without reading content: baseline oid,
-        // sizes, and worktree mtime (nanoseconds since epoch). Sizes catch
-        // most edits; mtime catches same-size edits. Conservative by design:
-        // re-saving identical over-cap content also revokes an approval —
-        // re-reviewing an unreviewable file errs in the safe direction.
-        let mtime = std::fs::metadata(&abs)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos());
-        let skip_marker = format!("{before_oid:?}|{before_size:?}|{after_size:?}|{mtime:?}");
+        // Real content identity anchors the approval fingerprint — immune to
+        // same-size edits and mtime games (P2).
+        let skip_marker = format!("{before_oid:?}|{after_oid:?}");
         let (dir, name) = split_path(rel);
         return Some(FileResult {
             entry: FileEntry {
@@ -270,26 +274,24 @@ fn analyze_file_in(
     drift_result(rel, lang, before, after, deps)
 }
 
-/// Drift decision for an over-cap file without parsing: one side missing or
-/// sizes differing is drift; equal sizes hash the worktree bytes against the
-/// baseline blob oid (the watcher re-analyzes saved files, and an unchanged
-/// oversized file must NOT show up as phantom drift). The file is read once
-/// as raw bytes for the in-memory hash — libgit2's own `hash_file` streaming
-/// path is pathologically slow on Windows.
-fn oversized_drifted(
-    before_oid: Option<git2::Oid>,
-    before_size: Option<u64>,
-    after_size: Option<u64>,
-    abs: &Path,
-) -> bool {
-    match (before_oid, after_size) {
-        (Some(oid), Some(_)) => {
-            before_size != after_size
-                || std::fs::read(abs).map_or(true, |bytes| {
-                    git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok() != Some(oid)
-                })
+/// The git blob oid of the worktree file — exact content identity computed
+/// WITHOUT holding the whole file in memory. Files within the parse cap are
+/// read directly (bounded by the cap); larger files are stream-hashed by
+/// libgit2 in fixed chunks (never the whole file at once). `None` when the
+/// file is absent or unreadable.
+///
+/// Used both to decide over-cap drift (compare against the baseline blob oid)
+/// and to anchor the skip fingerprint, so a same-size or even same-mtime
+/// rewrite still changes the identity. A multi-GB same-size edit costs a
+/// streamed read, never a multi-GB allocation.
+fn worktree_blob_oid(abs: &Path, size: Option<u64>) -> Option<git2::Oid> {
+    match size {
+        None => None,
+        Some(sz) if sz <= MAX_PARSE_BYTES as u64 => {
+            let bytes = std::fs::read(abs).ok()?;
+            git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok()
         }
-        _ => true,
+        Some(_) => git2::Oid::hash_file(git2::ObjectType::Blob, abs).ok(),
     }
 }
 
@@ -736,15 +738,19 @@ mod tests {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
 
-        // New untracked file just over the cap: surfaced, not parsed.
+        // Over-cap baseline (committed from memory, never read from disk),
+        // truncated in the worktree: the file is surfaced as skipped, not
+        // parsed. The worktree side stays small so no multi-MB file is read.
         let line = "const padding_value = 1;\n"; // 25 bytes
         let big = line.repeat(MAX_PARSE_BYTES / line.len() + 1);
-        std::fs::write(root.join("huge.ts"), &big).expect("write oversized file");
+        test_fixture::commit_file_from_memory(&root, "huge.ts", big.as_bytes(), "oversized bundle");
+        std::fs::write(root.join("huge.ts"), line).expect("truncate worktree");
         let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
             .expect("oversized file still appears in the drift");
         assert!(res.entry.nodes.is_empty(), "no AST nodes for skipped file");
         assert!(res.flags.is_empty(), "no flags for skipped file");
         assert_eq!(res.entry.risks, 0);
+        assert!(res.entry.skipped, "marked skipped");
         assert!(
             res.entry.summary.starts_with("Skipped — file too large to analyze"),
             "summary explains the skip: {}",
@@ -830,54 +836,64 @@ mod tests {
     }
 
     #[test]
-    fn same_size_skipped_edits_still_revoke_approval() {
+    fn same_size_same_mtime_skipped_edits_still_revoke_approval() {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
         let big = "const padding_value = 1;\n".repeat(MAX_PARSE_BYTES / 25 + 1);
         test_fixture::commit_file_from_memory(&root, "huge.ts", big.as_bytes(), "big bundle");
 
-        std::fs::write(root.join("huge.ts"), "const truncated = 1;\n").unwrap();
+        let path = root.join("huge.ts");
+        std::fs::write(&path, "const truncated = 1;\n").unwrap();
+        let pinned_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
         let approved_fp = fingerprint(&analyze_all(&root, &Baseline::default()));
 
-        // Same byte length, different content — sizes can't tell them apart,
-        // so the marker must carry the worktree mtime.
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(root.join("huge.ts"), "const truncated = 2;\n").unwrap();
+        // A timestamp-preserving rewrite: same byte length AND same mtime, only
+        // the content differs (e.g. a restore tool, or a coarse-resolution
+        // filesystem). Neither size nor mtime can tell these apart, so content
+        // identity must drive revocation.
+        std::fs::write(&path, "const truncated = 2;\n").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(pinned_mtime)
+            .unwrap();
         assert_ne!(
             fingerprint(&analyze_all(&root, &Baseline::default())),
             approved_fp,
-            "a same-size edit to a skipped file must change the fingerprint"
+            "a same-size, same-mtime content edit to a skipped file must change the fingerprint"
         );
     }
 
     #[test]
-    fn oversized_drift_decision_hashes_only_the_equal_size_case() {
-        // The hash semantics are size-independent, so the equal-size branch
-        // is exercised with small files (first-reading fresh multi-MB files
-        // is pathologically slow under some AV setups).
-        let fixture = test_fixture::payments_api();
-        let root = git::repo_root(&fixture.root).unwrap();
-        let content = b"const guarded_value = 1;\n";
-        test_fixture::commit_file_from_memory(&root, "probe.ts", content, "probe baseline");
-        std::fs::write(root.join("probe.ts"), content).unwrap();
+    fn worktree_blob_oid_is_exact_content_identity() {
+        // The hash is size-independent, so it's exercised with small files
+        // (first-reading fresh multi-MB files is pathologically slow under
+        // some AV setups); the over-cap branch is the same libgit2 call.
+        let dir = std::env::temp_dir().join(format!("drift-oid-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe.ts");
 
-        let repo = git::open(&root).unwrap();
-        let oid = git::blob_oid_at_in(&repo, "HEAD", "probe.ts").expect("committed blob oid");
-        let size = git::blob_size_in(&repo, oid);
-        assert_eq!(size, Some(content.len() as u64), "header size matches");
-        let abs = root.join("probe.ts");
+        std::fs::write(&path, b"const guarded_value = 1;\n").unwrap();
+        let size = Some(std::fs::metadata(&path).unwrap().len());
+        let first = worktree_blob_oid(&path, size).expect("hashes an existing file");
 
-        // Same size + same bytes → not drifted.
-        assert!(!oversized_drifted(Some(oid), size, size, &abs));
+        // It matches git's own blob hash of the same bytes.
+        let git_oid =
+            git2::Oid::hash_object(git2::ObjectType::Blob, b"const guarded_value = 1;\n").unwrap();
+        assert_eq!(first, git_oid, "matches the git blob oid");
 
-        // Same size + different bytes → the hash catches it.
-        std::fs::write(&abs, b"const guarded_value = 2;\n").unwrap();
-        assert!(oversized_drifted(Some(oid), size, size, &abs));
+        // A same-length, different-content rewrite changes the oid.
+        std::fs::write(&path, b"const guarded_value = 2;\n").unwrap();
+        let second = worktree_blob_oid(&path, size).expect("re-hashes");
+        assert_ne!(first, second, "same size, different content → different oid");
 
-        // Differing sizes or a missing side → drift without any read.
-        assert!(oversized_drifted(Some(oid), size, Some(1), &abs));
-        assert!(oversized_drifted(Some(oid), size, None, &abs));
-        assert!(oversized_drifted(None, None, Some(1), &abs));
+        // A missing file has no identity.
+        std::fs::remove_file(&path).unwrap();
+        assert!(worktree_blob_oid(&path, None).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
