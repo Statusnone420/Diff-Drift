@@ -71,7 +71,7 @@ An org that cannot trust downloaded binaries can build from the tag and compare:
 - Toolchains: Node per `package.json` `engines` (CI uses Node 22), Rust stable, Microsoft C++ Build Tools, WebView2.
 - Dependencies are fully pinned by `package-lock.json` and `src-tauri/Cargo.lock` (both committed). Use `npm ci`, never `npm install`, for verification builds.
 - Build: `npm ci && npm run tauri -- build --bundles nsis`.
-- Caveat: NSIS installers embed timestamps, so installer bytes will not be hash-identical across builds. Compare the contained `diff-drift.exe` and resources, or rebuild and diff the bundle directory contents. Byte-for-byte reproducibility is not yet a guarantee; the SBOMs published with each release describe the exact dependency set.
+- Caveat: NSIS installers embed timestamps, so installer bytes will not be hash-identical across builds. Compare the contained `diff-drift.exe` and resources, or rebuild and diff the bundle directory contents. Byte-for-byte reproducibility is not yet a guarantee. The SBOMs published with each release cover the Rust dependency tree (cargo-cyclonedx) and npm **production** dependencies (`npm sbom --omit dev`) — dev tooling is not included.
 
 ## Distribution (winget) — pending
 

@@ -4,7 +4,7 @@ One page for anyone who needs to approve Diff Drift: what it reads, what it writ
 
 ## Summary
 
-**Nothing leaves the machine.** Diff Drift has no telemetry, no analytics, no crash reporting, no model calls, no update pings, and no HTTP client in its dependency tree. All analysis is local and deterministic.
+**Nothing leaves the machine.** Diff Drift has no telemetry, no analytics, no crash reporting, no model calls, no update pings, and no HTTP client compiled into the app. All analysis is local and deterministic.
 
 ## What It Reads
 
@@ -35,7 +35,7 @@ Nothing. To verify rather than trust:
 1. **App code**: grep `src/` and `src-tauri/src/` for `fetch(`, `reqwest`, `http://`, `https://` — zero matches. No application code performs network I/O.
 2. **Build graph**: `cargo tree -i reqwest` (and `-i hyper`) on the supported Windows target prints nothing — no HTTP client is compiled into the binary. You will see `reqwest` in `Cargo.lock`: lockfiles pin dependencies for every platform, and the Tauri framework pulls an HTTP stack on *other* targets (`cargo tree --target all -i reqwest` shows tauri as the sole path). It is not part of the Windows build, and no enabled Diff Drift feature or plugin uses it on any target — no updater, no HTTP plugin. The framework dependency can't be removed without leaving Tauri; the build-graph check is the meaningful one.
 3. **Renderer CSP**: [tauri.conf.json](../../src-tauri/tauri.conf.json) sets `connect-src ipc: http://ipc.localhost` — the UI process cannot reach any external host even if it tried.
-4. **Capabilities**: [src-tauri/capabilities/default.json](../../src-tauri/capabilities/default.json) grants the renderer window controls and the file dialog only — no HTTP, no filesystem, no shell.
+4. **Capabilities**: [src-tauri/capabilities/default.json](../../src-tauri/capabilities/default.json) grants the renderer window controls, the OS file dialog, and `opener:default` (open a URL/path in the system default app — granted by the Tauri template, not invoked by Diff Drift's code) — no HTTP, no filesystem, no shell.
 5. **Observe it**: run the app under a local firewall or packet capture; it opens no sockets beyond the loopback IPC channel WebView2 uses internally.
 
 ## Related
