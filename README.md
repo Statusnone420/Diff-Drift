@@ -50,7 +50,7 @@ The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3`
 
 ## What it is not
 
-- It runs locally and is deliberately not an LLM. No model calls, no telemetry, no repository upload — verify that instead of trusting it: [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md).
+- It runs locally and uses no AI itself. No model calls, no telemetry, no repository upload — verify that instead of trusting it: [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md).
 - It is not a full SAST engine, and a clean run is not proof that code is safe. Flags are heuristic prompts for a reviewer, not verdicts. Need deep dataflow analysis? Run Semgrep or CodeQL alongside.
 - It does not replace human review. It points review at the risky nodes first.
 
@@ -67,7 +67,7 @@ This is a public feedback release ([release notes](docs/releases/v0.3.0-public-f
 
 > Would you use this before trusting code changed by an AI coding agent? Why or why not?
 
-Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drift/issues/new?template=tried-diff-drift.yml) — or report an [install problem](https://github.com/Statusnone420/Diff-Drift/issues/new?template=install-problem.yml), a [noisy flag](https://github.com/Statusnone420/Diff-Drift/issues/new?template=noisy-flag.yml), or [confusing output](https://github.com/Statusnone420/Diff-Drift/issues/new?template=confusing-output.yml). Not sure it's an issue? [Start a discussion](https://github.com/Statusnone420/Diff-Drift/discussions). Blunt beats polite.
+Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drift/issues/new?template=tried-diff-drift.yml) — or report an [install problem](https://github.com/Statusnone420/Diff-Drift/issues/new?template=install-problem.yml), a [noisy flag](https://github.com/Statusnone420/Diff-Drift/issues/new?template=noisy-flag.yml), or [confusing output](https://github.com/Statusnone420/Diff-Drift/issues/new?template=confusing-output.yml). Not sure it's an issue? [Start a discussion](https://github.com/Statusnone420/Diff-Drift/discussions). Be as blunt as you like.
 
 ## Evaluation
 

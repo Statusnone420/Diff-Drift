@@ -1,5 +1,5 @@
 name: I tried Diff Drift
-description: Tell us what happened when you ran Diff Drift on a real repo. Honest answers beat polite ones.
+description: Tell us what happened when you ran Diff Drift on a real repo, good or bad.
 title: "[Tried it]: "
 labels: ["feedback"]
 body:

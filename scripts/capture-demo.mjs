@@ -56,13 +56,18 @@ async function installOverlay(page) {
     style.textContent = `
       #demo-cursor { position: fixed; z-index: 100000; width: 22px; height: 22px;
         pointer-events: none; left: 0; top: 0; transform: translate(-2px, -2px); }
-      #demo-caption { position: fixed; z-index: 99999; left: 50%; bottom: 22px;
-        transform: translateX(-50%); pointer-events: none;
-        background: rgba(10, 12, 16, 0.84); color: #f4f6f8;
-        font: 500 16px/1.35 "Segoe UI", system-ui, sans-serif;
-        letter-spacing: 0.01em; padding: 10px 18px; border-radius: 8px;
-        white-space: nowrap; opacity: 0; transition: opacity 160ms ease; }
-      #demo-caption.show { opacity: 1; }
+      /* Sized for the README, which displays the 1280px GIF at 680px — text
+         must survive a ~0.53x shrink, so 30px here reads as ~16px there. */
+      #demo-caption { position: fixed; z-index: 99999; left: 50%; bottom: 30px;
+        transform: translateX(-50%) translateY(8px); pointer-events: none;
+        background: rgba(10, 12, 16, 0.92); color: #f4f6f8;
+        font: 600 30px/1.3 "Segoe UI", system-ui, sans-serif;
+        letter-spacing: 0.01em; padding: 16px 30px; border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        white-space: nowrap; opacity: 0;
+        transition: opacity 180ms ease, transform 180ms ease; }
+      #demo-caption.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     `;
     document.head.appendChild(style);
 

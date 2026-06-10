@@ -1,6 +1,6 @@
 # Feedback Triage
 
-Every piece of feedback from the public feedback release gets one bucket and one row in the log. The point is to spot repeats, not to react to individual comments. Ten strangers should not become ten product directions.
+Every piece of feedback from the public feedback release gets one bucket and one row in the log. Logging everything in one place makes repeats visible, and repeats are what justify roadmap changes — a single comment is an anecdote.
 
 ## Buckets
 
@@ -20,4 +20,4 @@ Every piece of feedback from the public feedback release gets one bucket and one
 | --- | --- | --- | --- | --- | --- |
 |  |  |  |  |  |  |
 
-Rules: triage harsh feedback the next morning, not the same hour. A bucket earns roadmap time when it repeats, not when it stings.
+Rules: wait until the next morning to triage harsh feedback. Give a bucket roadmap time once it keeps repeating, however much a single comment stings.
