@@ -1,0 +1,53 @@
+name: Install problem
+description: The installer, CLI, or source build didn't get you to a working app.
+title: "[Install]: "
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Install friction is high-priority feedback right now. Even "SmartScreen scared me off" is worth filing.
+  - type: dropdown
+    id: install-path
+    attributes:
+      label: How were you installing?
+      options:
+        - Windows installer from Releases
+        - CLI (diff-drift.exe on PATH)
+        - Building from source
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS experimental
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: where-it-stopped
+    attributes:
+      label: Where did it stop?
+      description: The last step that worked and the first one that didn't. Paste exact error text if you have it.
+    validations:
+      required: true
+  - type: dropdown
+    id: smartscreen
+    attributes:
+      label: Did SmartScreen or antivirus get involved?
+      options:
+        - "No"
+        - SmartScreen warned, I continued anyway
+        - SmartScreen warned and I stopped there
+        - Antivirus blocked or quarantined it
+        - Not sure
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Optional, but they shorten the round trip.

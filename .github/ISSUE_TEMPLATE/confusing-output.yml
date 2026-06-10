@@ -1,0 +1,40 @@
+name: Confusing output
+description: Something in the app, report, or docs didn't make sense.
+title: "[Confusing]: "
+labels: ["confusing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you had to stop and ask "wait, what does that mean?", that's a bug in our wording. No question is too small.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did the confusion happen?
+      options:
+        - A term (trust point, baseline, drift, node states...)
+        - The drift list / node tree
+        - Risk Flags panel
+        - The exported Markdown/JSON report
+        - CLI output or exit codes
+        - README or docs
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: what-confused
+    attributes:
+      label: What did you see, and what did you expect?
+      description: Quote the exact wording or paste a screenshot if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: what-you-did
+    attributes:
+      label: What did you do next?
+      description: Guessed, checked the docs, gave up — all useful signal.
+  - type: input
+    id: version
+    attributes:
+      label: Diff Drift version
+      placeholder: "0.2.1"

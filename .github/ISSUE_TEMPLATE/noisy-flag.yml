@@ -1,0 +1,45 @@
+name: Noisy flag
+description: A flag fired on code that's fine in your codebase. These reports drive noise reduction directly.
+title: "[Noise]: "
+labels: ["noise"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Flags are heuristic prompts, not verdicts — but a prompt you always dismiss is just noise. Tell us which one.
+  - type: input
+    id: flag-type
+    attributes:
+      label: Which flag?
+      description: The flag name and severity as shown in the app or CLI output.
+      placeholder: "Loose regex pattern (high)"
+    validations:
+      required: true
+  - type: textarea
+    id: code-context
+    attributes:
+      label: What code did it fire on?
+      description: A snippet or description of the pattern. Redact anything private.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why-noise
+    attributes:
+      label: Why is it noise here?
+      description: What makes this safe or intentional in your codebase.
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it fire?
+      options:
+        - Once
+        - A few times per run
+        - Constantly — I'd turn it off if I could
+  - type: input
+    id: version
+    attributes:
+      label: Diff Drift version
+      placeholder: "0.2.1"

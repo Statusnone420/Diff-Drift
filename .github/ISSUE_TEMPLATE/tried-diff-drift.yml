@@ -1,0 +1,39 @@
+name: I tried Diff Drift
+description: Tell us what happened when you ran Diff Drift on a real repo. Honest answers beat polite ones.
+title: "[Tried it]: "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying it. This form takes about three minutes. The first question is the one we care about most.
+  - type: textarea
+    id: would-you-use-it
+    attributes:
+      label: Would you use this before trusting code changed by an AI coding agent? Why or why not?
+      description: The honest version. "No, because..." is more useful than "maybe."
+    validations:
+      required: true
+  - type: textarea
+    id: what-you-ran
+    attributes:
+      label: What did you run it on?
+      description: Language/framework, rough repo size, and what kind of agent changes you reviewed.
+      placeholder: "React + TypeScript monorepo, ~40k LOC, reviewed a Claude Code refactor of our auth middleware"
+    validations:
+      required: true
+  - type: textarea
+    id: what-helped
+    attributes:
+      label: What helped, if anything?
+      description: A flag that caught something, the trust point, the export, the CLI exit code — whatever earned its place.
+  - type: textarea
+    id: what-got-in-the-way
+    attributes:
+      label: What was noisy, confusing, or missing?
+      description: Flags you ignored, terms that didn't land, steps that felt like friction.
+  - type: input
+    id: version
+    attributes:
+      label: Diff Drift version
+      placeholder: "0.2.1"
