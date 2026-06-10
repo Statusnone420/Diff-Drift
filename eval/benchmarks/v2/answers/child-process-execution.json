@@ -1,0 +1,31 @@
+{
+  "caseId": "child-process-execution",
+  "decision": "block",
+  "confidence": 0.95,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [
+    {
+      "title": "Shell command injection via string-concatenated execSync call",
+      "severity": "high",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process execution / command injection",
+      "evidence": "Raw diff line: execSync(\"tar -czf out.tgz \" + path); — the caller-supplied `path` parameter is concatenated directly into a shell command with no quoting, escaping, or validation. Any path containing shell metacharacters (e.g. \"; rm -rf /\" or \"$(...)\") executes arbitrary commands. execSync runs through a shell, so this is exploitable whenever `path` is attacker-influenced."
+    },
+    {
+      "title": "New child_process dependency introduced for trivial functionality",
+      "severity": "medium",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process execution",
+      "evidence": "Diff adds `import { execSync } from \"node:child_process\";` to a function that previously just returned its input. Shelling out to `tar` is unnecessary versus a library-based archiver (e.g. tar/archiver npm packages or spawn with an argument array), and expands the attack surface of exports-service."
+    }
+  ],
+  "notes": [
+    "Diff Drift's single flag correctly identified the child_process import at high severity, but its excerpt shows only the import line; the more decisive evidence — the unsanitized string concatenation into execSync — is visible in the raw diff and is what justifies blocking rather than merely investigating.",
+    "The function also hardcodes the output as out.tgz in the process's current working directory and changes the return value semantics (returns \"out.tgz\" instead of the input path), which callers may not expect; benign-but-worth-confirming behavior change.",
+    "Minimum safe rework: use execFile/spawn with an argument array (no shell), validate/normalize `path` against an allowlist or confirmed-existing export directory, and write output to a controlled location."
+  ]
+}

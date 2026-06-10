@@ -68,6 +68,17 @@ Every answer file records who produced it (`evaluator: { id, kind: "model" | "hu
 
 What the current scorecard therefore is: an internal product-quality signal on a small synthetic suite. What it is not: third-party validation, a detection-rate claim, or a comparison against other tools. Treat any headline number accordingly, and check the scorecard itself for case count and evaluator list.
 
+## Reproducing the Published Score
+
+Every published benchmark's raw answers and scorecard are committed under `eval/benchmarks/<version>/` — the working `.eval/` directory stays gitignored, but the published evidence does not. From a fresh clone:
+
+```bash
+npm install
+npm run eval:score-agent -- eval/benchmarks/v2/answers
+```
+
+That rescores the exact recorded answers through the current rubric and must print the published number (v2: 98/100). The committed `scorecard.md`/`scorecard.json` are the outputs of the original run for diffing.
+
 ## Reported Metrics
 
 The scorecard reports, per run: overall score, decision accuracy, severity-weighted recall, localization, **precision** (matched findings ÷ all reported findings), total unmatched findings, and **per-rule recall** (matched/required per flag type across all cases that require it). Per-case rows include misses, mislocalizations, and unmatched findings verbatim.

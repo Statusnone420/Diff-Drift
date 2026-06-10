@@ -1,11 +1,16 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { collectAnswerFiles } from "./lib/answers.mjs";
 import { loadCases, projectRoot } from "./lib/cases.mjs";
 import { evalOutputRoot, writeAgentScores } from "./lib/packets.mjs";
 import { scoreAgentAnswer, summarizeAgentScores } from "./lib/score.mjs";
 
-const answerFiles = collectAnswerFiles(process.argv.slice(2));
+const answerFiles = collectAnswerFiles(
+  process.argv.slice(2),
+  join(evalOutputRoot, "answers"),
+  projectRoot,
+);
 if (answerFiles.length === 0) {
   throw new Error("No agent answers found. Save JSON answers under .eval/answers or pass file paths.");
 }
@@ -51,20 +56,6 @@ if (result.externalValidationPending) {
   console.log("Note: independent external validation pending — see the scorecard banner.");
 }
 console.log(`Scorecard: ${join(evalOutputRoot, "results", "agents", "latest.html")}`);
-
-function collectAnswerFiles(args) {
-  if (args.length > 0) {
-    return args.map((arg) => resolve(projectRoot, arg));
-  }
-  const answersDir = join(evalOutputRoot, "answers");
-  if (!existsSync(answersDir)) {
-    return [];
-  }
-  return readdirSync(answersDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => join(answersDir, entry.name))
-    .sort();
-}
 
 function idFromFile(file) {
   return file.split(/[\\/]/).pop().replace(/\.json$/i, "");

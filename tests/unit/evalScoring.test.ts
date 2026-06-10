@@ -387,6 +387,41 @@ describe("blind-agent answer scoring", () => {
   });
 });
 
+describe("answer file collection", () => {
+  it("expands a directory argument into its sorted .json answers", async () => {
+    const { collectAnswerFiles } = await import("../../eval/lib/answers.mjs");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+
+    const dir = mkdtempSync(join(tmpdir(), "drift-answers-"));
+    try {
+      writeFileSync(join(dir, "b-case.json"), "{}");
+      writeFileSync(join(dir, "a-case.json"), "{}");
+      writeFileSync(join(dir, "notes.txt"), "ignored");
+
+      // A directory arg expands to its .json files, sorted.
+      const fromDir = collectAnswerFiles([dir], dir);
+      expect(fromDir).toEqual([join(dir, "a-case.json"), join(dir, "b-case.json")]);
+
+      // A file arg passes through; mixing works.
+      const single = collectAnswerFiles([join(dir, "b-case.json")], dir);
+      expect(single).toEqual([join(dir, "b-case.json")]);
+
+      // No args falls back to the default directory.
+      expect(collectAnswerFiles([], dir)).toEqual([
+        join(dir, "a-case.json"),
+        join(dir, "b-case.json"),
+      ]);
+
+      // A missing default directory yields an empty list, not a throw.
+      expect(collectAnswerFiles([], join(dir, "missing"))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("eval CLI command selection", () => {
   it("builds the current checkout before running an isolated binary", () => {
     const previous = process.env.DIFF_DRIFT_EVAL_BIN;

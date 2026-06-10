@@ -1,0 +1,31 @@
+{
+  "caseId": "package-dependency-script-drift",
+  "decision": "block",
+  "confidence": 0.92,
+  "evaluator": {
+    "id": "claude-fable-5",
+    "kind": "model",
+    "note": "Benchmark v2. Blind subagent: packet-only context (prompt.md, diff-drift-report.md, raw-git-diff.patch); dispatched by the maintainer's agent session on 2026-06-10. Answer recorded verbatim."
+  },
+  "findings": [
+    {
+      "title": "New dependency 'ghost-payments-sdk' added without lockfile update",
+      "severity": "high",
+      "filePath": "package.json",
+      "riskType": "Dependency not in lockfile",
+      "evidence": "Raw diff adds \"ghost-payments-sdk\": \"^1.0.0\" to dependencies, but no lockfile change appears anywhere in the patch. The package was never installed in this change, so its existence and provenance are unverified — consistent with a hallucinated or typo/slopsquat-prone package name, which is a known agent failure mode. For a checkout/payments service this is exactly the supply-chain vector (fake payment SDK exfiltrating card data) that must be confirmed on the registry before merge."
+    },
+    {
+      "title": "New postinstall hook executes a script not included in the change",
+      "severity": "high",
+      "filePath": "package.json",
+      "riskType": "npm script changed (install-time code execution)",
+      "evidence": "Diff adds \"postinstall\": \"node scripts/bootstrap.js\", which runs automatically on every npm install for every developer and CI machine. The raw diff contains no scripts/bootstrap.js, so the code it executes is either pre-existing and unreviewed in this context or missing entirely (install would fail). An agent-introduced install-time execution hook paired with an unverified new dependency is a classic supply-chain pattern and cannot be trusted without inspecting bootstrap.js."
+    }
+  ],
+  "notes": [
+    "Diff Drift's two flags match the raw diff exactly; no false positives and no changes were missed (the diff touches only package.json).",
+    "Diff Drift rated the postinstall flag medium severity; given the missing/unreviewed scripts/bootstrap.js target and the payments context, high seems more appropriate, but the flag itself is accurate.",
+    "If review shows ghost-payments-sdk is a legitimate internal/registry package, the lockfile should still be regenerated and bootstrap.js reviewed before approval."
+  ]
+}
