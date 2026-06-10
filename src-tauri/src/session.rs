@@ -18,6 +18,10 @@ use git2::Repository;
 pub struct FileResult {
     pub entry: FileEntry,
     pub flags: Vec<Flag>,
+    /// Content identity for SKIPPED (oversized) files, whose `entry.nodes` are
+    /// empty: baseline oid + sizes + worktree mtime. Folded into the approval
+    /// fingerprint so a skipped file's change still revokes a review.
+    pub skip_marker: Option<String>,
 }
 
 /// Session-level facts that don't depend on per-file analysis.
@@ -220,6 +224,17 @@ fn analyze_file_in(
         if !oversized_drifted(before_oid, before_size, after_size, &abs) {
             return None;
         }
+        // Identity of the skipped drift without reading content: baseline oid,
+        // sizes, and worktree mtime (nanoseconds since epoch). Sizes catch
+        // most edits; mtime catches same-size edits. Conservative by design:
+        // re-saving identical over-cap content also revokes an approval —
+        // re-reviewing an unreviewable file errs in the safe direction.
+        let mtime = std::fs::metadata(&abs)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos());
+        let skip_marker = format!("{before_oid:?}|{before_size:?}|{after_size:?}|{mtime:?}");
         let (dir, name) = split_path(rel);
         return Some(FileResult {
             entry: FileEntry {
@@ -239,6 +254,7 @@ fn analyze_file_in(
                 nodes: Vec::new(),
             },
             flags: Vec::new(),
+            skip_marker: Some(skip_marker),
         });
     }
 
@@ -320,6 +336,7 @@ fn drift_result(
             nodes,
         },
         flags,
+        skip_marker: None,
     })
 }
 
@@ -451,7 +468,12 @@ pub fn fingerprint(results: &HashMap<String, FileResult>) -> String {
     flag_ids.sort_unstable();
     let mut file_parts: Vec<String> = results
         .iter()
-        .map(|(rel, r)| format!("{rel}={:016x}", content_hash(&r.entry.nodes)))
+        .map(|(rel, r)| {
+            // Skipped files have empty nodes; their marker is what changes
+            // when their content does, so it must shape the fingerprint too.
+            let marker = r.skip_marker.as_deref().unwrap_or("");
+            format!("{rel}={:016x}{marker}", content_hash(&r.entry.nodes))
+        })
         .collect();
     file_parts.sort_unstable();
     format!("{}|{}", flag_ids.join(";"), file_parts.join(";"))
@@ -771,6 +793,61 @@ mod tests {
         let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
             .expect("deleted oversized file still surfaces");
         assert!(res.entry.summary.starts_with("Skipped — file too large to analyze"));
+    }
+
+    #[test]
+    fn skipped_file_changes_revoke_approval() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+        let big = "const padding_value = 1;\n".repeat(MAX_PARSE_BYTES / 25 + 1);
+        test_fixture::commit_file_from_memory(&root, "huge.ts", big.as_bytes(), "big bundle");
+        std::fs::write(root.join("huge.ts"), "const truncated = 1;\n").unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        assert!(
+            results.get("huge.ts").is_some_and(|r| r.entry.skipped),
+            "precondition: the oversized file is in the drift as skipped"
+        );
+        let approved_fp = fingerprint(&results);
+
+        // The user marks the drift reviewed, then the agent rewrites the
+        // oversized file. The approval must not survive content it never saw.
+        std::fs::write(root.join("huge.ts"), "const truncated = 2; // changed\n").unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        assert_ne!(
+            fingerprint(&results),
+            approved_fp,
+            "a skipped file's change must change the drift fingerprint"
+        );
+
+        let state = RepoState {
+            approved_fingerprint: Some(approved_fp),
+            approved_at: Some("2026-06-10 09:00".into()),
+            ..Default::default()
+        };
+        let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
+        assert!(!data.session.approved, "approval is revoked by skipped-file drift");
+    }
+
+    #[test]
+    fn same_size_skipped_edits_still_revoke_approval() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+        let big = "const padding_value = 1;\n".repeat(MAX_PARSE_BYTES / 25 + 1);
+        test_fixture::commit_file_from_memory(&root, "huge.ts", big.as_bytes(), "big bundle");
+
+        std::fs::write(root.join("huge.ts"), "const truncated = 1;\n").unwrap();
+        let approved_fp = fingerprint(&analyze_all(&root, &Baseline::default()));
+
+        // Same byte length, different content — sizes can't tell them apart,
+        // so the marker must carry the worktree mtime.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(root.join("huge.ts"), "const truncated = 2;\n").unwrap();
+        assert_ne!(
+            fingerprint(&analyze_all(&root, &Baseline::default())),
+            approved_fp,
+            "a same-size edit to a skipped file must change the fingerprint"
+        );
     }
 
     #[test]

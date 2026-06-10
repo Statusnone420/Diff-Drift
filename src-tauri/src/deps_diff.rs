@@ -315,6 +315,7 @@ pub fn analyze_package_json(
             nodes,
         },
         flags,
+        skip_marker: None,
     })
 }
 
