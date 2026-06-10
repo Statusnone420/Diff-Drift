@@ -11,18 +11,25 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust (test + clippy)
+    name: Rust (test + clippy + eval)
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - run: npm ci
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Engine eval
+        run: npm run eval:engine
       - name: cargo clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
