@@ -43,6 +43,35 @@ re-parsed the node snippets independently) — over the gate. A per-thread memo 
 recent snippet parses (one parse per snippet per node, shared across rules) brought it
 back to +14.0%. The residual is the real cost of running live tree-sitter queries.
 
+| Metric | Phase 3 (differential family) |
+| --- | --- |
+| `cargo test` | 119 passed, 0 failed |
+| `cargo clippy` | clean |
+| `npm run eval:engine` | 20/20 (5 new cases) |
+| `npm run test:unit` / `test:e2e:web` | 54 / 2 passed |
+| fp-replay | 14 changed files, 0 flags |
+| bench `analyze_all` | 24.3 ms (+13.6% vs baseline) |
+
+Phase 3 adds the differential rules — true before-vs-after comparisons only a diff-native
+engine can express:
+
+- **Loosened validation regex** (`loose-regex`, differential path): paired regex literals
+  compared for weakening — widened to a catch-all, anchors dropped, or length bound
+  removed — with the description naming exactly what weakened. Tightening stays quiet.
+- **Guard removed** (`guard-removed`): a call whose every before call-site sat inside an
+  `if` consequence now runs unconditionally.
+- **Error handling removed** (`removed-try-catch`): a `try` that wrapped calls is gone
+  while the calls remain.
+- **Removed sanitization** upgraded to structural callee comparison: `sanitize` surviving
+  only in a comment no longer masks the removal; wrapper-stripping
+  (`save(escapeSql(x))` → `save(x)`) is caught.
+
+Eval-driven engine fix: the new `if (0)` case failed through the real binary because
+exported functions aren't split into body-level child nodes and `removed-if-guard` only
+looked at `IfStatement` nodes. The structural matcher made it safe to lift that
+restriction to any Modified node — the case now passes, and the payments-api fixture's
+flag set is unchanged.
+
 Note: fp-replay measures this branch against `main`; at Phase 0 the branch has no engine
 changes yet, so 0/0 is expected. The meaningful fp-replay reads come at later phases once
 rules change — the gate is that benign drift in this repo's own history stays quiet.

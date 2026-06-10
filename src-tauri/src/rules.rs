@@ -65,6 +65,10 @@ impl RuleRegistry {
                 Box::new(RemovedSanitize),
                 Box::new(PermissiveLogging),
                 Box::new(UnvettedPackage),
+                // Differential rules (before-vs-after comparisons) sit last so
+                // they never shadow a higher-confidence single-state flag.
+                Box::new(GuardRemoved),
+                Box::new(ErrorHandlingRemoved),
             ],
         }
     }
@@ -399,18 +403,99 @@ impl Rule for SameSiteWeakened {
     }
 }
 
-/// Validation regex widened to a catch-all.
+/// Validation regex loosened. Differential: for Modified nodes the before and
+/// after regex literals are extracted structurally and compared pairwise —
+/// widening to a catch-all, dropping anchors, or unbounding a quantifier all
+/// flag, with the description naming exactly what weakened. Added nodes keep
+/// the catch-all check (no before to compare).
 struct LooseRegex;
+
+const REGEX_LITERAL_QUERY: &str = "(regex) @re";
+
+fn regex_literals(src: &str, lang: Lang) -> Option<Vec<String>> {
+    crate::structural::capture_texts(src, lang, REGEX_LITERAL_QUERY, "re")
+}
+
+/// The pattern body of a regex literal: `/pat/flags` → `pat`.
+fn regex_pattern(lit: &str) -> &str {
+    let body = lit.strip_prefix('/').unwrap_or(lit);
+    match body.rfind('/') {
+        Some(i) => &body[..i],
+        None => body,
+    }
+}
+
+fn is_catch_all_pattern(pat: &str) -> bool {
+    matches!(
+        pat,
+        ".*" | ".+" | "^.*$" | "^.+$" | "[\\s\\S]*" | "[\\s\\S]+" | "[^]*" | "[^]+"
+    )
+}
+
+fn has_anchors(pat: &str) -> bool {
+    pat.starts_with('^') || (pat.ends_with('$') && !pat.ends_with("\\$"))
+}
+
+fn has_bounded_quantifier(pat: &str) -> bool {
+    static BOUND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+(,\d*)?\}").unwrap());
+    BOUND.is_match(pat)
+}
+
+/// What weakened between two versions of the same regex literal, if anything.
+fn regex_weakening(before: &str, after: &str) -> Option<String> {
+    let (b, a) = (regex_pattern(before), regex_pattern(after));
+    if b == a {
+        return None;
+    }
+    if is_catch_all_pattern(a) && !is_catch_all_pattern(b) {
+        return Some(format!(
+            "widened to {after} — any string now passes validation"
+        ));
+    }
+    if has_anchors(b) && !has_anchors(a) {
+        return Some(format!(
+            "lost its anchors (was {before}, now {after}) — partial matches now pass"
+        ));
+    }
+    if has_bounded_quantifier(b) && !has_bounded_quantifier(a) && (a.contains('*') || a.contains('+'))
+    {
+        return Some(format!(
+            "lost its length bound (was {before}, now {after}) — unbounded input now passes"
+        ));
+    }
+    None
+}
+
 impl Rule for LooseRegex {
     fn id(&self) -> &'static str {
         "loose-regex"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) || node.kind != "VariableDeclaration" {
             return None;
         }
         let after = joined(&node.after);
         let before = joined(&node.before);
+        // Differential path: compare each regex literal against its counterpart.
+        if node.state == NodeState::Modified {
+            if let (Some(bl), Some(al)) = (
+                regex_literals(&before, ctx.lang),
+                regex_literals(&after, ctx.lang),
+            ) {
+                for (b, a) in bl.iter().zip(al.iter()) {
+                    if let Some(weakened) = regex_weakening(b, a) {
+                        return finding(
+                            Severity::High,
+                            "Loose regex pattern",
+                            format!("Validation regex {weakened}."),
+                        );
+                    }
+                }
+                // No paired weakening — fall through to the catch-all check,
+                // which covers literals that only exist in the after version.
+            }
+        }
+        // Added nodes (and fallback): catch-all in after, none before.
         if let Some(rx) = permissive_regex(&after) {
             if before.is_empty() || permissive_regex(&before).is_none() {
                 return finding(
@@ -437,9 +522,16 @@ const CALLEE_QUERY: &str = r#"
 (call_expression function: (member_expression property: (property_identifier) @callee))
 "#;
 
-fn callee_names(src: &str, lang: Lang) -> Option<HashSet<String>> {
+fn callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
     crate::structural::capture_texts(src, lang, CALLEE_QUERY, "callee")
-        .map(|names| names.into_iter().collect())
+}
+
+fn callee_names(src: &str, lang: Lang) -> Option<HashSet<String>> {
+    callee_list(src, lang).map(|names| names.into_iter().collect())
+}
+
+fn count_of(names: &[String], callee: &str) -> usize {
+    names.iter().filter(|n| *n == callee).count()
 }
 
 impl Rule for VerifyToDecode {
@@ -504,7 +596,10 @@ impl Rule for RemovedIfGuard {
         "removed-if-guard"
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if node.state != NodeState::Modified || node.kind != "IfStatement" {
+        // Any Modified node qualifies: exported functions aren't split into
+        // body-level child nodes, so the neutralised `if` may sit anywhere in
+        // the node's subtree. Structural matching keeps this precise.
+        if node.state != NodeState::Modified {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"if\s*\(\s*false\s*\)").unwrap());
@@ -522,20 +617,36 @@ impl Rule for RemovedIfGuard {
     }
 }
 
-/// A sanitization / validation call removed outright.
+/// A sanitization / validation call removed outright. Structural: compares the
+/// actual callee names, so the words in strings or comments neither flag nor
+/// mask. Catches wrapper-stripping too (`save(sanitize(x))` → `save(x)`).
 struct RemovedSanitize;
+
+fn has_sanitizer_callee(names: &HashSet<String>) -> bool {
+    names.iter().any(|n| {
+        n.rsplit('.').next().is_some_and(|last| {
+            last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
+        })
+    })
+}
+
 impl Rule for RemovedSanitize {
     fn id(&self) -> &'static str {
         "removed-sanitize"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"\b(sanitize|escape|validate)\w*\s*\(").unwrap());
+        let before = joined(&node.before);
+        let after = joined(&node.after);
+        let had = |src: &str| {
+            callee_names(src, ctx.lang)
+                .map(|n| has_sanitizer_callee(&n))
+                .unwrap_or_else(|| RE.is_match(src))
+        };
         let fired = match node.state {
-            NodeState::Removed => RE.is_match(&joined(&node.before)),
-            NodeState::Modified => {
-                RE.is_match(&joined(&node.before)) && !RE.is_match(&joined(&node.after))
-            }
+            NodeState::Removed => had(&before),
+            NodeState::Modified => had(&before) && !had(&after),
             _ => false,
         };
         if fired {
@@ -546,6 +657,112 @@ impl Rule for RemovedSanitize {
             );
         }
         None
+    }
+}
+
+/// Differential: a call that ran behind an `if` guard before the change now
+/// runs unconditionally. Only a diff-native engine can express this — snapshot
+/// scanners see nothing wrong with the after state.
+struct GuardRemoved;
+
+const IF_CONSEQUENCE_QUERY: &str = "(if_statement consequence: (_) @cons)";
+
+/// Callee names inside `if` consequences, with multiplicity. Nested guards can
+/// count a call more than once (outer and inner consequence both capture it),
+/// so callers compare with `>=` — erring toward "still guarded", never toward
+/// a false flag.
+fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
+    let consequences =
+        crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")?;
+    let mut guarded = Vec::new();
+    for cons in &consequences {
+        if let Some(names) = callee_list(cons, lang) {
+            guarded.extend(names);
+        }
+    }
+    Some(guarded)
+}
+
+impl Rule for GuardRemoved {
+    fn id(&self) -> &'static str {
+        "guard-removed"
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if node.state != NodeState::Modified {
+            return None;
+        }
+        let before = joined(&node.before);
+        // Cheap pre-filter: no `if` before means nothing could have been guarded.
+        if !before.contains("if") {
+            return None;
+        }
+        let guarded_before = guarded_callee_list(&before, ctx.lang)?;
+        if guarded_before.is_empty() {
+            return None;
+        }
+        let after = joined(&node.after);
+        let all_before = callee_list(&before, ctx.lang)?;
+        let guarded_after = guarded_callee_list(&after, ctx.lang)?;
+        let all_after = callee_list(&after, ctx.lang)?;
+        // Every before call site was guarded; at least one after call site isn't.
+        let escaped = guarded_before.iter().find(|c| {
+            count_of(&guarded_before, c) >= count_of(&all_before, c)
+                && count_of(&all_after, c) > count_of(&guarded_after, c)
+        })?;
+        finding(
+            Severity::Medium,
+            "Guard removed",
+            format!(
+                "`{escaped}(…)` ran behind a guard before this change and now runs unconditionally — confirm the check wasn't load-bearing."
+            ),
+        )
+    }
+}
+
+/// Differential: a `try { … }` that wrapped calls before the change is gone
+/// while the calls remain.
+struct ErrorHandlingRemoved;
+
+const TRY_QUERY: &str = "(try_statement) @try";
+
+impl Rule for ErrorHandlingRemoved {
+    fn id(&self) -> &'static str {
+        "removed-try-catch"
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if node.state != NodeState::Modified {
+            return None;
+        }
+        let before = joined(&node.before);
+        if !before.contains("try") {
+            return None;
+        }
+        let after = joined(&node.after);
+        let tries_before =
+            crate::structural::capture_texts(&before, ctx.lang, TRY_QUERY, "try")?;
+        if tries_before.is_empty() {
+            return None;
+        }
+        let tries_after = crate::structural::capture_texts(&after, ctx.lang, TRY_QUERY, "try")?;
+        if !tries_after.is_empty() {
+            return None;
+        }
+        // The calls that were inside the try must still exist after.
+        let mut wrapped = HashSet::new();
+        for t in &tries_before {
+            if let Some(names) = callee_names(t, ctx.lang) {
+                wrapped.extend(names);
+            }
+        }
+        let all_after = callee_names(&after, ctx.lang)?;
+        let survivor = wrapped.iter().find(|c| all_after.contains(*c))?;
+        finding(
+            Severity::Low,
+            "Error handling removed",
+            format!(
+                "The try/catch around `{survivor}(…)` was removed — failures here are now unhandled."
+            ),
+        )
     }
 }
 
@@ -953,6 +1170,186 @@ mod tests {
                 &ctx()
             )
             .is_none());
+    }
+
+    #[test]
+    fn loosened_regex_differential_names_what_weakened() {
+        // Anchors dropped — the after pattern is NOT a catch-all, so only the
+        // differential comparison can see the weakening.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const idPattern = /^[a-z0-9]{8}$/;"],
+                    &["const idPattern = /[a-z0-9]{8}/;"]
+                ),
+                &ctx(),
+            )
+            .expect("anchor removal must flag");
+        assert!(f.desc.contains("anchors"), "desc names the weakening: {}", f.desc);
+
+        // Length bound dropped.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const token = /^[A-Z]{4,16}$/;"],
+                    &["const token = /^[A-Z]+$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("unbounded quantifier must flag");
+        assert!(f.desc.contains("length bound"), "desc: {}", f.desc);
+
+        // Catch-all still flags (the demo money shot).
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const pattern = /^[A-Za-z0-9_\\-]{32,}$/;"],
+                    &["const pattern = /.*/;"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn loosened_regex_differential_stays_quiet_on_tightening_or_unrelated_change() {
+        // Tightened pattern — no flag.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /[a-z]+/;"],
+                    &["const p = /^[a-z]{3,8}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Equivalent rewrite with same anchors/bounds — no flag.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[a-z]{3}$/;"],
+                    &["const p = /^[a-z0-9]{3}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn guard_removed_differential() {
+        // chargeCard ran behind a verification guard; now unconditional.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // Guard still present — quiet.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (isVerified(order) && !order.flagged) {\n    chargeCard(order);\n  }\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Callee already had an unguarded call site before — quiet.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f() {\n  log(1);\n  if (x) {\n    log(2);\n  }\n}"],
+                    &["function f() {\n  log(1);\n  log(2);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn error_handling_removed_differential() {
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {\n    retryLater(e);\n  }\n}"],
+                    &["function sync() {\n  pushEvents(queue);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // try still present — quiet.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {}\n}"],
+                    &["function sync() {\n  try {\n    pushEvents(queue, opts);\n  } catch (e) {}\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Call removed along with the try — nothing left unprotected, quiet.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {}\n}"],
+                    &["function sync() {\n  return;\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn removed_sanitize_structural_is_not_masked_by_comments() {
+        // `sanitize` surviving only in a comment must not mask the removal.
+        assert!(RemovedSanitize
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["render(sanitizeHtml(body));"],
+                    &["// sanitizeHtml(body) was redundant\nrender(body);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // Wrapper-stripping: the sanitize call disappears from inside another call.
+        assert!(RemovedSanitize
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["save(escapeSql(input));"],
+                    &["save(input);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
     }
 
     #[test]
