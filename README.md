@@ -88,10 +88,10 @@ Dismissed flags don't count, the CLI never writes state, and an unresolvable `--
 Two separate measurements, deliberately not confused with each other:
 
 - **Engine eval** (CI gate): 15 fixture cases run through the real binary must match their expected flags, counts, and exit codes exactly. `npm run eval:engine`.
-- **Blind-agent scorecard** (advisory): can a reviewer who sees only Diff Drift's output reach the right decision? Current run: **72/100 over all 15 synthetic cases, single model evaluator (blind), independent external validation pending** — decision accuracy was 15/15; the score is pulled down by the rubric's strict false-positive penalty on benign cases. Full rubric, aliases, limitations, and the frozen-rubric policy: [Eval Methodology](docs/wiki/Eval-Methodology.md).
+- **Blind-agent scorecard** (advisory): can a reviewer who sees only Diff Drift's output reach the right decision? Current run (benchmark v2): **98/100 over 15 synthetic cases, single model evaluator (blind), independent external validation pending.** Decision accuracy 15/15. Rubric, case list, limitations, and version history (v1 scored 72 before the prompt contract was fixed): [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
 <p align="center">
-  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 72/100 over 15 cases, single model evaluator, external validation pending" width="920">
+  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 98/100 over 15 cases (benchmark v2), single model evaluator, external validation pending" width="920">
 </p>
 
 Measure flag noise on your own repos with `npm run eval:fp-replay` — that number, not the scorecard, predicts your triage burden.
