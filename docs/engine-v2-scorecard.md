@@ -23,6 +23,26 @@ Phase 1 adds `structural.rs` (tree-sitter query matching with cached compiled qu
 text-fallback contract) and ports `eval-call` to it: `eval?.()`, `window.eval`,
 `globalThis.eval` now caught; `eval(` inside strings/comments no longer flags.
 
+| Metric | Phase 2 (rule ports) |
+| --- | --- |
+| `cargo test` | 114 passed, 0 failed |
+| `cargo clippy` | clean |
+| `npm run eval:engine` | 15/15 |
+| `npm run test:unit` / `test:e2e:web` | 54 / 2 passed |
+| fp-replay | 9 changed files, 0 flags |
+| bench `analyze_all` | 24.4 ms (+14.0% vs baseline) |
+
+Phase 2 ports `fn-constructor`, `tls-reject-false`, `broadened-cors`, `removed-if-guard`,
+and `verify-to-decode` to structural matching. New catches: quoted object keys
+(`{"rejectUnauthorized": false}`, `{"origin": "*"}`), constant-falsy guards (`if (0)`,
+`if (null)`, `if (undefined)`), and crypto downgrades masked by `verify` surviving only in
+a comment. New silences: any of these patterns inside strings or comments.
+
+Performance note: the first bench run after the ports hit +21.5% (each structural rule
+re-parsed the node snippets independently) — over the gate. A per-thread memo of the most
+recent snippet parses (one parse per snippet per node, shared across rules) brought it
+back to +14.0%. The residual is the real cost of running live tree-sitter queries.
+
 Note: fp-replay measures this branch against `main`; at Phase 0 the branch has no engine
 changes yet, so 0/0 is expected. The meaningful fp-replay reads come at later phases once
 rules change — the gate is that benign drift in this repo's own history stays quiet.

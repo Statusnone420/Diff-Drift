@@ -13,6 +13,7 @@
 //! not answer (parse or query-compile failure) and the caller should fall back
 //! to its text-based path — the same graceful-degradation contract the lockfile
 //! parser uses.
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -34,10 +35,31 @@ fn group(lang: Lang) -> u8 {
 /// Parse a snippet with the language's grammar. Tree-sitter is error-tolerant:
 /// statement snippets re-parsed outside their original context (e.g. a bare
 /// `return …`) still yield the inner expression nodes queries care about.
+///
+/// Several rules consult the same node's before/after text in sequence, so the
+/// most recent parses are memoized per thread — one parse per snippet per node,
+/// no matter how many rules ask. `Tree` clones are cheap (copy-on-write).
 pub fn parse_snippet(src: &str, lang: Lang) -> Option<Tree> {
-    let mut parser = Parser::new();
-    parser.set_language(&grammar(lang)).ok()?;
-    parser.parse(src, None)
+    thread_local! {
+        static RECENT: RefCell<HashMap<(u8, String), Option<Tree>>> =
+            RefCell::new(HashMap::new());
+    }
+    RECENT.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        // Bounded: rules only ever revisit the current node's two snippets, so
+        // a small clear-when-full map beats an LRU here.
+        if cache.len() > 32 {
+            cache.clear();
+        }
+        cache
+            .entry((group(lang), src.to_string()))
+            .or_insert_with(|| {
+                let mut parser = Parser::new();
+                parser.set_language(&grammar(lang)).ok()?;
+                parser.parse(src, None)
+            })
+            .clone()
+    })
 }
 
 type QueryCache = Mutex<HashMap<(u8, &'static str), Option<Arc<Query>>>>;
@@ -72,7 +94,6 @@ pub fn query_hit(src: &str, lang: Lang, query_src: &'static str) -> Option<bool>
 }
 
 /// Source text of every node captured under `capture_name`, in document order.
-#[allow(dead_code)] // consumed by the differential rule family (Phase 3)
 pub fn capture_texts(
     src: &str,
     lang: Lang,

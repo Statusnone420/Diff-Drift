@@ -170,18 +170,28 @@ impl Rule for EvalCall {
     }
 }
 
-/// CWE-95 — code injection via the Function constructor.
+/// CWE-95 — code injection via the Function constructor. Structural: a real
+/// `new Function(…)` expression, not the words in a string or comment.
 struct FnConstructor;
+
+const FN_CONSTRUCTOR_QUERY: &str = r#"
+(new_expression constructor: (identifier) @ctor (#eq? @ctor "Function"))
+"#;
+
 impl Rule for FnConstructor {
     fn id(&self) -> &'static str {
         "fn-constructor"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"new\s+Function\s*\(").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, FN_CONSTRUCTOR_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -222,8 +232,17 @@ impl Rule for ChildProcess {
     }
 }
 
-/// CWE-295 — disabled TLS certificate validation.
+/// CWE-295 — disabled TLS certificate validation. Structural: an object
+/// property `rejectUnauthorized` (identifier or quoted) whose value is the
+/// `false` literal — reformatting and quoting can't evade, strings can't
+/// false-fire.
 struct TlsRejectFalse;
+
+const TLS_REJECT_QUERY: &str = r#"
+(pair key: (property_identifier) @key (#eq? @key "rejectUnauthorized") value: (false))
+(pair key: (string (string_fragment) @skey (#eq? @skey "rejectUnauthorized")) value: (false))
+"#;
+
 impl Rule for TlsRejectFalse {
     fn id(&self) -> &'static str {
         "tls-reject-false"
@@ -234,7 +253,11 @@ impl Rule for TlsRejectFalse {
         }
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"rejectUnauthorized\s*:\s*false").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, TLS_REJECT_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Disabled TLS verification",
@@ -268,8 +291,19 @@ impl Rule for EnvTlsReject {
     }
 }
 
-/// CWE-942 — overly permissive CORS.
+/// CWE-942 — overly permissive CORS. Structural: an `origin` property whose
+/// value is the `true` literal or the `"*"` string.
 struct BroadenedCors;
+
+const CORS_QUERY: &str = r#"
+(pair key: (property_identifier) @key (#eq? @key "origin") value: (true))
+(pair key: (property_identifier) @key (#eq? @key "origin")
+  value: (string (string_fragment) @v (#eq? @v "*")))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin")) value: (true))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin"))
+  value: (string (string_fragment) @sv (#eq? @sv "*")))
+"#;
+
 impl Rule for BroadenedCors {
     fn id(&self) -> &'static str {
         "broadened-cors"
@@ -281,11 +315,11 @@ impl Rule for BroadenedCors {
         static WILDCARD: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
         static TRUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
-        let after = joined(&node.after);
-        let before = joined(&node.before);
-        let now = WILDCARD.is_match(&after) || TRUE.is_match(&after);
-        let was = WILDCARD.is_match(&before) || TRUE.is_match(&before);
-        if now && !was {
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, CORS_QUERY)
+                .unwrap_or_else(|| WILDCARD.is_match(src) || TRUE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Broadened CORS",
@@ -393,22 +427,46 @@ impl Rule for LooseRegex {
 }
 
 /// CWE-347 — signature verification replaced by a non-verifying decode/parse.
+/// Structural: compares the actual callee names (bare or member calls) between
+/// before and after, so `verify` in a string or comment can't confuse it.
 struct VerifyToDecode;
+
+/// Every call's callee name: `verify(…)` and `jwt.verify(…)` both capture `verify`.
+const CALLEE_QUERY: &str = r#"
+(call_expression function: (identifier) @callee)
+(call_expression function: (member_expression property: (property_identifier) @callee))
+"#;
+
+fn callee_names(src: &str, lang: Lang) -> Option<HashSet<String>> {
+    crate::structural::capture_texts(src, lang, CALLEE_QUERY, "callee")
+        .map(|names| names.into_iter().collect())
+}
+
 impl Rule for VerifyToDecode {
     fn id(&self) -> &'static str {
         "verify-to-decode"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if node.state != NodeState::Modified {
             return None;
         }
-        static VERIFY: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\b(verify|sign)\s*\(").unwrap());
-        static DECODE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\b(decode|parse)\s*\(").unwrap());
         let after = joined(&node.after);
         let before = joined(&node.before);
-        if VERIFY.is_match(&before) && DECODE.is_match(&after) && !VERIFY.is_match(&after) {
+        let fired = match (callee_names(&before, ctx.lang), callee_names(&after, ctx.lang)) {
+            (Some(b), Some(a)) => {
+                let verifies = |s: &HashSet<String>| s.contains("verify") || s.contains("sign");
+                let decodes = |s: &HashSet<String>| s.contains("decode") || s.contains("parse");
+                verifies(&b) && decodes(&a) && !verifies(&a)
+            }
+            _ => {
+                static VERIFY: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\b(verify|sign)\s*\(").unwrap());
+                static DECODE: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\b(decode|parse)\s*\(").unwrap());
+                VERIFY.is_match(&before) && DECODE.is_match(&after) && !VERIFY.is_match(&after)
+            }
+        };
+        if fired {
             return finding(
                 Severity::Medium,
                 "Crypto downgrade",
@@ -419,22 +477,45 @@ impl Rule for VerifyToDecode {
     }
 }
 
-/// A guard clause neutralised to a constant `if (false)`.
+/// A guard clause neutralised to a constant-falsy condition. Structural:
+/// `if (false)`, `if (0)`, `if (null)`, and `if (undefined)` all match —
+/// closing the literal-`false`-only gap of the old text pattern.
 struct RemovedIfGuard;
+
+// The condition is captured with a wildcard and the falsy check happens in
+// Rust: `undefined` is a dedicated node kind in the TS grammar but a plain
+// identifier in the JS grammar, so naming node kinds here would not compile
+// across both.
+const IF_CONDITION_QUERY: &str = r#"
+(if_statement condition: (parenthesized_expression (_) @cond))
+"#;
+
+fn has_const_falsy_guard(src: &str, lang: Lang) -> Option<bool> {
+    let conds = crate::structural::capture_texts(src, lang, IF_CONDITION_QUERY, "cond")?;
+    Some(
+        conds
+            .iter()
+            .any(|c| matches!(c.trim(), "false" | "0" | "null" | "undefined")),
+    )
+}
+
 impl Rule for RemovedIfGuard {
     fn id(&self) -> &'static str {
         "removed-if-guard"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if node.state != NodeState::Modified || node.kind != "IfStatement" {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"if\s*\(\s*false\s*\)").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let hit = |src: &str| {
+            has_const_falsy_guard(src, ctx.lang).unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::Low,
                 "Disabled guard",
-                "A guard condition was replaced with `if (false)` — the check no longer runs.",
+                "A guard condition was replaced with a constant-falsy value — the check no longer runs.",
             );
         }
         None
@@ -766,6 +847,112 @@ mod tests {
                 "structural match should catch: {src}"
             );
         }
+    }
+
+    #[test]
+    fn structural_ports_catch_text_evasions() {
+        // Quoted object keys — the old `key\s*:` patterns never matched these.
+        assert!(TlsRejectFalse
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["request({ \"rejectUnauthorized\": false });"]
+                ),
+                &ctx()
+            )
+            .is_some());
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ \"origin\": \"*\" }));"]
+                ),
+                &ctx()
+            )
+            .is_some());
+        // Constant-falsy guards beyond the literal `false`.
+        for cond in ["0", "null", "undefined"] {
+            let after = format!("if ({cond}) {{ audit(); }}");
+            assert!(
+                RemovedIfGuard
+                    .check(
+                        &node(
+                            "IfStatement",
+                            NodeState::Modified,
+                            &["if (isAdmin(user)) { audit(); }"],
+                            &[&after]
+                        ),
+                        &ctx()
+                    )
+                    .is_some(),
+                "constant-falsy guard `if ({cond})` must flag"
+            );
+        }
+        // `verify` surviving only inside a comment must not mask the downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "ReturnStatement",
+                    NodeState::Modified,
+                    &["return jwt.verify(token, key);"],
+                    &["// verify(token) was slow\nreturn jwt.decode(token);"]
+                ),
+                &ctx()
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn structural_ports_ignore_strings_and_comments() {
+        assert!(FnConstructor
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const tip = \"avoid new Function(code)\";"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        assert!(TlsRejectFalse
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const note = 'never set rejectUnauthorized: false in prod';"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["// do NOT use origin: \"*\" here\nconfigureCors(allowlist);"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        // A live condition whose BODY merely mentions `if (false)` in a string.
+        assert!(RemovedIfGuard
+            .check(
+                &node(
+                    "IfStatement",
+                    NodeState::Modified,
+                    &["if (cond) { run(); }"],
+                    &["if (cond) { log(\"if (false) would disable this\"); run(); }"]
+                ),
+                &ctx()
+            )
+            .is_none());
     }
 
     #[test]
