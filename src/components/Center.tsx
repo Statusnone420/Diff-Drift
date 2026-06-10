@@ -48,6 +48,34 @@ export function Center({
     );
   }
 
+  if (file.skipped) {
+    return (
+      <div className="col center">
+        <div className="center-head">
+          <div className="ch-left">
+            <div className="ch-path">
+              <span className="dir">{file.dir}</span>
+              {file.name}
+            </div>
+            <div className="ch-sub">
+              <span className="lang">{file.lang}</span>
+              <span>·</span>
+              <span>{file.summary}</span>
+            </div>
+          </div>
+        </div>
+        <div className="center-clean" data-testid="center-skipped">
+          <span className="center-clean-ic">{Ico.warn}</span>
+          <div className="center-clean-title">This file changed but was not analyzed</div>
+          <div className="center-clean-sub">
+            {file.summary} Diff Drift didn't parse it, so no structural drift or flags are shown
+            — review this file outside Diff Drift before trusting the change.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const counts: Record<string, number> = { added: 0, removed: 0, modified: 0 };
   const walk = (ns: AstNode[]) =>
     ns.forEach((n) => {

@@ -2,11 +2,12 @@ import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Center } from "../../src/components/Center";
+import type { FileEntry } from "../../src/types";
 
-function renderCenter(changedFiles: number, baselinePhrase: string) {
+function renderCenter(changedFiles: number, baselinePhrase: string, file: FileEntry | null = null) {
   render(
     <Center
-      file={null}
+      file={file}
       changedFiles={changedFiles}
       baselinePhrase={baselinePhrase}
       flagsById={{}}
@@ -35,5 +36,28 @@ describe("Center empty states", () => {
     expect(screen.getByTestId("center-clean-sub")).toHaveTextContent(
       "2 changed files found, but none are TypeScript, TSX, JavaScript, JSX, or package.json files Diff Drift can inspect.",
     );
+  });
+
+  it("renders a skipped panel for oversized files instead of claiming formatting-only", () => {
+    const skipped: FileEntry = {
+      id: "dist_bundle_js",
+      name: "bundle.js",
+      dir: "dist/",
+      lang: "JavaScript",
+      risks: 0,
+      summary: "Skipped — file too large to analyze (3.0 MB > 2 MB)",
+      skipped: true,
+      changedNodes: 0,
+      reviewedNodes: 0,
+      nodes: [],
+    };
+    renderCenter(1, "the last commit (HEAD)", skipped);
+    expect(screen.getByTestId("center-skipped")).toHaveTextContent(
+      "This file changed but was not analyzed",
+    );
+    expect(screen.getByTestId("center-skipped")).toHaveTextContent("too large to analyze");
+    expect(
+      screen.queryByText(/Only formatting or whitespace changed/),
+    ).not.toBeInTheDocument();
   });
 });
