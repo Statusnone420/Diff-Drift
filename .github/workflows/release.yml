@@ -111,13 +111,22 @@ jobs:
       - name: Install cargo-cyclonedx
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-cyclonedx
+          # Pinned: 0.5.7 emits "<crate>.cdx.json" next to the manifest, which
+          # the copy below locates. The glob also handles the "bom.json" name
+          # other versions use, so a bump won't silently break the release.
+          tool: cargo-cyclonedx@0.5.7
 
       - name: Generate SBOMs (CycloneDX)
         shell: pwsh
         run: |
           cargo cyclonedx --manifest-path src-tauri/Cargo.toml --format json
-          Copy-Item src-tauri/*.cdx.json dist-release/diff-drift-rust.cdx.json
+          # cargo-cyclonedx writes the BOM next to each manifest; the filename
+          # varies by version ("<crate>.cdx.json" or "bom.json"). Find it
+          # rather than assuming, and fail loudly if nothing was produced.
+          $bom = Get-ChildItem src-tauri -Recurse -File -Include '*.cdx.json', 'bom.json' |
+            Select-Object -First 1
+          if (-not $bom) { Write-Error 'cargo-cyclonedx produced no JSON BOM under src-tauri' }
+          Copy-Item $bom.FullName dist-release/diff-drift-rust.cdx.json
           npm sbom --sbom-format cyclonedx --omit dev | Out-File -Encoding utf8NoBOM dist-release/diff-drift-npm.cdx.json
 
       - name: Generate SHA256SUMS
