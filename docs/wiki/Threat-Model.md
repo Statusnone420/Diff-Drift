@@ -18,7 +18,7 @@ A local Windows desktop app (Tauri 2: Rust backend + WebView2 frontend) and a re
 
 The main attack surface. A cloned repo can contain arbitrary hostile bytes, and Diff Drift parses them:
 
-- **Source files → tree-sitter** ([parse.rs](../../src-tauri/src/parse.rs)). Parse failures return an empty node list instead of panicking; invalid UTF-8 degrades via `utf8_text(...).unwrap_or("")`. Files larger than the parse cap are skipped and labeled "Skipped — file too large to analyze" rather than parsed (memory/CPU exhaustion guard).
+- **Source files → tree-sitter** ([parse.rs](../../src-tauri/src/parse.rs)). Parse failures return an empty node list instead of panicking; invalid UTF-8 degrades via `utf8_text(...).unwrap_or("")`. Files larger than the parse cap are skipped and labeled "Skipped — file too large to analyze" rather than parsed. The size check happens **before** any content is loaded — blob size comes from git object headers (`odb.read_header`), worktree size from filesystem metadata — so an oversized file costs neither memory nor parse time. The one bounded exception: when both sides exist at identical over-cap sizes, the worktree file is read once (raw bytes, no parse) to hash-compare against the baseline blob and decide whether it drifted at all.
 - **`package.json` and lockfiles → serde_json / line parsing** ([deps_diff.rs](../../src-tauri/src/deps_diff.rs)). Unparseable JSON yields no dependency drift rather than an error path.
 - **Git metadata → git2 (libgit2)** ([git.rs](../../src-tauri/src/git.rs)). Read-only object access; Diff Drift never shells out to a `git` binary and never writes to `.git/`.
 - **Flag text rendered in the UI** comes from rule templates plus node names extracted by tree-sitter. React escapes rendered text by default, and the CSP (below) blocks remote script regardless.
@@ -44,7 +44,7 @@ Diff Drift runs as you, with your permissions. It trusts the OS, the filesystem,
 
 ## Denial of Service
 
-- Oversized files: skipped at a fixed byte cap before parsing, surfaced in the file list (see [User Guide](User-Guide.md)).
+- Oversized files: skipped at a fixed byte cap decided from object headers and file metadata before content is loaded, surfaced in the file list (see [User Guide](User-Guide.md)).
 - Watcher thrash: file events are debounced (400 ms) in [watcher.rs](../../src-tauri/src/watcher.rs).
 - Pathological nesting: tree-sitter is error-tolerant and bounded; analysis surfaces top-level statements plus one level of function-body children, so output size stays proportional to input.
 

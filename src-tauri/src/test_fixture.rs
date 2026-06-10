@@ -195,6 +195,33 @@ pub fn large_repo(n: usize) -> FixtureRepo {
     FixtureRepo { root }
 }
 
+/// Commit ONE file's content from memory (blob + treebuilder, no workdir
+/// read). libgit2's file-streaming blob path is pathologically slow on
+/// Windows for multi-MB files, so oversized-guard tests commit this way.
+/// The file should also exist on disk for worktree-side checks.
+pub fn commit_file_from_memory(root: &Path, rel: &str, bytes: &[u8], message: &str) -> String {
+    let repo = git2::Repository::open(root).expect("open repo");
+    let blob = repo.blob(bytes).expect("write blob from memory");
+    let head = repo
+        .head()
+        .expect("head")
+        .peel_to_commit()
+        .expect("head commit");
+    let mut builder = repo
+        .treebuilder(Some(&head.tree().expect("head tree")))
+        .expect("treebuilder");
+    builder
+        .insert(rel, blob, 0o100644)
+        .expect("insert tree entry");
+    let tree_id = builder.write().expect("write tree");
+    let tree = repo.find_tree(tree_id).expect("find tree");
+    let sig = git2::Signature::now("Drift Demo", "demo@drift.local").expect("signature");
+    let sha = repo
+        .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head])
+        .expect("commit");
+    sha.to_string()
+}
+
 /// Commit everything currently in the working tree (like `git add -A && git commit`)
 /// and return the new commit SHA. Lets tests simulate an agent that commits its work.
 pub fn commit_all(root: &Path, message: &str) -> String {

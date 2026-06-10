@@ -196,20 +196,30 @@ fn analyze_file_in(
     deps: &HashSet<String>,
     baseline: &Baseline,
 ) -> Option<FileResult> {
-    let before_src = before_content_in(repo, baseline, rel); // None if new/untracked
-    let after_src = git::worktree_content(root, rel); // None if deleted
-    match (&before_src, &after_src) {
-        (Some(b), Some(a)) if b == a => return None,
-        (None, None) => return None,
-        _ => {}
-    }
-
     let lang = parse::Lang::from_path(rel)?;
-    let largest = before_src
-        .as_deref()
-        .map_or(0, str::len)
-        .max(after_src.as_deref().map_or(0, str::len));
+
+    // Sizes first, from git object headers and filesystem metadata — file
+    // content stays unread until we know it fits under the parse cap.
+    let abs = root.join(rel);
+    let after_size = std::fs::metadata(&abs)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len());
+    let before_oid = repo.and_then(|r| {
+        let rev = baseline.sha.as_deref().unwrap_or("HEAD");
+        git::blob_oid_at_in(r, rev, rel)
+    });
+    if before_oid.is_none() && after_size.is_none() {
+        return None; // absent on both sides
+    }
+    let before_size =
+        before_oid.and_then(|oid| repo.and_then(|r| git::blob_size_in(r, oid)));
+
+    let largest = before_size.unwrap_or(0).max(after_size.unwrap_or(0)) as usize;
     if largest > MAX_PARSE_BYTES {
+        if !oversized_drifted(before_oid, before_size, after_size, &abs) {
+            return None;
+        }
         let (dir, name) = split_path(rel);
         return Some(FileResult {
             entry: FileEntry {
@@ -230,8 +240,49 @@ fn analyze_file_in(
             flags: Vec::new(),
         });
     }
+
+    let before_src = before_content_in(repo, baseline, rel); // None if new/untracked
+    let after_src = git::worktree_content(root, rel); // None if deleted
+    match (&before_src, &after_src) {
+        (Some(b), Some(a)) if b == a => return None,
+        (None, None) => return None,
+        _ => {}
+    }
     let before = parse_file(before_src.as_deref().unwrap_or(""), lang);
     let after = parse_file(after_src.as_deref().unwrap_or(""), lang);
+    drift_result(rel, lang, before, after, deps)
+}
+
+/// Drift decision for an over-cap file without parsing: one side missing or
+/// sizes differing is drift; equal sizes hash the worktree bytes against the
+/// baseline blob oid (the watcher re-analyzes saved files, and an unchanged
+/// oversized file must NOT show up as phantom drift). The file is read once
+/// as raw bytes for the in-memory hash — libgit2's own `hash_file` streaming
+/// path is pathologically slow on Windows.
+fn oversized_drifted(
+    before_oid: Option<git2::Oid>,
+    before_size: Option<u64>,
+    after_size: Option<u64>,
+    abs: &Path,
+) -> bool {
+    match (before_oid, after_size) {
+        (Some(oid), Some(_)) => {
+            before_size != after_size
+                || std::fs::read(abs).map_or(true, |bytes| {
+                    git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).ok() != Some(oid)
+                })
+        }
+        _ => true,
+    }
+}
+
+fn drift_result(
+    rel: &str,
+    lang: parse::Lang,
+    before: Vec<crate::parse::Parsed>,
+    after: Vec<crate::parse::Parsed>,
+    deps: &HashSet<String>,
+) -> Option<FileResult> {
     let mut nodes = diff_nodes(&before, &after);
 
     let file_id = sanitize_id(rel);
@@ -680,6 +731,72 @@ mod tests {
         let res = analyze_file(&root, "small.ts", &HashSet::new(), &Baseline::default())
             .expect("small file analyzes");
         assert!(!res.entry.nodes.is_empty(), "under the cap parses to nodes");
+    }
+
+    #[test]
+    fn oversized_guard_detects_drift_from_sizes_without_reading_content() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+
+        // Commit an oversized file (blob written from memory — this machine
+        // class can take a minute to first-read a fresh multi-MB file, and
+        // this test must never read one).
+        let line = "const padding_value = 1;\n"; // 25 bytes
+        let big = line.repeat(MAX_PARSE_BYTES / line.len() + 1);
+        test_fixture::commit_file_from_memory(
+            &root,
+            "huge.ts",
+            big.as_bytes(),
+            "commit oversized bundle",
+        );
+
+        // Agent truncates the bundle: baseline side is over the cap, sizes
+        // differ → drift decided from headers/metadata alone, file skipped.
+        std::fs::write(root.join("huge.ts"), "const tiny = 1;\n").expect("truncate on disk");
+        let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
+            .expect("oversized baseline side surfaces as drift");
+        assert!(
+            res.entry.summary.starts_with("Skipped — file too large to analyze"),
+            "skipped, not parsed: {}",
+            res.entry.summary
+        );
+        assert!(res.entry.nodes.is_empty() && res.flags.is_empty());
+
+        // Deleted on disk: one side missing is drift too.
+        std::fs::remove_file(root.join("huge.ts")).expect("delete worktree side");
+        let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
+            .expect("deleted oversized file still surfaces");
+        assert!(res.entry.summary.starts_with("Skipped — file too large to analyze"));
+    }
+
+    #[test]
+    fn oversized_drift_decision_hashes_only_the_equal_size_case() {
+        // The hash semantics are size-independent, so the equal-size branch
+        // is exercised with small files (first-reading fresh multi-MB files
+        // is pathologically slow under some AV setups).
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let content = b"const guarded_value = 1;\n";
+        test_fixture::commit_file_from_memory(&root, "probe.ts", content, "probe baseline");
+        std::fs::write(root.join("probe.ts"), content).unwrap();
+
+        let repo = git::open(&root).unwrap();
+        let oid = git::blob_oid_at_in(&repo, "HEAD", "probe.ts").expect("committed blob oid");
+        let size = git::blob_size_in(&repo, oid);
+        assert_eq!(size, Some(content.len() as u64), "header size matches");
+        let abs = root.join("probe.ts");
+
+        // Same size + same bytes → not drifted.
+        assert!(!oversized_drifted(Some(oid), size, size, &abs));
+
+        // Same size + different bytes → the hash catches it.
+        std::fs::write(&abs, b"const guarded_value = 2;\n").unwrap();
+        assert!(oversized_drifted(Some(oid), size, size, &abs));
+
+        // Differing sizes or a missing side → drift without any read.
+        assert!(oversized_drifted(Some(oid), size, Some(1), &abs));
+        assert!(oversized_drifted(Some(oid), size, None, &abs));
+        assert!(oversized_drifted(None, None, Some(1), &abs));
     }
 
     #[test]
