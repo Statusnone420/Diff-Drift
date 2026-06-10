@@ -12,9 +12,9 @@ concurrency:
 jobs:
   rust:
     name: Rust (test + clippy)
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -30,8 +30,8 @@ jobs:
     name: Web (tsc + vite + Playwright)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -44,7 +44,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Web E2E
         run: npm run test:e2e:web
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
@@ -53,14 +53,14 @@ jobs:
 
   native:
     name: Native (Tauri build smoke + E2E)
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -76,7 +76,7 @@ jobs:
       - name: Native E2E (advisory)
         continue-on-error: true
         run: npx playwright test -c playwright.tauri.config.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-tauri-report
@@ -87,7 +87,7 @@ jobs:
     name: Dependency audits
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: taiki-e/install-action@cargo-audit
       # Fails on actual vulnerability advisories; unmaintained crates warn.
       - name: cargo audit
