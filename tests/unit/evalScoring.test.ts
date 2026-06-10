@@ -330,6 +330,29 @@ describe("blind-agent answer scoring", () => {
     );
     expect(() => validateAgentAnswer({ decision: "approve" })).toThrow("answer.findings");
   });
+
+  it("accepts scoring-ignored notes and validates their shape", () => {
+    // Notes carry benign observations without costing precision or recall.
+    const benign = {
+      ...caseDef,
+      oracle: { ...caseDef.oracle, requiredFlags: [] },
+      agent: { expectedDecision: "approve" },
+    };
+    const score = scoreAgentAnswer(benign, {
+      decision: "approve",
+      findings: [],
+      notes: ["Formatting-only change; report matches the raw diff."],
+    });
+    expect(score.score).toBe(100);
+    expect(score.falsePositives).toBe(0);
+
+    expect(() =>
+      validateAgentAnswer({ decision: "approve", findings: [], notes: "not an array" }),
+    ).toThrow("answer.notes");
+    expect(() =>
+      validateAgentAnswer({ decision: "approve", findings: [], notes: [42] }),
+    ).toThrow("answer.notes");
+  });
 });
 
 describe("eval CLI command selection", () => {

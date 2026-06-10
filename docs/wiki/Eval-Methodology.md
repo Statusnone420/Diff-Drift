@@ -25,7 +25,7 @@ Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code ex
 
 ## Blind-Agent Rubric
 
-A blind packet contains the Diff Drift markdown report, the raw git diff, and a prompt. It never contains the oracle. The reviewer returns a decision (`approve | investigate | block`) and a findings list; `eval/lib/score.mjs` scores it:
+A blind packet contains the Diff Drift markdown report, the raw git diff, and a prompt. It never contains the oracle. The reviewer returns a decision (`approve | investigate | block`), a findings list, and (since benchmark v2) an optional `notes` list for benign observations and report feedback — notes are validated for shape but **ignored entirely by scoring**, no credit and no penalty. `eval/lib/score.mjs` scores the rest:
 
 ```
 score = recall × 60
@@ -53,7 +53,14 @@ Finding text is matched against the expected flag type plus these aliases (globa
 | Permissive logging config | permissive logging, logger redaction, redaction removed |
 | Undeclared import | undeclared import, undeclared dependency, not declared |
 
-**Frozen-rubric policy:** rubric weights, aliases, and accepted decisions are calibrated *before* answers are generated and are never tuned afterward to improve a score. If a defensible answer scores badly, that is reported as a rubric limitation — changing the rubric invalidates every previously published number and is treated as starting a new benchmark version.
+**Frozen-rubric policy:** rubric weights, aliases, and accepted decisions are calibrated *before* answers are generated and are never tuned afterward to improve a score. If a defensible answer scores badly, that is reported as a rubric limitation — changing the rubric invalidates every previously published number and is treated as starting a new benchmark version (see below).
+
+## Benchmark Versions
+
+Every instrument change starts a new version; old scores are never recomputed under new rules, and new answers are always regenerated from scratch.
+
+- **v1** (2026-06-09): original prompt, 15 synthetic cases, one blind model evaluator. **Scored 72/100** — decision accuracy 15/15 and 100% per-rule recall, but precision was 43%: the prompt didn't say where benign observations belong, so the reviewer put commentary in `findings` and the zero-oracle cases (any finding zeroes recall there) collapsed to 15–20 points. That's a prompt-contract ambiguity, not a detection failure — but 72 is the honest v1 number and stands.
+- **v2** (2026-06-10): the packet prompt defines the contract explicitly — findings are actionable trust risks only, benign observations go in a new scoring-ignored `notes` field, `approve` normally means empty findings, and a size-skipped file with a clean diff is a note, not a finding. The JSX secret fixture also became realistic (non-docs-example key, actually wired into the upload call) so reviewers have nothing legitimate to caveat. All 15 answers regenerated blind under the new packets.
 
 ## Evaluators and Honesty Constraints
 

@@ -229,6 +229,13 @@ export function validateAgentAnswer(answer) {
       throw new Error(`answer.findings[${index}].title is required`);
     }
   }
+  // Benchmark v2: benign observations live in `notes`, which scoring ignores
+  // entirely (no credit, no penalty) — only its shape is validated.
+  if (answer.notes !== undefined) {
+    if (!Array.isArray(answer.notes) || answer.notes.some((note) => typeof note !== "string")) {
+      throw new Error("answer.notes must be an array of strings when present");
+    }
+  }
 }
 
 export function flagMatches(flag, expected) {

@@ -395,6 +395,13 @@ export function writeBlindPacket(caseDef, fixture) {
 function promptFor(caseDef) {
   return `${caseDef.blindPrompt ?? defaultPrompt(caseDef)}
 
+What counts as a finding (benchmark v2 contract):
+
+- \`findings\` is for concrete, actionable trust risks in the changed code only — things that would make a reviewer block or investigate.
+- Benign observations, formatting remarks, mitigating context, and feedback about Diff Drift's report itself belong in \`notes\`, never in \`findings\`.
+- If your decision is \`approve\`, \`findings\` should normally be an empty array.
+- A file the report marks "Skipped — file too large to analyze" is not by itself a finding when its raw diff shows no concrete risk; weigh it in your decision and mention it in \`notes\`.
+
 Return only JSON with this shape:
 
 \`\`\`json
@@ -410,7 +417,8 @@ Return only JSON with this shape:
       "riskType": "Diff Drift flag type or your concise category",
       "evidence": "Specific code or report evidence"
     }
-  ]
+  ],
+  "notes": ["Optional benign observations or report feedback — not risks."]
 }
 \`\`\`
 `;
