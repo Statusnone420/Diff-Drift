@@ -49,7 +49,7 @@ export function renderAgentScorecard(result) {
 
   lines.push(
     "",
-    "## How to improve this score without cheating",
+    "## Improvement loop",
     "",
     "- Improve Diff Drift output so blind reviewers find the same risky nodes with less ambiguity.",
     "- Add harder cases and keep benign cases in the mix so the score cannot rise by always blocking.",
@@ -289,7 +289,7 @@ export function renderAgentDashboard(result) {
     </div>
     <section class="cases">${rows}</section>
     <section class="callout">
-      <h2>How this gets to 95 without cheating</h2>
+      <h2>Improvement loop</h2>
       <ul>
         <li>Improve the report until blind reviewers cite the intended risky nodes with less prompting.</li>
         <li>Calibrate aliases and accepted decisions only when they match defensible review behavior.</li>
@@ -385,8 +385,14 @@ function notesFor(score) {
   if (score.missedExpectations?.length) {
     notes.push(`missed ${score.missedExpectations.map(expectationShortName).join(", ")}`);
   }
+  if (score.mislocalizedExpectations?.length) {
+    notes.push(`wrong location for ${score.mislocalizedExpectations.map(expectationShortName).join(", ")}`);
+  }
   if (score.falsePositives) {
     notes.push(`${score.falsePositives} unmatched`);
+  }
+  if (score.benignWrongDecision) {
+    notes.push("wrong decision on benign case");
   }
   return notes.length ? notes.join("; ") : "clean";
 }

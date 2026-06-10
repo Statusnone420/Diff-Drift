@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { diffDriftCommand } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
 import { scoreAgentAnswer, scoreEngineResult, validateAgentAnswer } from "../../eval/lib/score.mjs";
@@ -165,6 +166,49 @@ describe("blind-agent answer scoring", () => {
     expect(score.falsePositives).toBe(0);
   });
 
+  it("penalizes always-block decisions on benign cases", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [],
+        },
+        agent: { expectedDecision: "approve" },
+      },
+      {
+        decision: "block",
+        findings: [],
+      },
+    );
+
+    expect(score.benignWrongDecision).toBe(true);
+    expect(score.decisionAccepted).toBe(false);
+    expect(score.score).toBeLessThan(50);
+  });
+
+  it("separates risk recall from wrong-file localization", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/wrong.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.recall).toBe(1);
+    expect(score.localization).toBe(0);
+    expect(score.matchedFindings).toBe(1);
+    expect(score.missedExpectations).toEqual([]);
+    expect(score.mislocalizedExpectations).toEqual(["high / Loose regex pattern / src/auth.ts"]);
+    expect(score.score).toBe(90);
+  });
+
   it("renders advisory scorecards separate from CI gating", () => {
     const result = {
       generatedAt: "2026-06-10T00:00:00.000Z",
@@ -201,6 +245,37 @@ describe("blind-agent answer scoring", () => {
       "answer.decision",
     );
     expect(() => validateAgentAnswer({ decision: "approve" })).toThrow("answer.findings");
+  });
+});
+
+describe("eval CLI command selection", () => {
+  it("builds the current checkout unless an eval binary is explicitly configured", () => {
+    const previous = process.env.DIFF_DRIFT_EVAL_BIN;
+    delete process.env.DIFF_DRIFT_EVAL_BIN;
+
+    try {
+      const command = diffDriftCommand(["check", "repo", "--json"]);
+      expect(command.bin).toBe("cargo");
+      expect(command.args).toEqual([
+        "run",
+        "--quiet",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--",
+        "check",
+        "repo",
+        "--json",
+      ]);
+
+      process.env.DIFF_DRIFT_EVAL_BIN = "custom-diff-drift";
+      expect(diffDriftCommand(["check"]).bin).toBe("custom-diff-drift");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.DIFF_DRIFT_EVAL_BIN;
+      } else {
+        process.env.DIFF_DRIFT_EVAL_BIN = previous;
+      }
+    }
   });
 });
 

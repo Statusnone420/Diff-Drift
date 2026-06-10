@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { projectRoot } from "./cases.mjs";
 
@@ -40,8 +39,8 @@ export function runDiffDrift(repoPath, stateHome, format = "json") {
   }
 }
 
-function diffDriftCommand(checkArgs) {
-  const bin = configuredBinary();
+export function diffDriftCommand(checkArgs) {
+  const bin = process.env.DIFF_DRIFT_EVAL_BIN;
   if (bin) {
     return { bin, args: checkArgs };
   }
@@ -49,24 +48,4 @@ function diffDriftCommand(checkArgs) {
     bin: "cargo",
     args: ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--", ...checkArgs],
   };
-}
-
-function configuredBinary() {
-  if (process.env.DIFF_DRIFT_EVAL_BIN) {
-    return process.env.DIFF_DRIFT_EVAL_BIN;
-  }
-  for (const candidate of debugBinaryCandidates()) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-function debugBinaryCandidates() {
-  const name = process.platform === "win32" ? "diff-drift.exe" : "diff-drift";
-  return [
-    join(projectRoot, "src-tauri", "target", "debug", name),
-    join(projectRoot, "src-tauri", "target", "release", name),
-  ];
 }

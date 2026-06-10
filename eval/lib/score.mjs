@@ -98,6 +98,7 @@ export function scoreAgentAnswer(caseDef, answer) {
   const usedFindings = new Set();
   const matchedExpectations = [];
   const missedExpectations = [];
+  const mislocalizedExpectations = [];
   let weightedHit = 0;
   let weightedTotal = 0;
   let localized = 0;
@@ -105,16 +106,16 @@ export function scoreAgentAnswer(caseDef, answer) {
   required.forEach((expected, index) => {
     const weight = severityWeight(expected.severity);
     weightedTotal += weight;
-    const findingIndex = findings.findIndex(
-      (candidate, candidateIndex) => !usedFindings.has(candidateIndex) && findingMatches(candidate, expected),
-    );
+    const findingIndex = bestFindingIndex(findings, usedFindings, expected);
     const finding = findingIndex === -1 ? null : findings[findingIndex];
     if (finding) {
       matched.add(index);
       usedFindings.add(findingIndex);
       weightedHit += weight;
-      if (!expected.filePath || normalize(finding.filePath) === normalize(expected.filePath)) {
+      if (findingFileMatches(finding, expected)) {
         localized += 1;
+      } else {
+        mislocalizedExpectations.push(describeFlagExpectation(expected));
       }
       matchedExpectations.push(describeFlagExpectation(expected));
     } else {
@@ -130,12 +131,14 @@ export function scoreAgentAnswer(caseDef, answer) {
   const recall = weightedTotal === 0 ? (findings.length === 0 ? 1 : 0) : weightedHit / weightedTotal;
   const localization = matched.size === 0 ? (required.length === 0 ? 1 : 0) : localized / matched.size;
   const topRisk = topRiskRankedFirst(findings, required);
+  const benignWrongDecision = required.length === 0 && !decisionAccepted;
   const rawScore =
     recall * 60 +
     (decisionAccepted ? 20 : 0) +
     (topRisk ? 10 : 0) +
     localization * 10 -
-    falsePositives * 5;
+    falsePositives * 5 -
+    (benignWrongDecision ? 50 : 0);
 
   return {
     caseId: caseDef.id,
@@ -148,10 +151,12 @@ export function scoreAgentAnswer(caseDef, answer) {
     localization,
     falsePositives,
     topRisk,
+    benignWrongDecision,
     matchedFindings: matched.size,
     requiredFindings: required.length,
     matchedExpectations,
     missedExpectations,
+    mislocalizedExpectations,
     unmatchedFindings: unmatchedFindings.map((finding) => finding.title),
   };
 }
@@ -198,11 +203,22 @@ export function flagMatches(flag, expected) {
   return true;
 }
 
-function findingMatches(finding, expected) {
+function bestFindingIndex(findings, usedFindings, expected) {
+  const candidates = findings
+    .map((finding, index) => ({ finding, index }))
+    .filter(({ finding, index }) => !usedFindings.has(index) && findingMatchesRisk(finding, expected));
+
+  const localized = candidates.find(({ finding }) => findingFileMatches(finding, expected));
+  return (localized ?? candidates[0])?.index ?? -1;
+}
+
+function findingMatchesRisk(finding, expected) {
   const haystack = searchableText(finding.title, finding.riskType, finding.evidence);
-  const typeMatch = expected.type ? expectedTerms(expected).some((term) => haystack.includes(term)) : true;
-  const fileMatch = expected.filePath ? normalize(finding.filePath) === normalize(expected.filePath) : true;
-  return typeMatch && fileMatch;
+  return expected.type ? expectedTerms(expected).some((term) => haystack.includes(term)) : true;
+}
+
+function findingFileMatches(finding, expected) {
+  return expected.filePath ? normalize(finding.filePath) === normalize(expected.filePath) : true;
 }
 
 function topRiskRankedFirst(findings, required) {
@@ -216,7 +232,7 @@ function topRiskRankedFirst(findings, required) {
   const first = findings[0];
   return required
     .filter((expected) => severityWeight(expected.severity) === maxWeight)
-    .some((expected) => findingMatches(first, expected));
+    .some((expected) => findingMatchesRisk(first, expected));
 }
 
 function inferDecision(required) {
