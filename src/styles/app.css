@@ -1191,6 +1191,12 @@
   max-width: 360px;
   line-height: 1.6;
 }
+.es-steps {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  max-width: 420px;
+  line-height: 1.6;
+}
 .es-open {
   height: 34px;
   padding: 0 16px;
