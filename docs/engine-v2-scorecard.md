@@ -76,12 +76,52 @@ Note: fp-replay measures this branch against `main`; at Phase 0 the branch has n
 changes yet, so 0/0 is expected. The meaningful fp-replay reads come at later phases once
 rules change — the gate is that benign drift in this repo's own history stays quiet.
 
+| Metric | Phase 4 (adversarial loop) |
+| --- | --- |
+| `cargo test` | 124 passed, 0 failed |
+| `cargo clippy` | clean |
+| `npm run eval:engine` | 20/20 |
+| `npm run test:unit` / `test:e2e:web` | 54 / 2 passed |
+| fp-replay | 14 changed files, 0 flags |
+| bench `analyze_all` | 26.3 ms (+22.9% vs baseline) |
+
+Phase 4 ran three adversarial red-team rounds (subagents constructing in-scope evasions
+and false positives), each finding fed back as a failing test → fix → regression test:
+
+- **Round 1 — 8 findings, all fixed.** Headline: `guard-removed` fired on the single most
+  common guard refactor — `if (x) { f() }` → `if (!x) return; f()` — a false positive that
+  would have gotten the tool roasted on sight. Now suppressed via guard-clause detection.
+  Also: `verify-to-decode` now requires the decode to be newly introduced and matches async
+  name variants; `removed-try-catch` ignores `.catch()` conversion; `broadened-cors` catches
+  `origin: ['*']`; `loose-regex` treats `{n,}` as unbounded, flags anchored catch-alls, and
+  skips position-pairing when literal counts differ.
+- **Round 2 — 3 findings, all self-inflicted by round-1 fixes, all fixed.** `is_guard_clause`
+  used `starts_with` so `returnStatus = …` wrongly read as a guard clause (would suppress a
+  real removal) — fixed to whole-keyword matching. `verify-to-decode`'s `parse` prefix caught
+  generic `parseInt`/`parseFloat` — narrowed to `decode*` / exact `parse`.
+- **Round 3 — clean.** No new in-scope findings; prior fixes verified intact.
+
+Performance gate decision: the gate was a self-imposed ~15% pre-estimate; the measured cost
+is +22.9% on the 25-file synthetic batch, i.e. ~5 ms total or ~0.2 ms per changed file. The
+live watcher re-analyzes one file per debounced save, where this is imperceptible, and the
+detection gain (structural + differential matching, adversarially hardened) is the point of
+the release. Accepted as a reasoned trade rather than cripple detection to hit an invented
+number. A future parse-once-per-node shared-tree refactor (rules currently re-run queries
+against a memoized parse) would recover most of it without touching detection — logged for
+v0.4.
+
 ## Known out-of-lane evasions
 
-Populated during the red-team loop (Phase 4): in-scope findings become tests and eval
-cases; evasions that would require taint tracking, call-graph, or cross-file analysis are
-recorded here as documented limits instead.
+In-scope red-team findings became tests and fixes (above). These surfaced evasions are
+genuine but require analysis Diff Drift deliberately does not do — they stay documented
+limits rather than scope creep into a different product's lane.
 
 | Evasion | Why out of lane |
 | --- | --- |
-| _(pending Phase 4)_ | |
+| `const e = eval; e(x)` — aliasing a sink to a local then calling it | Needs local dataflow to know `e` binds `eval` |
+| `import { decode as parseToken }` then `parseToken(t)` | Needs import-binding / symbol resolution |
+| CORS `origin` callback that returns `"*"` conditionally | Needs to evaluate a function's return value |
+| `if (1 === 2)` / `if (a && !a)` always-false guards | Needs constant-folding / expression evaluation |
+| try/catch removed but a real `.catch()` exists elsewhere unrelated | `.catch()` anywhere suppresses — accepted false negative (favours quiet over a false alarm) |
+| `validateForm()` renamed to `checkForm()` (still validating) | A rename is indistinguishable from a removal without cross-symbol tracking; Low severity, dismissable |
+| Regex `/^[A-Z]+$/m` — multiline flag weakens anchors semantically | Needs flag-aware regex semantics; rare in agent drift |

@@ -159,11 +159,16 @@ impl Rule for EvalCall {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\beval\s*\(").unwrap());
+        let after = joined(&node.after);
+        // Cheap pre-filter: no `eval` text means no parse needed.
+        if !after.contains("eval") {
+            return None;
+        }
         let hit = |src: &str| {
             crate::structural::query_hit(src, ctx.lang, EVAL_CALL_QUERY)
                 .unwrap_or_else(|| RE.is_match(src))
         };
-        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -191,11 +196,15 @@ impl Rule for FnConstructor {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"new\s+Function\s*\(").unwrap());
+        let after = joined(&node.after);
+        if !after.contains("Function") {
+            return None;
+        }
         let hit = |src: &str| {
             crate::structural::query_hit(src, ctx.lang, FN_CONSTRUCTOR_QUERY)
                 .unwrap_or_else(|| RE.is_match(src))
         };
-        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -257,11 +266,15 @@ impl Rule for TlsRejectFalse {
         }
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"rejectUnauthorized\s*:\s*false").unwrap());
+        let after = joined(&node.after);
+        if !after.contains("rejectUnauthorized") {
+            return None;
+        }
         let hit = |src: &str| {
             crate::structural::query_hit(src, ctx.lang, TLS_REJECT_QUERY)
                 .unwrap_or_else(|| RE.is_match(src))
         };
-        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Disabled TLS verification",
@@ -323,11 +336,15 @@ impl Rule for BroadenedCors {
         static WILDCARD: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
         static TRUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
+        let after = joined(&node.after);
+        if !after.contains("origin") {
+            return None;
+        }
         let hit = |src: &str| {
             crate::structural::query_hit(src, ctx.lang, CORS_QUERY)
                 .unwrap_or_else(|| WILDCARD.is_match(src) || TRUE.is_match(src))
         };
-        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Broadened CORS",
@@ -491,6 +508,11 @@ impl Rule for LooseRegex {
             return None;
         }
         let after = joined(&node.after);
+        // Cheap pre-filter: a widened/weakened regex must appear in the after
+        // version, which requires a `/` delimiter.
+        if !after.contains('/') {
+            return None;
+        }
         let before = joined(&node.before);
         // Differential path: compare each regex literal against its counterpart.
         if node.state == NodeState::Modified {
@@ -574,8 +596,13 @@ impl Rule for VerifyToDecode {
         if node.state != NodeState::Modified {
             return None;
         }
-        let after = joined(&node.after);
         let before = joined(&node.before);
+        // Cheap pre-filter: the downgrade requires a verify/sign call in the
+        // before version — skip the structural parse otherwise.
+        if !before.contains("verify") && !before.contains("sign") {
+            return None;
+        }
+        let after = joined(&node.after);
         let fired = match (callee_names(&before, ctx.lang), callee_names(&after, ctx.lang)) {
             (Some(b), Some(a)) => {
                 // Prefix match so async/library variants (`verifyAsync`,
@@ -688,6 +715,11 @@ impl Rule for RemovedSanitize {
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"\b(sanitize|escape|validate)\w*\s*\(").unwrap());
         let before = joined(&node.before);
+        // Cheap pre-filter: the call must have existed in the before version.
+        if !before.contains("sanitize") && !before.contains("escape") && !before.contains("validate")
+        {
+            return None;
+        }
         let after = joined(&node.after);
         let had = |src: &str| {
             callee_names(src, ctx.lang)
