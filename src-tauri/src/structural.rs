@@ -65,8 +65,11 @@ pub fn parse_snippet(src: &str, lang: Lang) -> Option<Tree> {
 type QueryCache = Mutex<HashMap<(u8, &'static str), Option<Arc<Query>>>>;
 
 /// Compiled-query cache. A query that fails to compile is cached as `None` so
-/// the cost is paid once; every rule query is covered by a unit test, so a
-/// `None` here is a programming error surfaced in debug builds.
+/// the cost is paid once, and the caller falls back to its text pattern. Every
+/// rule query is exercised by a unit test that calls the rule, so a query that
+/// fails to compile turns CI red before release — the `debug_assert` is the
+/// local fast signal, the test suite is the gate that actually prevents a
+/// broken query from shipping.
 fn compiled(lang: Lang, query_src: &'static str) -> Option<Arc<Query>> {
     static CACHE: OnceLock<QueryCache> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));

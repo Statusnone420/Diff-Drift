@@ -138,3 +138,4 @@ limits rather than scope creep into a different product's lane.
 | try/catch removed but a real `.catch()` exists elsewhere unrelated | `.catch()` anywhere suppresses — accepted false negative (favours quiet over a false alarm) |
 | `validateForm()` renamed to `checkForm()` (still validating) | A rename is indistinguishable from a removal without cross-symbol tracking; Low severity, dismissable |
 | Regex `/^[A-Z]+$/m` — multiline flag weakens anchors semantically | Needs flag-aware regex semantics; rare in agent drift |
+| `guard-removed` across deeply nested `if` consequences | Consequence text is re-parsed standalone; recovery is reliable for simple guards, so deep nesting may under-count and miss — errs toward silence, never a false alarm |
