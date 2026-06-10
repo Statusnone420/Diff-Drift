@@ -1,0 +1,14 @@
+{
+  "caseId": "benign-formatting-only",
+  "decision": "approve",
+  "confidence": 0.99,
+  "findings": [],
+  "notes": [
+    "The raw diff only changes indentation in src/routes/profile.ts, and the Diff Drift report shows 0 active flags with the file classified as formatting only."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-a",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

@@ -87,10 +87,10 @@ Dismissed flags don't count, the CLI never writes state, and an unresolvable `--
 
 The CI gate is deterministic: 15 fixture cases through the real binary, exact expected flags and exit codes (`npm run eval:engine`).
 
-The blind-agent scorecard below is advisory: **98/100 over 15 synthetic cases** (benchmark v2), one blind model evaluator, independent external validation pending. Rubric, limits, and version history in [Eval Methodology](docs/wiki/Eval-Methodology.md).
+The blind-agent scorecard below is advisory: **100/100 over 15 synthetic cases** (benchmark v3), three blind model-evaluator batches, independent external validation pending. Rubric, limits, and version history in [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
 <p align="center">
-  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 98/100 over 15 cases (benchmark v2), single model evaluator, external validation pending" width="920">
+  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 100/100 over 15 cases (benchmark v3), model-only evaluator batches, external validation pending" width="920">
 </p>
 
 To predict your own triage burden, run `npm run eval:fp-replay` on your repos — that's the number that matters for you.

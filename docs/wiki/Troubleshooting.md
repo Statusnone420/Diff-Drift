@@ -6,7 +6,7 @@ Open a folder inside a git working tree. Diff Drift uses `git2` to discover the 
 
 ## No Drift Detected
 
-The working tree matches the selected baseline, or the current changes were reverted. Check the **Review changes since** picker if you expected committed drift to remain visible, then create or save a change and wait for the watcher to update.
+The working tree matches the selected baseline, or the current changes were reverted. Check the toolbar **Scope** menu if you expected committed drift to remain visible, then create or save a change and wait for the watcher to update.
 
 ## Changed Files But No Analyzed Files
 

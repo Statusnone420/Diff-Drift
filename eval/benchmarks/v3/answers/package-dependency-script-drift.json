@@ -1,0 +1,27 @@
+{
+  "caseId": "package-dependency-script-drift",
+  "decision": "investigate",
+  "confidence": 0.92,
+  "findings": [
+    {
+      "title": "Added dependency is missing from lockfile",
+      "severity": "high",
+      "filePath": "package.json",
+      "riskType": "Dependency not in lockfile",
+      "evidence": "package.json adds \"ghost-payments-sdk\": \"^1.0.0\" and the report states it is not present in the lockfile."
+    },
+    {
+      "title": "Install-time script added",
+      "severity": "medium",
+      "filePath": "package.json",
+      "riskType": "npm script changed",
+      "evidence": "package.json adds \"postinstall\": \"node scripts/bootstrap.js\", which will execute during npm install."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-c",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

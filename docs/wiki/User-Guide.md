@@ -8,12 +8,12 @@ Browser mode (`npm run dev`) uses mock data. Native mode (`npm run tauri dev`) t
 
 ## Choose a Baseline
 
-The toolbar's **Review changes since** picker sets what the drift is measured against:
+The toolbar's **Scope** menu sets what the drift is measured against:
 
-- **Last commit (HEAD)** — uncommitted changes only (the default).
-- **Last review (trust point)** — everything since you last clicked **Mark reviewed**. This is the right baseline when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
-- **Branch start (merge-base)** — everything this branch adds over `main`/`master`.
-- **Custom ref…** — type any branch, tag, or SHA, then press Enter.
+- **Current work** — uncommitted changes only (the default).
+- **Since last review** — everything since you last clicked **Mark reviewed**. This is the right scope when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
+- **Entire branch** — everything this branch adds over `main`/`master`.
+- **Custom ref** — type any branch, tag, or SHA, then press Enter.
 
 Unresolvable choices (unknown ref, no trust point yet) show an error and keep the current baseline.
 

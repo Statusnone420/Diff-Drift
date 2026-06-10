@@ -1,0 +1,20 @@
+{
+  "caseId": "disabled-tls-verification",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "TLS certificate validation disabled",
+      "severity": "high",
+      "filePath": "src/httpClient.ts",
+      "riskType": "Disabled TLS verification",
+      "evidence": "The raw diff adds rejectUnauthorized: false to agentOptions; Diff Drift flags this as High severity Disabled TLS verification."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-a",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "caseId": "mjs-disabled-tls",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "TLS certificate validation disabled",
+      "severity": "high",
+      "filePath": "scripts/sync-inventory.mjs",
+      "riskType": "Disabled TLS verification",
+      "evidence": "The raw diff adds `rejectUnauthorized: false` to the `https.Agent` configuration; Diff Drift flags this as high severity because it disables certificate validation."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-b",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

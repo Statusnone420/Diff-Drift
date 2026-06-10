@@ -1,0 +1,15 @@
+{
+  "caseId": "noisy-benign-refactor",
+  "decision": "approve",
+  "confidence": 0.95,
+  "findings": [],
+  "notes": [
+    "The raw diff only renames and reorders currency formatting helpers while preserving the same Intl.NumberFormat behavior and label padding behavior.",
+    "Diff Drift reports 0 active risk flags."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-b",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

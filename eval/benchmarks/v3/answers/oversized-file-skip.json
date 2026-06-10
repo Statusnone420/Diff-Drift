@@ -1,0 +1,15 @@
+{
+  "caseId": "oversized-file-skip",
+  "decision": "approve",
+  "confidence": 0.88,
+  "findings": [],
+  "notes": [
+    "Diff Drift skipped `dist/bundle.js` because it is too large to analyze, but the raw diff shows only an appended comment line: `// agent appended this line`.",
+    "The skip reduces automated coverage, but there is no concrete changed-code risk visible in the packet."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-b",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

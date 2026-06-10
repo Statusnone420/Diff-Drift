@@ -1,0 +1,20 @@
+{
+  "caseId": "dynamic-code-execution",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "User input executed with eval",
+      "severity": "high",
+      "filePath": "src/renderExpression.ts",
+      "riskType": "Dynamic code execution",
+      "evidence": "The raw diff changes renderExpression from returning input.trim() to return eval(input); Diff Drift flags eval usage as High severity Dynamic code execution."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-a",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

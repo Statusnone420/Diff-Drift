@@ -176,6 +176,73 @@ describe("blind-agent answer scoring", () => {
     expect(score.falsePositives).toBe(0);
   });
 
+  it("does not let one finding satisfy duplicate same-type expectations", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+            { type: "Weakened cookie flags", severity: "high", filePath: "src/cookies.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Session cookies lost hardening",
+            severity: "high",
+            filePath: "src/cookies.ts",
+            riskType: "weakened-cookie-flags",
+            evidence: "httpOnly and secure were removed from cookie options.",
+          },
+        ],
+      },
+    );
+
+    expect(score.matchedFindings).toBe(1);
+    expect(score.requiredFindings).toBe(2);
+    expect(score.missedExpectations).toEqual([
+      "high / Weakened cookie flags / src/cookies.ts",
+    ]);
+    expect(score.recall).toBe(0.5);
+  });
+
+  it("lets one compound finding satisfy distinct risk types", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Loose regex pattern", severity: "high", filePath: "src/auth.ts" },
+            { type: "Disabled guard", severity: "low", filePath: "src/auth.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Validation accepts every token",
+            severity: "high",
+            filePath: "src/auth.ts",
+            riskType: "Loose regex pattern / Disabled guard",
+            evidence: "`/.*/` accepts any string and `if (false)` makes the rejection branch unreachable.",
+          },
+        ],
+      },
+    );
+
+    expect(score.matchedFindings).toBe(2);
+    expect(score.requiredFindings).toBe(2);
+    expect(score.missedExpectations).toEqual([]);
+    expect(score.recall).toBe(1);
+    expect(score.score).toBe(100);
+  });
+
   it("penalizes always-block decisions on benign cases", () => {
     const score = scoreAgentAnswer(
       {
@@ -219,6 +286,100 @@ describe("blind-agent answer scoring", () => {
     expect(score.score).toBe(90);
   });
 
+  it("rejects severity understatements", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.recall).toBe(0);
+    expect(score.localization).toBe(0);
+    expect(score.topRisk).toBe(false);
+    expect(score.matchedFindings).toBe(0);
+    expect(score.falsePositives).toBe(0);
+    expect(score.missedExpectations).toEqual(["high / Loose regex pattern / src/auth.ts"]);
+    expect(score.unmatchedFindings).toEqual([]);
+    expect(score.relatedFindings).toEqual(["Loose regex pattern disables validation"]);
+    expect(score.score).toBe(20);
+  });
+
+  it("allows conservative severity escalation", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [{ type: "Removed sanitization", severity: "low", filePath: "src/comments.ts" }],
+        },
+        agent: { expectedDecision: "investigate" },
+      },
+      {
+        decision: "investigate",
+        findings: [
+          {
+            title: "Sanitization removed from user-controlled HTML",
+            severity: "high",
+            filePath: "src/comments.ts",
+            riskType: "Removed sanitization",
+            evidence: "sanitizeHtml(body) was removed before rendering the comment body.",
+          },
+        ],
+      },
+    );
+
+    expect(score.recall).toBe(1);
+    expect(score.localization).toBe(1);
+    expect(score.matchedFindings).toBe(1);
+    expect(score.falsePositives).toBe(0);
+    expect(score.score).toBe(100);
+  });
+
+  it("does not let severity escalation make a lower-priority risk the top risk", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Loose regex pattern", severity: "high", filePath: "src/auth.ts" },
+            { type: "Removed sanitization", severity: "low", filePath: "src/comments.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Sanitization removed from user-controlled HTML",
+            severity: "high",
+            filePath: "src/comments.ts",
+            riskType: "Removed sanitization",
+            evidence: "sanitizeHtml(body) was removed before rendering the comment body.",
+          },
+          {
+            title: "Loose regex pattern disables validation",
+            severity: "high",
+            filePath: "src/auth.ts",
+            riskType: "Loose regex pattern",
+            evidence: "pattern changed to /.*/",
+          },
+        ],
+      },
+    );
+
+    expect(score.recall).toBe(1);
+    expect(score.topRisk).toBe(false);
+    expect(score.score).toBe(90);
+  });
+
   it("summarizes precision, false positives, and per-rule recall across cases", () => {
     const hit = scoreAgentAnswer(caseDef, {
       decision: "block",
@@ -251,6 +412,37 @@ describe("blind-agent answer scoring", () => {
       matched: 1,
       recall: 0.5,
     });
+  });
+
+  it("tracks related extra findings without counting them as false positives", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Validation now accepts arbitrary input",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Validation regression",
+          evidence: "The loose regex pattern accepts any token string.",
+        },
+      ],
+    });
+
+    expect(score.falsePositives).toBe(0);
+    expect(score.relatedFindings).toEqual(["Validation now accepts arbitrary input"]);
+
+    const summary = summarizeAgentScores([score]);
+    expect(summary.precision).toBe(1);
+    expect(summary.matchedReportedFindings).toBe(1);
+    expect(summary.totalRelatedFindings).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
   });
 
   it("treats a clean benign run as perfect precision", () => {
@@ -292,7 +484,7 @@ describe("blind-agent answer scoring", () => {
     expect(md).toContain("Overall score");
     expect(md).toContain("missed Undeclared import");
     expect(html).toContain("Blind-agent scorecard");
-    expect(html).toContain("Score distribution");
+    expect(html).toContain("Case score histogram");
     expect(html).toContain("synthetic-risk");
   });
 

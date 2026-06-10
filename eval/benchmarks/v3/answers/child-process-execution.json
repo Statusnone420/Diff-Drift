@@ -1,0 +1,20 @@
+{
+  "caseId": "child-process-execution",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "Unsafely constructed shell command",
+      "severity": "high",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process execution",
+      "evidence": "The raw diff imports execSync from node:child_process and runs execSync(\"tar -czf out.tgz \" + path), concatenating the function argument directly into a shell command; Diff Drift flags child_process usage as High severity."
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-a",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

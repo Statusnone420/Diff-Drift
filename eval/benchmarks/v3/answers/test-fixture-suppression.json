@@ -1,0 +1,14 @@
+{
+  "caseId": "test-fixture-suppression",
+  "decision": "approve",
+  "confidence": 0.9,
+  "findings": [],
+  "notes": [
+    "The only change adds a hardcoded-looking fakeAwsKey constant under tests/fixtures/provider.test.ts, and the report shows no active flags."
+  ],
+  "evaluator": {
+    "id": "gpt-5.5-codex-v3-batch-c",
+    "kind": "model",
+    "note": "Benchmark v3. Blind subagent: packet-only context; severity-scored prompt."
+  }
+}

@@ -5,6 +5,7 @@ const severityScore = new Map([
 ]);
 
 const flagAliases = new Map([
+  ["Hardcoded secret", ["hardcoded secret", "credential", "secret", "access key", "aws access key"]],
   ["Dependency not in lockfile", ["dependency not in lockfile", "lockfile", "dependency drift"]],
   ["npm script changed", ["npm script", "install script", "postinstall"]],
   ["Weakened cookie flags", ["weakened cookie flags", "cookie flags", "httponly", "secure", "samesite"]],
@@ -95,7 +96,7 @@ export function scoreAgentAnswer(caseDef, answer) {
   const required = caseDef.oracle.requiredFlags ?? [];
   const findings = answer.findings;
   const matched = new Set();
-  const usedFindings = new Set();
+  const usedFindingTypes = new Map();
   const matchedExpectations = [];
   const missedExpectations = [];
   const mislocalizedExpectations = [];
@@ -106,11 +107,11 @@ export function scoreAgentAnswer(caseDef, answer) {
   required.forEach((expected, index) => {
     const weight = severityWeight(expected.severity);
     weightedTotal += weight;
-    const findingIndex = bestFindingIndex(findings, usedFindings, expected);
+    const findingIndex = bestFindingIndex(findings, usedFindingTypes, expected);
     const finding = findingIndex === -1 ? null : findings[findingIndex];
     if (finding) {
       matched.add(index);
-      usedFindings.add(findingIndex);
+      markFindingUsedForType(usedFindingTypes, findingIndex, expected.type);
       weightedHit += weight;
       if (findingFileMatches(finding, expected)) {
         localized += 1;
@@ -123,8 +124,15 @@ export function scoreAgentAnswer(caseDef, answer) {
     }
   });
 
+  const usedFindings = new Set(usedFindingTypes.keys());
   const unmatchedFindings = findings.filter((_finding, index) => !usedFindings.has(index));
-  const falsePositives = unmatchedFindings.length;
+  const relatedFindings = unmatchedFindings.filter((finding) =>
+    required.some((expected) => findingRelatedToExpected(finding, expected)),
+  );
+  const falsePositiveFindings = unmatchedFindings.filter((finding) =>
+    !required.some((expected) => findingRelatedToExpected(finding, expected)),
+  );
+  const falsePositives = falsePositiveFindings.length;
   const expectedDecision = caseDef.agent?.expectedDecision ?? inferDecision(required);
   const acceptedDecisions = acceptedDecisionSet(caseDef, expectedDecision);
   const decisionAccepted = acceptedDecisions.includes(normalize(answer.decision));
@@ -153,12 +161,14 @@ export function scoreAgentAnswer(caseDef, answer) {
     topRisk,
     benignWrongDecision,
     matchedFindings: matched.size,
+    matchedReportedFindings: usedFindings.size,
     totalFindings: findings.length,
     requiredFindings: required.length,
     matchedExpectations,
     missedExpectations,
     mislocalizedExpectations,
-    unmatchedFindings: unmatchedFindings.map((finding) => finding.title),
+    unmatchedFindings: falsePositiveFindings.map((finding) => finding.title),
+    relatedFindings: relatedFindings.map((finding) => finding.title),
     // Per-expectation hit/miss, keyed by flag type — feeds per-rule recall.
     expectationDetails: required.map((expected, index) => ({
       type: expected.type ?? describeFlagExpectation(expected),
@@ -176,6 +186,11 @@ export function summarizeAgentScores(scores) {
   const average = (values) =>
     values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
   const matchedFindings = scores.reduce((sum, score) => sum + (score.matchedFindings ?? 0), 0);
+  const matchedReportedFindings = scores.reduce(
+    (sum, score) => sum + (score.matchedReportedFindings ?? score.matchedFindings ?? 0),
+    0,
+  );
+  const totalRelatedFindings = scores.reduce((sum, score) => sum + (score.relatedFindings?.length ?? 0), 0);
   const totalFindings = scores.reduce(
     (sum, score) => sum + (score.totalFindings ?? (score.matchedFindings ?? 0) + (score.falsePositives ?? 0)),
     0,
@@ -203,9 +218,11 @@ export function summarizeAgentScores(scores) {
     decisionAccuracy: average(scores.map((score) => (score.decisionAccepted ? 1 : 0))),
     averageRecall: average(scores.map((score) => score.recall)),
     averageLocalization: average(scores.map((score) => score.localization)),
-    precision: totalFindings === 0 ? 1 : matchedFindings / totalFindings,
+    precision: totalFindings === 0 ? 1 : (matchedReportedFindings + totalRelatedFindings) / totalFindings,
     matchedFindings,
+    matchedReportedFindings,
     totalFindings,
+    totalRelatedFindings,
     totalFalsePositives: scores.reduce((sum, score) => sum + (score.falsePositives ?? 0), 0),
     perRuleRecall,
   };
@@ -267,13 +284,28 @@ export function flagMatches(flag, expected) {
   return true;
 }
 
-function bestFindingIndex(findings, usedFindings, expected) {
+function bestFindingIndex(findings, usedFindingTypes, expected) {
   const candidates = findings
     .map((finding, index) => ({ finding, index }))
-    .filter(({ finding, index }) => !usedFindings.has(index) && findingMatchesRisk(finding, expected));
+    .filter(
+      ({ finding, index }) =>
+        !findingAlreadyUsedForType(usedFindingTypes, index, expected.type) &&
+        findingMatchesExpected(finding, expected),
+    );
 
   const localized = candidates.find(({ finding }) => findingFileMatches(finding, expected));
   return (localized ?? candidates[0])?.index ?? -1;
+}
+
+function markFindingUsedForType(usedFindingTypes, index, type) {
+  const key = normalize(type);
+  const usedTypes = usedFindingTypes.get(index) ?? new Set();
+  usedTypes.add(key);
+  usedFindingTypes.set(index, usedTypes);
+}
+
+function findingAlreadyUsedForType(usedFindingTypes, index, type) {
+  return usedFindingTypes.get(index)?.has(normalize(type)) ?? false;
 }
 
 function findingMatchesRisk(finding, expected) {
@@ -281,8 +313,20 @@ function findingMatchesRisk(finding, expected) {
   return expected.type ? expectedTerms(expected).some((term) => haystack.includes(term)) : true;
 }
 
+function findingMatchesExpected(finding, expected) {
+  return findingMatchesRisk(finding, expected) && findingSeverityMatches(finding, expected);
+}
+
+function findingSeverityMatches(finding, expected) {
+  return expected.severity ? severityWeight(finding.severity) >= severityWeight(expected.severity) : true;
+}
+
 function findingFileMatches(finding, expected) {
   return expected.filePath ? normalize(finding.filePath) === normalize(expected.filePath) : true;
+}
+
+function findingRelatedToExpected(finding, expected) {
+  return findingFileMatches(finding, expected) && findingMatchesRisk(finding, expected);
 }
 
 function topRiskRankedFirst(findings, required) {
@@ -296,7 +340,7 @@ function topRiskRankedFirst(findings, required) {
   const first = findings[0];
   return required
     .filter((expected) => severityWeight(expected.severity) === maxWeight)
-    .some((expected) => findingMatchesRisk(first, expected));
+    .some((expected) => findingMatchesExpected(first, expected));
 }
 
 function inferDecision(required) {

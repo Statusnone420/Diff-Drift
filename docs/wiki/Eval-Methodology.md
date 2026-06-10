@@ -25,7 +25,7 @@ Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code ex
 
 ## Blind-Agent Rubric
 
-A blind packet contains the Diff Drift markdown report, the raw git diff, and a prompt. It never contains the oracle. The reviewer returns a decision (`approve | investigate | block`), a findings list, and (since benchmark v2) an optional `notes` list for benign observations and report feedback — notes are validated for shape but **ignored entirely by scoring**, no credit and no penalty. `eval/lib/score.mjs` scores the rest:
+A blind packet contains the Diff Drift markdown report, the raw git diff, and a prompt. It never contains the oracle. The reviewer returns a decision (`approve | investigate | block`), a findings list, and (since benchmark v2) an optional `notes` list for benign observations and report feedback. Notes are validated for shape but **ignored entirely by scoring**, no credit and no penalty. `eval/lib/score.mjs` scores the rest:
 
 ```
 score = recall × 60
@@ -37,23 +37,28 @@ score = recall × 60
 ```
 
 - **Recall** is severity-weighted: low = 1, medium = 2, high = 3. Missing a High costs three times a Low.
+- **Finding shape** is enforced: `severity`, `filePath`, `riskType`, and `evidence` are mandatory.
+- **Severity matching** is scored in benchmark v3: the reported severity must meet or exceed the expected severity. Understating severity misses the required finding; conservative escalation is allowed.
+- **Compound findings** can satisfy distinct expected risk types when one reported finding clearly names both risks, but one finding cannot satisfy duplicate same-type expectations.
 - **Localization**: a matched finding must name the expected file path.
-- **False positives**: every reported finding that matches no expected flag costs 5 points. On benign cases (zero required flags), any finding zeroes recall — always-block, always-find strategies cannot win.
+- **Related extras**: an unmatched finding that names the expected file and risk area is tracked separately from false positives. It gets no recall credit, but it is not treated as speculative noise.
+- **False positives**: every reported finding that matches no expected flag or related expected risk costs 5 points. On benign cases (zero required flags), any finding zeroes recall — always-block, always-find strategies cannot win.
 - **Decision calibration**: some cases accept more than one decision (e.g. `investigate` or `block` for a low-severity XSS-shaped change) when both are defensible review behavior. Accepted decisions are declared in the case file.
 
-### Semantic aliases (published rubric, frozen)
+### Semantic aliases (current rubric)
 
 Finding text is matched against the expected flag type plus these aliases (global table in `eval/lib/score.mjs`; cases may add per-flag aliases, declared in the case file):
 
 | Flag type | Global aliases |
 | --- | --- |
+| Hardcoded secret | hardcoded secret, credential, secret, access key, aws access key |
 | Dependency not in lockfile | dependency not in lockfile, lockfile, dependency drift |
 | npm script changed | npm script, install script, postinstall |
 | Weakened cookie flags | weakened cookie flags, cookie flags, httponly, secure, samesite |
 | Permissive logging config | permissive logging, logger redaction, redaction removed |
 | Undeclared import | undeclared import, undeclared dependency, not declared |
 
-**Frozen-rubric policy:** rubric weights, aliases, and accepted decisions are calibrated *before* answers are generated and are never tuned afterward to improve a score. If a defensible answer scores badly, that is reported as a rubric limitation — changing the rubric invalidates every previously published number and is treated as starting a new benchmark version (see below).
+**Frozen-rubric policy:** rubric weights, aliases, and accepted decisions are calibrated *before* answers are generated and are never tuned afterward to improve a score. If a defensible answer scores badly, that is reported as a rubric limitation. Changing the rubric starts a new benchmark version instead of rewriting older numbers.
 
 ## Benchmark Versions
 
@@ -61,6 +66,7 @@ Every instrument change starts a new version; old scores are never recomputed un
 
 - **v1** (2026-06-09): original prompt, 15 synthetic cases, one blind model evaluator. **Scored 72/100** — decision accuracy 15/15 and 100% per-rule recall, but precision was 43%: the prompt didn't say where benign observations belong, so the reviewer put commentary in `findings` and the zero-oracle cases (any finding zeroes recall there) collapsed to 15–20 points. That's a prompt-contract ambiguity, not a detection failure — but 72 is the honest v1 number and stands.
 - **v2** (2026-06-10): the packet prompt defines the contract explicitly — findings are actionable trust risks only, benign observations go in a new scoring-ignored `notes` field, `approve` normally means empty findings, and a size-skipped file with a clean diff is a note, not a finding. The JSX secret fixture also became realistic (non-docs-example key, actually wired into the upload call) so reviewers have nothing legitimate to caveat. All 15 answers regenerated blind under the new packets. **Scored 98/100.** Clarification (same version, no score impact): the validator now enforces the full finding shape the prompt always required — `severity`, `filePath`, `riskType`, and `evidence` are mandatory, so a title-only finding cannot collect evidence-and-location credit. Every recorded v2 answer already satisfied the shape; the rescore is unchanged.
+- **v3** (2026-06-10): severity became a scored part of the answer contract instead of only a required field. The prompt now says severity is scored; the scorer rejects severity understatements, permits conservative escalation, supports compound findings for distinct risk types, blocks duplicate same-type reuse, and tracks related extra findings separately from false positives. All 15 answers were regenerated blind from packet-only context by three model-evaluator batches. **Scored 100/100.** The score remains model-only internal evidence with independent external validation pending.
 
 ## Evaluators and Honesty Constraints
 
@@ -74,14 +80,14 @@ Every published benchmark's raw answers and scorecard are committed under `eval/
 
 ```bash
 npm install
-npm run eval:score-agent -- eval/benchmarks/v2/answers
+npm run eval:score-agent -- eval/benchmarks/v3/answers
 ```
 
-That rescores the exact recorded answers through the current rubric and must print the published number (v2: 98/100). The committed `scorecard.md`/`scorecard.json` are the outputs of the original run for diffing.
+That rescores the exact recorded v3 answers through the current rubric and must print the current published number: 100/100. Older benchmark folders preserve their raw answers and original scorecards for historical comparison; scorer changes start a new version rather than restating old numbers.
 
 ## Reported Metrics
 
-The scorecard reports, per run: overall score, decision accuracy, severity-weighted recall, localization, **precision** (matched findings ÷ all reported findings), total unmatched findings, and **per-rule recall** (matched/required per flag type across all cases that require it). Per-case rows include misses, mislocalizations, and unmatched findings verbatim.
+The scorecard reports, per run: overall score, decision accuracy, severity-weighted recall, localization, **precision** ((matched reported findings + related extras) ÷ all reported findings), total related extras, total false positives, and **per-rule recall** (matched/required per flag type across all cases that require it). Per-case rows include misses, mislocalizations, related extras, and unmatched findings verbatim.
 
 ## FP-Replay: Measuring Noise on Your Own Repos
 
