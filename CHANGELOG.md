@@ -15,9 +15,17 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 - FP-replay script (`npm run eval:fp-replay`) to measure flag noise on your own repos; it builds the CLI if missing.
 - Trust documentation: `SECURITY.md`, threat model, privacy/data-flow page, eval methodology, A/B study design, FAQ, and this changelog.
 
+### Fixed
+
+- Changes to skipped oversized files now revoke a "Mark reviewed" approval; previously they slipped past the drift fingerprint.
+- Skipped files get their own center panel instead of reading as "formatting only".
+
 ### Changed
 
 - README rewritten: problem-first lead, tool comparison, install-from-release, CI/hook examples, honestly captioned scorecard.
+- `schemaVersion` bumped to 3 for the new skipped-file fields.
+- Blind-answer validation enforces the full finding shape (severity, file path, risk type, evidence).
+- The published benchmark's raw answers and scorecard are committed under `eval/benchmarks/v2/` so the score is reproducible from a fresh clone.
 - Blind-agent benchmark moved to v2 (findings/notes prompt contract, realistic JSX fixture); v1's 72/100 is preserved in the methodology history, v2 scores 98/100.
 - The release workflow refuses tags that don't match all three version fields.
 - Privacy/security docs now state the verifiable claim: no HTTP client in the compiled Windows binary (the framework lists one for other platforms).
