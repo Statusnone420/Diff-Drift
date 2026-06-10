@@ -30,7 +30,7 @@ The top toolbar shows the current repo, branch, baseline, review progress, flag 
 ## Understand Counts
 
 - **Changed files**: every path git reports as different from the baseline, any file type.
-- **Analyzed files**: changed TS/TSX/JS/JSX files Diff Drift parsed, plus `package.json` when its dependencies or scripts drifted.
+- **Analyzed files**: changed TS/TSX/JS/JSX files Diff Drift parsed, plus `package.json` when its dependencies or scripts drifted. Files over 2 MB are not parsed — they stay in the list with the summary "Skipped — file too large to analyze" so the limit is visible. Review giant generated bundles by other means.
 - **Flags**: active heuristic findings. Dismissed flags stay in the session but do not count as active.
 - **Reviewed**: changed nodes you've marked reviewed vs the total ( shown per file as `n/m` and drift-wide in the toolbar).
 - **Node legend**: added, modified, and removed AST nodes inside the selected analyzed file.

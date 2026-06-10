@@ -30,7 +30,18 @@ pub fn lockfile_names(root: &Path) -> Option<LockfileNames> {
     }
     for name in &LOCKFILE_NAMES[1..] {
         if let Ok(text) = std::fs::read_to_string(root.join(name)) {
-            return Some(LockfileNames::Text(text));
+            let parsed = if *name == "yarn.lock" {
+                yarn_lock_names(&text)
+            } else {
+                pnpm_lock_names(&text)
+            };
+            // A lockfile with content the parser doesn't recognize falls back
+            // to the loose text check — a false "present" is safer than a
+            // false alarm against an unknown format revision.
+            if parsed.is_empty() && !text.trim().is_empty() {
+                return Some(LockfileNames::Text(text));
+            }
+            return Some(LockfileNames::Parsed(parsed));
         }
     }
     None
@@ -39,17 +50,106 @@ pub fn lockfile_names(root: &Path) -> Option<LockfileNames> {
 pub enum LockfileNames {
     /// package-lock.json parsed into the set of installed package names.
     Npm(HashSet<String>),
-    /// yarn.lock / pnpm-lock.yaml checked as text (`name@` occurs) — loose on
-    /// purpose; a false "present" is safer than a false alarm.
+    /// yarn.lock / pnpm-lock.yaml entry headers parsed into package names —
+    /// exact matching, so `left-pad` in the lockfile cannot vouch for a
+    /// hallucinated `pad`.
+    Parsed(HashSet<String>),
+    /// Fallback for unrecognized lockfile content: checked as text
+    /// (`name@` occurs) — loose on purpose; a false "present" is safer
+    /// than a false alarm.
     Text(String),
 }
 
 impl LockfileNames {
     fn contains(&self, name: &str) -> bool {
         match self {
-            LockfileNames::Npm(set) => set.contains(name),
+            LockfileNames::Npm(set) | LockfileNames::Parsed(set) => set.contains(name),
             LockfileNames::Text(text) => text.contains(&format!("{name}@")),
         }
+    }
+}
+
+/// Entry names from a yarn lockfile (classic v1 and berry). Entry headers are
+/// the non-indented, non-comment lines ending with `:`, holding one or more
+/// quoted descriptors like `"@scope/pkg@^1.0.0", "@scope/pkg@npm:^1.2.0":` —
+/// the package name is everything before the `@` that starts the range
+/// (skipping a scope's leading `@`).
+fn yarn_lock_names(text: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for line in text.lines() {
+        if line.starts_with([' ', '\t']) || line.starts_with('#') {
+            continue;
+        }
+        let Some(entry) = line.trim_end().strip_suffix(':') else {
+            continue;
+        };
+        for descriptor in entry.split(',') {
+            let d = descriptor.trim().trim_matches('"');
+            if d.is_empty() {
+                continue;
+            }
+            let version_at = d
+                .char_indices()
+                .skip(1) // a scope's leading @ is part of the name
+                .find(|(_, c)| *c == '@')
+                .map(|(i, _)| i);
+            let name = version_at.map_or(d, |i| &d[..i]);
+            if !name.is_empty() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Entry names from `pnpm-lock.yaml`'s `packages:` section across lockfile
+/// revisions: v5 `/name/1.0.0:`, v6 `/name@1.0.0:`, v9 `name@1.0.0:`, each
+/// optionally quoted (scoped packages keep their leading `@`).
+fn pnpm_lock_names(text: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut in_packages = false;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue; // blank lines don't end a YAML section
+        }
+        if !line.starts_with(' ') {
+            in_packages = line.trim_end() == "packages:";
+            continue;
+        }
+        if !in_packages {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if line.len() - trimmed.len() != 2 {
+            continue; // entry keys sit at indent 2; their fields sit deeper
+        }
+        let Some(key) = trimmed.trim_end().strip_suffix(':') else {
+            continue;
+        };
+        if let Some(name) = pnpm_entry_name(key) {
+            names.insert(name);
+        }
+    }
+    names
+}
+
+fn pnpm_entry_name(key: &str) -> Option<String> {
+    let key = key.trim_matches(|c| c == '"' || c == '\'');
+    let key = key.strip_prefix('/').unwrap_or(key);
+    if let Some(rest) = key.strip_prefix('@') {
+        // @scope/name@ver (v6/v9) or @scope/name/ver (v5)
+        let slash = rest.find('/')?;
+        let tail = &rest[slash + 1..];
+        let end = tail
+            .find(['@', '/'])
+            .map_or(rest.len(), |i| slash + 1 + i);
+        Some(format!("@{}", &rest[..end]))
+    } else {
+        let end = key.find(['@', '/']).unwrap_or(key.len());
+        if end == 0 {
+            return None;
+        }
+        Some(key[..end].to_string())
     }
 }
 
@@ -337,6 +437,80 @@ mod tests {
         assert_eq!(ghost.r#type, "Dependency not in lockfile");
         let ok = res.flags.iter().find(|f| f.desc.contains("left-pad")).unwrap();
         assert_eq!(ok.r#type, "New dependency");
+    }
+
+    #[test]
+    fn yarn_lock_names_parses_classic_and_berry_entries() {
+        let lock = concat!(
+            "# THIS IS AN AUTOGENERATED FILE.\n",
+            "# yarn lockfile v1\n",
+            "\n",
+            "left-pad@^1.3.0:\n",
+            "  version \"1.3.0\"\n",
+            "\n",
+            "\"@scope/util@^2.0.0\", \"@scope/util@^2.1.0\":\n",
+            "  version \"2.1.4\"\n",
+            "\n",
+            "\"resolved-from-berry@npm:^4.0.0\":\n",
+            "  version: 4.2.0\n",
+        );
+        let names = yarn_lock_names(lock);
+        assert!(names.contains("left-pad"));
+        assert!(names.contains("@scope/util"), "scoped names keep their scope");
+        assert!(names.contains("resolved-from-berry"), "berry npm: ranges parse");
+        assert!(!names.contains("pad"), "no suffix-collision entries");
+        assert!(!names.contains("version"), "indented fields are not entries");
+    }
+
+    #[test]
+    fn pnpm_lock_names_parses_v5_v6_and_v9_package_keys() {
+        let v5 = "lockfileVersion: 5.4\n\npackages:\n\n  /left-pad/1.3.0:\n    resolution: {integrity: sha512-x}\n  /@scope/util/2.1.4:\n    dev: false\n";
+        let names = pnpm_lock_names(v5);
+        assert!(names.contains("left-pad"));
+        assert!(names.contains("@scope/util"));
+
+        let v6 = "lockfileVersion: '6.0'\n\npackages:\n\n  /left-pad@1.3.0:\n    resolution: {integrity: sha512-x}\n  '/@scope/util@2.1.4':\n    dev: false\n";
+        let names = pnpm_lock_names(v6);
+        assert!(names.contains("left-pad"));
+        assert!(names.contains("@scope/util"));
+
+        let v9 = "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      left-pad:\n        specifier: ^1.3.0\n        version: 1.3.0\n\npackages:\n\n  left-pad@1.3.0:\n    resolution: {integrity: sha512-x}\n  '@scope/util@2.1.4':\n    engines: {node: '>=14'}\n";
+        let names = pnpm_lock_names(v9);
+        assert!(names.contains("left-pad"));
+        assert!(names.contains("@scope/util"));
+        assert!(
+            !names.contains("dependencies") && !names.contains("specifier"),
+            "importer fields are not package names"
+        );
+    }
+
+    #[test]
+    fn parsed_lockfiles_do_not_vouch_for_suffix_collisions() {
+        // The old substring check let `left-pad@` vouch for a hallucinated
+        // `pad`. Parsed entry names match exactly.
+        let lock = LockfileNames::Parsed(yarn_lock_names("left-pad@^1.3.0:\n  version \"1.3.0\"\n"));
+        let after = r#"{ "dependencies": { "left-pad": "^1.3.0", "pad": "1.0.0" } }"#;
+        let res = analyze_package_json(None, Some(after), Some(&lock)).unwrap();
+        let ghost = res.flags.iter().find(|f| f.desc.contains("\u{201c}pad\u{201d}")).unwrap();
+        assert_eq!(ghost.r#type, "Dependency not in lockfile");
+        let ok = res.flags.iter().find(|f| f.desc.contains("left-pad")).unwrap();
+        assert_eq!(ok.r#type, "New dependency");
+    }
+
+    #[test]
+    fn lockfile_names_falls_back_to_text_for_unrecognized_content() {
+        let root = std::env::temp_dir().join(format!("drift-lock-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        std::fs::write(root.join("yarn.lock"), "left-pad@^1.3.0:\n  version \"1.3.0\"\n").unwrap();
+        assert!(matches!(lockfile_names(&root), Some(LockfileNames::Parsed(_))));
+
+        // Content the parser can't read anything from → loose text fallback.
+        std::fs::write(root.join("yarn.lock"), "  ???\n  indented only\n").unwrap();
+        assert!(matches!(lockfile_names(&root), Some(LockfileNames::Text(_))));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

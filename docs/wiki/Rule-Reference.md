@@ -31,7 +31,7 @@ When a drifted `package.json` changes its dependency or script sections, each ch
 
 | Rule | Severity | Triggers On | Notes |
 | --- | --- | --- | --- |
-| Dependency not in lockfile | High | A dependency added to package.json whose name the lockfile can't vouch for | The slopsquatting guard: agents sometimes hallucinate package names. Only fires when a lockfile exists — no lockfile, no accusation. `package-lock.json` is parsed; `yarn.lock`/`pnpm-lock.yaml` are checked loosely as text. |
+| Dependency not in lockfile | High | A dependency added to package.json whose name the lockfile can't vouch for | The slopsquatting guard: agents sometimes hallucinate package names. Only fires when a lockfile exists — no lockfile, no accusation. `package-lock.json` is parsed as JSON; `yarn.lock` (classic and berry) and `pnpm-lock.yaml` (v5/v6/v9) entry names are parsed exactly, so a real `left-pad` cannot vouch for a hallucinated `pad`. Unrecognized lockfile formats fall back to a loose text check — a false "present" is safer than a false alarm. |
 | New dependency | Medium | A dependency added and present in the lockfile | Verify it's intended and vetted. |
 | Dependency version changed | Low | A version range changed | Confirm the bump is intentional. |
 | npm script changed | Medium | A script added or modified | Scripts run arbitrary shell commands during install and dev. |

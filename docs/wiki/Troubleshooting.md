@@ -12,6 +12,10 @@ The working tree matches the selected baseline, or the current changes were reve
 
 Diff Drift analyzes changed TypeScript, TSX, JavaScript, JSX, and root `package.json` dependency/script drift. Other changed files can still count as git drift, but they will not appear as AST nodes or dependency nodes.
 
+## A File Shows "Skipped — file too large to analyze"
+
+Files over 2 MB on either side of the drift are not parsed — this is a guard against giant generated bundles exhausting memory or CPU. The file stays in the list so the skip is visible. There is no override; review oversized files by other means (and consider whether a 2 MB+ source file should be in the drift at all).
+
 ## A Flag Looks Wrong
 
 Flags are heuristic prompts. Dismiss the flag if it is reviewed and not actionable. If it is noisy in a common code shape, open an issue or Discussion with:

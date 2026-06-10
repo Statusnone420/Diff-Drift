@@ -171,6 +171,12 @@ fn before_content_in(repo: Option<&Repository>, baseline: &Baseline, rel: &str) 
     }
 }
 
+/// Files larger than this on either side of the drift are not parsed — a
+/// denial-of-service guard for giant generated bundles. The file still appears
+/// in the drift list with a "Skipped" summary, so the limit is visible instead
+/// of silent.
+pub const MAX_PARSE_BYTES: usize = 2 * 1024 * 1024;
+
 /// Analyze ONE path. `None` if it isn't actually drifted from the baseline
 /// (byte-identical or absent in both) — so reverting a file removes it from the drift.
 pub fn analyze_file(
@@ -199,6 +205,31 @@ fn analyze_file_in(
     }
 
     let lang = parse::Lang::from_path(rel)?;
+    let largest = before_src
+        .as_deref()
+        .map_or(0, str::len)
+        .max(after_src.as_deref().map_or(0, str::len));
+    if largest > MAX_PARSE_BYTES {
+        let (dir, name) = split_path(rel);
+        return Some(FileResult {
+            entry: FileEntry {
+                id: sanitize_id(rel),
+                name,
+                dir,
+                lang: lang.label().into(),
+                risks: 0,
+                summary: format!(
+                    "Skipped — file too large to analyze ({:.1} MB > {} MB)",
+                    largest as f64 / (1024.0 * 1024.0),
+                    MAX_PARSE_BYTES / (1024 * 1024)
+                ),
+                changed_nodes: 0,
+                reviewed_nodes: 0,
+                nodes: Vec::new(),
+            },
+            flags: Vec::new(),
+        });
+    }
     let before = parse_file(before_src.as_deref().unwrap_or(""), lang);
     let after = parse_file(after_src.as_deref().unwrap_or(""), lang);
     let mut nodes = diff_nodes(&before, &after);
@@ -621,6 +652,34 @@ mod tests {
             sevs.windows(2).all(|w| w[0] <= w[1]),
             "flags severity-sorted"
         );
+    }
+
+    #[test]
+    fn oversized_files_are_skipped_with_a_visible_summary() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("fixture is a git repo");
+
+        // New untracked file just over the cap: surfaced, not parsed.
+        let line = "const padding_value = 1;\n"; // 25 bytes
+        let big = line.repeat(MAX_PARSE_BYTES / line.len() + 1);
+        std::fs::write(root.join("huge.ts"), &big).expect("write oversized file");
+        let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
+            .expect("oversized file still appears in the drift");
+        assert!(res.entry.nodes.is_empty(), "no AST nodes for skipped file");
+        assert!(res.flags.is_empty(), "no flags for skipped file");
+        assert_eq!(res.entry.risks, 0);
+        assert!(
+            res.entry.summary.starts_with("Skipped — file too large to analyze"),
+            "summary explains the skip: {}",
+            res.entry.summary
+        );
+        assert_eq!(res.entry.lang, "TypeScript", "language still reported");
+
+        // The same content under the cap parses normally.
+        std::fs::write(root.join("small.ts"), line).expect("write small file");
+        let res = analyze_file(&root, "small.ts", &HashSet::new(), &Baseline::default())
+            .expect("small file analyzes");
+        assert!(!res.entry.nodes.is_empty(), "under the cap parses to nodes");
     }
 
     #[test]
