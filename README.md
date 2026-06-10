@@ -37,7 +37,7 @@ Use it when an agent made a broad edit, a refactor touched security-sensitive co
 - Shows structural AST drift against a baseline you choose: `HEAD`, the **trust point** pinned by your last review (drift stays visible after the agent commits), the merge-base with `main`, or any rev.
 - Flags heuristic security concerns such as loosened validation, removed sanitization, disabled TLS checks, undeclared imports, and dependencies the lockfile can't vouch for.
 - Lets you review changes node by node with progress tracking, dismiss flags, mark the drift reviewed, and export a Markdown or JSON report.
-- Doubles as a read-only gate for scripts and agents: `diff-drift check --json` exits with the highest active severity.
+- Doubles as a read-only gate for scripts and agents: `diff-drift check --json` exits with the highest active severity. The CLI is the same installed `diff-drift.exe` — see the [User Guide](docs/wiki/User-Guide.md) for invoking it from a terminal.
 
 Diff Drift runs locally and is deliberately not an LLM. It does not send repository contents to a server or model API — it's the reviewer in the loop that can't hallucinate or be prompt-injected.
 

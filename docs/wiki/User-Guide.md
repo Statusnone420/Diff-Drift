@@ -8,11 +8,11 @@ Browser mode (`npm run dev`) uses mock data. Native mode (`npm run tauri dev`) t
 
 ## Choose a Baseline
 
-The toolbar shows what the drift is measured against: `vs HEAD`. Use the picker to switch:
+The toolbar's **Review changes since** picker sets what the drift is measured against:
 
-- **HEAD** — uncommitted changes only (the default).
-- **Trust point** — everything since you last clicked **Mark reviewed**. This is the right baseline when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
-- **Merge-base** — everything this branch adds over `main`/`master`.
+- **Last commit (HEAD)** — uncommitted changes only (the default).
+- **Last review (trust point)** — everything since you last clicked **Mark reviewed**. This is the right baseline when an agent commits as it works: the drift stays visible after each commit. Locked until a review pins one.
+- **Branch start (merge-base)** — everything this branch adds over `main`/`master`.
 - **Custom ref…** — type any branch, tag, or SHA, then press Enter.
 
 Unresolvable choices (unknown ref, no trust point yet) show an error and keep the current baseline.
@@ -55,13 +55,24 @@ Reports include the repo, branch, baseline, flag state, reviewed state, analyzed
 
 ## Headless Check (for scripts and agents)
 
-The same binary doubles as a read-only CLI:
+The CLI is not a separate install — it is the same `diff-drift.exe` the app runs, invoked from a terminal with the `check` subcommand. The Windows installer puts it at `%LOCALAPPDATA%\Diff Drift\diff-drift.exe` by default (per-user install). In a development checkout it is `src-tauri\target\debug\diff-drift.exe` after a build.
+
+Run it with the full path, or add the install folder to your `PATH` once:
+
+```powershell
+& "$env:LOCALAPPDATA\Diff Drift\diff-drift.exe" check . --json
+
+# Optional: make `diff-drift` available everywhere (new terminals)
+[Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$env:LOCALAPPDATA\Diff Drift", "User")
+```
+
+Usage:
 
 ```bash
 diff-drift check [path] [--json|--md] [--baseline <head|trust-point|merge-base|rev>]
 ```
 
-It prints the session (JSON by default) and exits with the highest active severity: `0` none, `1` low, `2` medium, `3` high, `64` usage error. Dismissed flags don't count — it reads the same per-repo triage state as the app. Example gate in an agent hook or CI step:
+It prints the session (JSON by default) and exits with the highest active severity: `0` none, `1` low, `2` medium, `3` high, `64` usage error (`--help` exits `0`). Dismissed flags don't count — it reads the same per-repo triage state as the app, and never writes anything. An explicit `--baseline` that can't resolve (unknown ref, trust point not pinned, no default branch for a merge-base) fails with exit `64` and the cause on stderr — it never silently falls back to `HEAD`. Example gate in an agent hook or CI step:
 
 ```bash
 diff-drift check . --baseline trust-point || echo "drift needs review"

@@ -34,8 +34,11 @@ Browser mode does not use the Rust backend. It loads `src/data/mockSession.ts` a
 ```bash
 npm run test:rust
 npm run build
+npm run test:unit
 npm run test:e2e:web
 ```
+
+`test:rust` includes integration tests in `src-tauri/tests/` that spawn the built `diff-drift` binary. `test:unit` runs the vitest component tests in `tests/unit/`.
 
 Native E2E:
 
@@ -52,11 +55,11 @@ Native E2E builds a debug Tauri app and launches it with isolated environment va
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push/PR: `cargo test` + `cargo clippy -- -D warnings` on Windows, and `npm run build` + the web E2E on Ubuntu. Keep clippy clean — warnings fail the build.
+`.github/workflows/ci.yml` runs on every push/PR: `cargo test` + `cargo clippy -- -D warnings` on Windows; `npm run build` + unit tests + the web E2E on Ubuntu; a native Tauri build smoke (debug, no bundle) plus an advisory native E2E on Windows; and `cargo audit` + `npm audit` dependency gates on Ubuntu. Keep clippy clean — warnings fail the build.
 
 ## Headless Check
 
-The debug binary also serves the CLI: `cargo run -- check <path> --json` (or run the built `drift-inspector.exe check …`). It is read-only by design; see the User Guide for flags and exit codes.
+The debug binary also serves the CLI: `cargo run -- check <path> --json` (or run the built `diff-drift.exe check …`). It is read-only by design; see the User Guide for flags and exit codes.
 
 ## Fixtures
 

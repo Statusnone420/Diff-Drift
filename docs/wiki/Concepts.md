@@ -10,12 +10,12 @@ The default baseline is `HEAD`, which scopes drift to uncommitted changes. Other
 
 The baseline is the "before" side of every comparison. Per repo, it can be:
 
-- **HEAD** (default): the last commit — uncommitted drift only.
-- **Trust point**: the commit pinned by the last **Mark reviewed** — everything since you last trusted the code.
-- **Merge-base**: the common ancestor with `main`/`master` — everything this branch adds.
+- **Last commit (HEAD)** (default): uncommitted drift only.
+- **Last review (trust point)**: the commit pinned by the last **Mark reviewed** — everything since you last trusted the code.
+- **Branch start (merge-base)**: the common ancestor with `main`/`master` — everything this branch adds.
 - **Custom ref**: any branch, tag, or SHA.
 
-The choice persists per repo and is shown in the toolbar (`vs …`). Choices that can't resolve (no trust point yet, no default branch, unknown ref) are rejected with a message; analysis never silently changes baselines.
+The choice persists per repo via the toolbar's **Review changes since** picker. Choices that can't resolve (no trust point yet, no default branch, unknown ref) are rejected with a message; analysis never silently changes baselines.
 
 ## Trust Point
 
@@ -71,4 +71,4 @@ Export writes the current session as Markdown or JSON. Markdown is for people. J
 
 ## Headless Check
 
-`diff-drift check [path]` runs the same analysis without the GUI and prints the session as JSON (or `--md`). The exit code is the highest active severity (0 none / 1 low / 2 medium / 3 high), so scripts and agent hooks can gate on it. It reads the same per-repo triage state as the app and never writes anything.
+`diff-drift check [path]` runs the same analysis without the GUI and prints the session as JSON (or `--md`). The exit code is the highest active severity (0 none / 1 low / 2 medium / 3 high), so scripts and agent hooks can gate on it. An explicit `--baseline` that can't resolve exits 64 with the cause on stderr — never a silent HEAD fallback. It reads the same per-repo triage state as the app and never writes anything.
