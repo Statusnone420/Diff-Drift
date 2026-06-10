@@ -15,6 +15,9 @@ dist-ssr
 # Generated demo session repo (nested git repo; recreate with `npm run seed:demo`)
 /demo/
 
+# Generated benchmark repos, packets, answers, and reports
+/.eval/
+
 # Verification scratch
 /.shots/
 /.test-results/

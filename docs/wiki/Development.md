@@ -68,6 +68,30 @@ cargo bench --manifest-path src-tauri/Cargo.toml -- --save-baseline pre-opt
 cargo bench --manifest-path src-tauri/Cargo.toml -- --baseline pre-opt
 ```
 
+## Evaluation Harness
+
+The deterministic product benchmark is part of CI:
+
+```bash
+npm run eval:engine
+```
+
+It builds temporary git repos from `eval/cases/*.case.mjs`, runs `diff-drift check --json`, and scores the result against each case oracle. Generated repos, reports, packets, answers, and latest score JSON live under `.eval/` and are ignored.
+
+Generate blind-review packets for another agent or human:
+
+```bash
+npm run eval:packets
+```
+
+Packets are written to `.eval/packets/<case-id>/` with a prompt, Diff Drift markdown report, raw git diff, and metadata without the oracle. Save blind-agent JSON answers under `.eval/answers/<case-id>.json`, then score them:
+
+```bash
+npm run eval:score-agent
+```
+
+Use `--case <case-id>` with `eval:engine` or `eval:packets` to narrow a run while developing a fixture. Use `--keep` to preserve the generated temp repo path printed by the script for debugging.
+
 ## Visual Baselines
 
 Visual regression checks are local-only and are not run in CI. They cover the browser mock onboarding, loaded session, and dismissed states.
