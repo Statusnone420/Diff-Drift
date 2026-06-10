@@ -321,7 +321,9 @@ describe("blind-agent answer scoring", () => {
     expect(score.matchedFindings).toBe(1);
     expect(score.missedExpectations).toEqual([]);
     expect(score.mislocalizedExpectations).toEqual(["high / Loose regex pattern / src/auth.ts"]);
-    expect(score.score).toBe(90);
+    // A mislocalized first finding does NOT earn the top-risk bonus.
+    expect(score.topRisk).toBe(false);
+    expect(score.score).toBe(80);
   });
 
   it("rejects severity understatements", () => {

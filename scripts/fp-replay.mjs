@@ -77,6 +77,12 @@ function replayTarget(target) {
     if ((run.status ?? 1) === 64) {
       return { label, repoPath, baseline, error: (run.stderr || run.stdout).trim() };
     }
+    // A crash (signal/abort/OOM) exits non-zero with no JSON. Surface stderr
+    // and the exit code instead of an opaque "Unexpected end of JSON input".
+    if (!run.stdout || !run.stdout.trim()) {
+      const detail = (run.stderr || "").trim() || "no output";
+      return { label, repoPath, baseline, error: `exit ${run.status ?? "null"}: ${detail}` };
+    }
     const data = JSON.parse(run.stdout);
     const activeFlags = (data.flags ?? []).filter((flag) => !flag.dismissed);
     const byRule = {};

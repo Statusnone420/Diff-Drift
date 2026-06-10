@@ -155,4 +155,9 @@ jobs:
 
           Artifacts: NSIS installer, SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
           "@
-          gh release create $env:GITHUB_REF_NAME --draft --title "Diff Drift $env:GITHUB_REF_NAME" --notes $notes (Get-ChildItem dist-release -File | ForEach-Object FullName)
+          # Pass the multiline body via a file — avoids any PowerShell/native
+          # argument quoting or newline-encoding pitfalls.
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -Path $notesPath -Value $notes -Encoding utf8NoBOM
+          $assets = Get-ChildItem dist-release -File | ForEach-Object FullName
+          gh release create $env:GITHUB_REF_NAME --draft --title "Diff Drift $env:GITHUB_REF_NAME" --notes-file $notesPath $assets

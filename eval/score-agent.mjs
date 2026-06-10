@@ -41,6 +41,19 @@ for (const file of answerFiles) {
   );
 }
 
+// Each case should be answered once per evaluator; a repeated (caseId,
+// evaluator) pair would let duplicate answers skew the averages.
+const seenCaseEvaluator = new Set();
+for (const score of scores) {
+  const key = `${score.caseId}|${score.evaluator?.id ?? "unspecified"}`;
+  if (seenCaseEvaluator.has(key)) {
+    console.warn(
+      `WARNING: case "${score.caseId}" answered more than once by "${score.evaluator?.id ?? "unspecified"}" — every answer is scored and averaged.`,
+    );
+  }
+  seenCaseEvaluator.add(key);
+}
+
 const evaluators = collectEvaluators(scores);
 const externalValidation = summarizeExternalValidation(scores);
 const result = {

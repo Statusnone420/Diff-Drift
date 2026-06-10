@@ -237,8 +237,12 @@ fn analyze_file_in(
             return None;
         }
         // Real content identity anchors the approval fingerprint — immune to
-        // same-size edits and mtime games (P2).
-        let skip_marker = format!("{before_oid:?}|{after_oid:?}");
+        // same-size edits and mtime games (P2). Use the oid's stable hex
+        // `Display` (its canonical SHA), NOT `{:?}` — git2's `Debug` shape is
+        // not a stability contract, and a future change to it would silently
+        // alter every stored fingerprint and mass-revoke approvals.
+        let oid_id = |oid: Option<git2::Oid>| oid.map_or_else(|| "none".to_string(), |o| o.to_string());
+        let skip_marker = format!("{}|{}", oid_id(before_oid), oid_id(after_oid));
         let (dir, name) = split_path(rel);
         return Some(FileResult {
             entry: FileEntry {
@@ -751,6 +755,11 @@ mod tests {
         assert!(res.flags.is_empty(), "no flags for skipped file");
         assert_eq!(res.entry.risks, 0);
         assert!(res.entry.skipped, "marked skipped");
+        // The fingerprint marker is stable hex oids (Display), not git2's
+        // unstable Debug shape — no "Some(...)" wrapper.
+        let marker = res.skip_marker.as_deref().expect("skipped file carries a marker");
+        assert!(!marker.contains("Some(") && !marker.contains("None"), "marker is bare oids: {marker}");
+        assert!(marker.contains('|'), "marker joins before|after: {marker}");
         assert!(
             res.entry.summary.starts_with("Skipped — file too large to analyze"),
             "summary explains the skip: {}",

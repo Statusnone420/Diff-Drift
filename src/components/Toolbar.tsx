@@ -218,7 +218,9 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
                   "no open flags"
                 )
               ) : (
-                `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open`
+                `${session.riskCount} flag${session.riskCount === 1 ? "" : "s"} still open${
+                  hasSkippedFiles ? `; ${skippedCopy}` : ""
+                }`
               )}
             </>
           ) : zero ? (

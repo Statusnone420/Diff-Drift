@@ -5,7 +5,10 @@ const severityScore = new Map([
 ]);
 
 const flagAliases = new Map([
-  ["Hardcoded secret", ["hardcoded secret", "credential", "secret", "access key", "aws access key"]],
+  // "secret" alone was too broad — it appears in evidence for unrelated risks
+  // and let a non-secret finding match this type. The specific phrases below
+  // still recognize a hardcoded-secret description.
+  ["Hardcoded secret", ["hardcoded secret", "credential", "access key", "aws access key", "api key"]],
   ["Dependency not in lockfile", ["dependency not in lockfile", "lockfile", "dependency drift"]],
   ["npm script changed", ["npm script", "install script", "postinstall"]],
   ["Weakened cookie flags", ["weakened cookie flags", "cookie flags", "httponly", "secure", "samesite"]],
@@ -199,7 +202,12 @@ export function summarizeAgentScores(scores) {
   );
   const totalRelatedFindings = scores.reduce((sum, score) => sum + (score.relatedFindings?.length ?? 0), 0);
   const totalFindings = scores.reduce(
-    (sum, score) => sum + (score.totalFindings ?? (score.matchedFindings ?? 0) + (score.falsePositives ?? 0)),
+    (sum, score) =>
+      sum +
+      (score.totalFindings ??
+        (score.matchedFindings ?? 0) +
+          (score.falsePositives ?? 0) +
+          (score.relatedFindings?.length ?? 0)),
     0,
   );
 
@@ -344,7 +352,7 @@ function topRiskRankedFirst(findings, required) {
   const first = findings[0];
   return required
     .filter((expected) => severityWeight(expected.severity) === maxWeight)
-    .some((expected) => findingMatchesExpected(first, expected));
+    .some((expected) => findingMatchesExpected(first, expected) && findingFileMatches(first, expected));
 }
 
 function inferDecision(required) {

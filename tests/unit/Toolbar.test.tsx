@@ -118,4 +118,20 @@ describe("Toolbar status copy", () => {
       "Reviewed at 12:00 — no open flags; 1 skipped file not analyzed",
     );
   });
+
+  it("keeps approved open-flag copy honest when files were skipped", () => {
+    renderToolbar(
+      makeSession({
+        approved: true,
+        approvedAt: "12:00",
+        changedFiles: 3,
+        riskCount: 2,
+        fileCount: 2,
+        skippedFiles: 1,
+      }),
+    );
+    expect(screen.getByTestId("summary-pill")).toHaveTextContent(
+      "Reviewed at 12:00 — 2 flags still open; 1 skipped file not analyzed",
+    );
+  });
 });

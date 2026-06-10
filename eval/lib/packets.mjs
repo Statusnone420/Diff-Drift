@@ -794,9 +794,10 @@ function pendingValidationText(coverage, evaluators = []) {
       // Some, but not all, cases have external review.
       return `External human review covers ${externalCases} of ${totalCases} cases; full independent coverage is pending.`;
     }
-    // Full external coverage with ≥2 evaluators normally clears pending; this
-    // is a defensive label only.
-    return `External human review covers all ${totalCases} case${totalCases === 1 ? "" : "s"}.`;
+    // Unreachable from externalValidationPending() (full coverage + ≥2
+    // evaluators clears it). Defensive, non-contradictory text in case a
+    // hand-edited result forces the pending flag.
+    return `Verify evaluator metadata: full external coverage is reported but the pending flag is set.`;
   }
   const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
   if (hasHuman) {
