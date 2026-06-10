@@ -1,20 +1,19 @@
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { projectRoot } from "./cases.mjs";
+
+let defaultBuildDone = false;
 
 export function runDiffDrift(repoPath, stateHome, format = "json") {
   mkdirSync(stateHome, { recursive: true });
   const args = ["check", repoPath, format === "md" ? "--md" : "--json"];
   const command = diffDriftCommand(args);
+  prepareDiffDriftCommand(command);
   const result = spawnSync(command.bin, command.args, {
     cwd: projectRoot,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      APPDATA: stateHome,
-      HOME: stateHome,
-      XDG_CONFIG_HOME: stateHome,
-    },
+    env: diffDriftRuntimeEnv(stateHome),
   });
 
   if (result.error) {
@@ -45,7 +44,47 @@ export function diffDriftCommand(checkArgs) {
     return { bin, args: checkArgs };
   }
   return {
-    bin: "cargo",
-    args: ["run", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--", ...checkArgs],
+    bin: debugBinaryPath(),
+    args: checkArgs,
+    build: {
+      bin: "cargo",
+      args: ["build", "--quiet", "--manifest-path", "src-tauri/Cargo.toml", "--bin", "diff-drift"],
+    },
   };
+}
+
+export function diffDriftRuntimeEnv(stateHome) {
+  return {
+    ...process.env,
+    APPDATA: stateHome,
+    HOME: stateHome,
+    XDG_CONFIG_HOME: stateHome,
+  };
+}
+
+function prepareDiffDriftCommand(command) {
+  if (!command.build || defaultBuildDone) {
+    return;
+  }
+
+  const result = spawnSync(command.build.bin, command.build.args, {
+    cwd: projectRoot,
+    encoding: "utf8",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  const exitCode = result.status ?? 1;
+  if (exitCode !== 0) {
+    throw new Error(`cargo build failed: ${result.stderr || result.stdout}`);
+  }
+
+  defaultBuildDone = true;
+}
+
+function debugBinaryPath() {
+  const name = process.platform === "win32" ? "diff-drift.exe" : "diff-drift";
+  return join(projectRoot, "src-tauri", "target", "debug", name);
 }

@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { diffDriftCommand } from "../../eval/lib/cli.mjs";
+import { diffDriftCommand, diffDriftRuntimeEnv } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
 import { scoreAgentAnswer, scoreEngineResult, validateAgentAnswer } from "../../eval/lib/score.mjs";
@@ -249,26 +249,33 @@ describe("blind-agent answer scoring", () => {
 });
 
 describe("eval CLI command selection", () => {
-  it("builds the current checkout unless an eval binary is explicitly configured", () => {
+  it("builds the current checkout before running an isolated binary", () => {
     const previous = process.env.DIFF_DRIFT_EVAL_BIN;
     delete process.env.DIFF_DRIFT_EVAL_BIN;
 
     try {
       const command = diffDriftCommand(["check", "repo", "--json"]);
-      expect(command.bin).toBe("cargo");
-      expect(command.args).toEqual([
-        "run",
-        "--quiet",
-        "--manifest-path",
-        "src-tauri/Cargo.toml",
-        "--",
-        "check",
-        "repo",
-        "--json",
-      ]);
+      expect(command.bin.replace(/\\/g, "/")).toMatch(/src-tauri\/target\/debug\/diff-drift(\.exe)?$/);
+      expect(command.args).toEqual(["check", "repo", "--json"]);
+      expect(command.build).toEqual({
+        bin: "cargo",
+        args: [
+          "build",
+          "--quiet",
+          "--manifest-path",
+          "src-tauri/Cargo.toml",
+          "--bin",
+          "diff-drift",
+        ],
+      });
+
+      const runtimeEnv = diffDriftRuntimeEnv("state-home");
+      expect(runtimeEnv.HOME).toBe("state-home");
+      expect(runtimeEnv.APPDATA).toBe("state-home");
+      expect(runtimeEnv.XDG_CONFIG_HOME).toBe("state-home");
 
       process.env.DIFF_DRIFT_EVAL_BIN = "custom-diff-drift";
-      expect(diffDriftCommand(["check"]).bin).toBe("custom-diff-drift");
+      expect(diffDriftCommand(["check"])).toEqual({ bin: "custom-diff-drift", args: ["check"] });
     } finally {
       if (previous === undefined) {
         delete process.env.DIFF_DRIFT_EVAL_BIN;
