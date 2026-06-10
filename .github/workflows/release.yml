@@ -27,16 +27,25 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # Refuse to release when the tag disagrees with the source of truth —
-      # the three version fields are aligned per the release runbook.
-      - name: Check tag matches package version
+      # Refuse to release when the tag disagrees with ANY of the three
+      # version sources the runbook says must stay aligned.
+      - name: Check tag matches all version fields
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME -replace '^v', ''
-          $pkg = (Get-Content package.json | ConvertFrom-Json).version
-          if ($tag -ne $pkg) {
-            Write-Error "Tag v$tag does not match package.json version $pkg. Align versions before tagging."
+          $versions = [ordered]@{
+            'package.json'              = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            'src-tauri/tauri.conf.json' = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+            # Anchored at line start: only the [package] version matches —
+            # dependency versions are inline-table fields, not line-leading.
+            'src-tauri/Cargo.toml'      = ([regex]::Match((Get-Content src-tauri/Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
           }
+          $mismatches = $versions.GetEnumerator() | Where-Object { $_.Value -ne $tag }
+          if ($mismatches) {
+            $detail = ($mismatches | ForEach-Object { "$($_.Key) = $($_.Value)" }) -join '; '
+            Write-Error "Tag v$tag does not match: $detail. Align all three versions before tagging."
+          }
+          "All version fields match v$tag"
 
       - run: npm ci
 
