@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { collectAnswerFiles } from "./lib/answers.mjs";
 import { loadCases, projectRoot } from "./lib/cases.mjs";
-import { collectEvaluators, externalValidationPending, normalizeEvaluator } from "./lib/evaluators.mjs";
+import {
+  collectEvaluators,
+  externalValidationPending,
+  normalizeEvaluator,
+  summarizeExternalValidation,
+} from "./lib/evaluators.mjs";
 import { evalOutputRoot, writeAgentScores } from "./lib/packets.mjs";
 import { scoreAgentAnswer, summarizeAgentScores } from "./lib/score.mjs";
 
@@ -37,14 +42,17 @@ for (const file of answerFiles) {
 }
 
 const evaluators = collectEvaluators(scores);
+const externalValidation = summarizeExternalValidation(scores);
 const result = {
   generatedAt: new Date().toISOString(),
   averageScore: Math.round(scores.reduce((sum, score) => sum + score.score, 0) / scores.length),
   summary: summarizeAgentScores(scores),
   evaluators,
-  // Honest by construction: a single evaluator, any all-model panel, or an
-  // internal human pass is not independent external validation.
-  externalValidationPending: externalValidationPending(evaluators),
+  externalValidation,
+  // Honest by construction: a single evaluator, any all-model panel, an
+  // internal human pass, or partial external coverage is not independent
+  // external validation.
+  externalValidationPending: externalValidationPending(externalValidation),
   scores,
 };
 writeAgentScores(result);

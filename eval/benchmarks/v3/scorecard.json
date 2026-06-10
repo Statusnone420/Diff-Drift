@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-10T17:01:39.118Z",
+  "generatedAt": "2026-06-10T17:42:12.997Z",
   "averageScore": 100,
   "summary": {
     "decisionAccuracy": 1,
@@ -107,6 +107,11 @@
       "averageScore": 100
     }
   ],
+  "externalValidation": {
+    "evaluatorCount": 3,
+    "externalCases": 0,
+    "totalCases": 15
+  },
   "externalValidationPending": true,
   "scores": [
     {

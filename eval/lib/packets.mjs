@@ -40,7 +40,7 @@ export function renderAgentScorecard(result) {
   }
   if (result.externalValidationPending) {
     lines.push(
-      `> **Independent external validation pending.** ${pendingValidationText(result.evaluators)} Treat the score as an internal product-quality signal, not third-party validation.`,
+      `> **Independent external validation pending.** ${pendingValidationText(validationCoverage(result), result.evaluators)} Treat the score as an internal product-quality signal, not third-party validation.`,
       "",
     );
   }
@@ -56,7 +56,7 @@ export function renderAgentScorecard(result) {
     const related = summary.totalRelatedFindings ?? 0;
     const falsePositives = summary.totalFalsePositives ?? 0;
     lines.push(
-      `- Precision: ${percent(summary.precision)} (${matchedReported} matched, ${related} related, ${falsePositives} false positives across ${summary.totalFindings} reported findings)`,
+      `- Precision: ${percent(summary.precision)} — ${matchedReported} matched of ${summary.totalFindings} reported (${related} near-miss, ${falsePositives} false positives; both lower precision)`,
     );
   }
   lines.push(
@@ -124,7 +124,7 @@ export function renderAgentDashboard(result) {
     ? `<span>${escapeHtml(result.evaluators.map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases})`).join(" | "))}</span>`
     : "<span>No evaluator metadata</span>";
   const pendingBanner = result.externalValidationPending
-    ? `<p class="pending"><b>Independent external validation pending.</b> ${escapeHtml(pendingValidationText(result.evaluators))} Treat this as an internal product-quality signal, not third-party validation.</p>`
+    ? `<p class="pending"><b>Independent external validation pending.</b> ${escapeHtml(pendingValidationText(validationCoverage(result), result.evaluators))} Treat this as an internal product-quality signal, not third-party validation.</p>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -780,12 +780,29 @@ function evaluatorKind(evaluator) {
   return evaluator.external === true ? `external ${evaluator.kind}` : evaluator.kind;
 }
 
-function pendingValidationText(evaluators = []) {
+function pendingValidationText(coverage, evaluators = []) {
+  // Some external coverage exists but is incomplete: distinguish single/partial
+  // external review from none at all.
+  if ((coverage?.externalCases ?? 0) > 0) {
+    return `External human review covers ${coverage.externalCases} of ${coverage.totalCases} cases; full independent coverage is pending.`;
+  }
   const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
   if (hasHuman) {
     return "Human answers are present, but no human evaluator is marked external.";
   }
   return "No external human evaluator has contributed answers yet.";
+}
+
+// Coverage off the result, with a no-external fallback so render-only callers
+// (and older result snapshots) resolve to the evaluator-based copy.
+function validationCoverage(result) {
+  return (
+    result.externalValidation ?? {
+      externalCases: 0,
+      totalCases: result.scores?.length ?? 0,
+      evaluatorCount: result.evaluators?.length ?? 0,
+    }
+  );
 }
 
 function panelKindText(evaluators = []) {

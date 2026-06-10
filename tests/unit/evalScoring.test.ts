@@ -4,7 +4,10 @@ import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { diffDriftCommand, diffDriftRuntimeEnv } from "../../eval/lib/cli.mjs";
 import { renderAgentDashboard, renderAgentScorecard } from "../../eval/lib/packets.mjs";
-import { collectEvaluators, externalValidationPending } from "../../eval/lib/evaluators.mjs";
+import {
+  externalValidationPending,
+  summarizeExternalValidation,
+} from "../../eval/lib/evaluators.mjs";
 import { createCaseRepo } from "../../eval/lib/repo.mjs";
 import {
   scoreAgentAnswer,
@@ -211,7 +214,7 @@ describe("blind-agent answer scoring", () => {
     expect(score.recall).toBe(0.5);
   });
 
-  it("lets one compound finding satisfy distinct risk types", () => {
+  it("does not let one finding satisfy multiple distinct-type risks", () => {
     const score = scoreAgentAnswer(
       {
         ...caseDef,
@@ -237,11 +240,45 @@ describe("blind-agent answer scoring", () => {
       },
     );
 
-    expect(score.matchedFindings).toBe(2);
+    // One finding is credited to ONE expected risk; the second distinct-type
+    // risk stays missed. (high weight 3 of 4 total → recall 0.75.)
+    expect(score.matchedFindings).toBe(1);
     expect(score.requiredFindings).toBe(2);
-    expect(score.missedExpectations).toEqual([]);
-    expect(score.recall).toBe(1);
-    expect(score.score).toBe(100);
+    expect(score.missedExpectations).toEqual(["low / Disabled guard / src/auth.ts"]);
+    expect(score.recall).toBe(0.75);
+    expect(score.score).toBe(85);
+  });
+
+  it("does not let a keyword-stuffed finding cover two unrelated risks", () => {
+    const score = scoreAgentAnswer(
+      {
+        ...caseDef,
+        oracle: {
+          ...caseDef.oracle,
+          requiredFlags: [
+            { type: "Hardcoded secret", severity: "high", filePath: "src/a.ts" },
+            { type: "Disabled TLS verification", severity: "high", filePath: "src/a.ts" },
+          ],
+        },
+      },
+      {
+        decision: "block",
+        findings: [
+          {
+            title: "Multiple problems",
+            severity: "high",
+            filePath: "src/a.ts",
+            riskType: "Hardcoded secret / Disabled TLS verification",
+            evidence: "A hardcoded secret and rejectUnauthorized: false both appear.",
+          },
+        ],
+      },
+    );
+
+    // Two equal-weight risks, one finding → only one credited (recall 0.5).
+    expect(score.matchedFindings).toBe(1);
+    expect(score.recall).toBe(0.5);
+    expect(score.missedExpectations.length).toBe(1);
   });
 
   it("penalizes always-block decisions on benign cases", () => {
@@ -415,7 +452,7 @@ describe("blind-agent answer scoring", () => {
     });
   });
 
-  it("tracks related extra findings without counting them as false positives", () => {
+  it("tracks related near-miss findings without counting them as false positives", () => {
     const score = scoreAgentAnswer(caseDef, {
       decision: "block",
       findings: [
@@ -429,12 +466,48 @@ describe("blind-agent answer scoring", () => {
       ],
     });
 
+    // A near-miss (right risk, understated severity) is not a hard false
+    // positive, but it did not match — so it does NOT earn precision.
     expect(score.falsePositives).toBe(0);
     expect(score.relatedFindings).toEqual(["Loose regex pattern disables validation"]);
 
     const summary = summarizeAgentScores([score]);
-    expect(summary.precision).toBe(1);
+    expect(summary.precision).toBe(0);
     expect(summary.matchedReportedFindings).toBe(0);
+    expect(summary.totalRelatedFindings).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+  });
+
+  it("related findings lower precision without being false positives", () => {
+    const matchedCase = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+    const nearMissCase = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+      ],
+    });
+
+    const summary = summarizeAgentScores([matchedCase, nearMissCase]);
+    // 1 matched of 2 reported → precision 0.5; the near-miss is not an FP.
+    expect(summary.precision).toBe(0.5);
+    expect(summary.matchedReportedFindings).toBe(1);
     expect(summary.totalRelatedFindings).toBe(1);
     expect(summary.totalFalsePositives).toBe(0);
   });
@@ -598,17 +671,60 @@ describe("blind-agent answer scoring", () => {
   });
 
   it("keeps validation pending until a human evaluator is explicitly external", () => {
-    const internalPanel = collectEvaluators([
-      { evaluator: { id: "model-batch", kind: "model" }, score: 100 },
-      { evaluator: { id: "maintainer-pass", kind: "human" }, score: 100 },
+    const internal = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "model-batch", kind: "model" } },
+      { caseId: "a", evaluator: { id: "maintainer-pass", kind: "human" } },
     ]);
-    expect(externalValidationPending(internalPanel)).toBe(true);
+    expect(externalValidationPending(internal)).toBe(true);
 
-    const externalPanel = collectEvaluators([
-      { evaluator: { id: "model-batch", kind: "model" }, score: 100 },
-      { evaluator: { id: "outside-reviewer", kind: "human", external: true }, score: 100 },
+    const external = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "model-batch", kind: "model" } },
+      { caseId: "a", evaluator: { id: "outside-reviewer", kind: "human", external: true } },
     ]);
-    expect(externalValidationPending(externalPanel)).toBe(false);
+    expect(externalValidationPending(external)).toBe(false);
+  });
+
+  it("keeps validation pending for partial external coverage", () => {
+    // External human reviewed case a only; model covers a and b.
+    const coverage = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "a", evaluator: { id: "model", kind: "model" } },
+      { caseId: "b", evaluator: { id: "model", kind: "model" } },
+    ]);
+    expect(coverage).toEqual({ evaluatorCount: 2, externalCases: 1, totalCases: 2 });
+    expect(externalValidationPending(coverage)).toBe(true);
+  });
+
+  it("clears validation only when every case has external review", () => {
+    const coverage = summarizeExternalValidation([
+      { caseId: "a", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "b", evaluator: { id: "outside", kind: "human", external: true } },
+      { caseId: "a", evaluator: { id: "model", kind: "model" } },
+      { caseId: "b", evaluator: { id: "model", kind: "model" } },
+    ]);
+    expect(coverage).toEqual({ evaluatorCount: 2, externalCases: 2, totalCases: 2 });
+    expect(externalValidationPending(coverage)).toBe(false);
+  });
+
+  it("reads a single external human as partial coverage, not none", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [
+        { id: "model", kind: "model", cases: 3, averageScore: 100 },
+        { id: "outside", kind: "human", external: true, cases: 1, averageScore: 100 },
+      ],
+      externalValidation: { evaluatorCount: 2, externalCases: 1, totalCases: 3 },
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    expect(md).toContain("External human review covers 1 of 3 cases");
+    expect(html).toContain("External human review covers 1 of 3 cases");
+    expect(md).not.toContain("no human evaluator is marked external");
   });
 
   it("rejects malformed answers", () => {
@@ -699,6 +815,50 @@ describe("answer file collection", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("v3 benchmark reproduces the committed scorecard", () => {
+  it("rescores the committed answers to the published headline", async () => {
+    const { loadCases, projectRoot } = await import("../../eval/lib/cases.mjs");
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    const answersDir = join(projectRoot, "eval", "benchmarks", "v3", "answers");
+    const cases = await loadCases();
+    const byId = new Map(cases.map((caseDef) => [caseDef.id, caseDef]));
+
+    const scores = readdirSync(answersDir)
+      .filter((file) => file.endsWith(".json"))
+      .sort()
+      .map((file) => {
+        const answer = JSON.parse(readFileSync(join(answersDir, file), "utf8"));
+        const caseId = answer.caseId ?? file.replace(/\.json$/i, "");
+        const caseDef = byId.get(caseId);
+        if (!caseDef) throw new Error(`No eval case for committed answer ${caseId}`);
+        return { caseId, evaluator: answer.evaluator, ...scoreAgentAnswer(caseDef, { ...answer, caseId }) };
+      });
+
+    const summary = summarizeAgentScores(scores);
+    const averageScore = Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length);
+    const coverage = summarizeExternalValidation(scores);
+    const committed = JSON.parse(
+      readFileSync(join(projectRoot, "eval", "benchmarks", "v3", "scorecard.json"), "utf8"),
+    );
+
+    // The committed snapshot must equal what the live scorer produces — this
+    // catches any future scorer change that silently drifts the headline.
+    expect(averageScore).toBe(committed.averageScore);
+    expect(summary.precision).toBe(committed.summary.precision);
+    expect(summary.averageRecall).toBe(committed.summary.averageRecall);
+    expect(summary.totalFalsePositives).toBe(committed.summary.totalFalsePositives);
+    expect(externalValidationPending(coverage)).toBe(committed.externalValidationPending);
+
+    // And the published headline is the honest one.
+    expect(averageScore).toBe(100);
+    expect(summary.precision).toBe(1);
+    expect(summary.totalFalsePositives).toBe(0);
+    expect(externalValidationPending(coverage)).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 # Diff Drift blind-agent scorecard
 
-Generated: 2026-06-10T17:01:39.118Z
+Generated: 2026-06-10T17:42:12.997Z
 
 > Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.
 
@@ -13,7 +13,7 @@ Overall score: [##########] 100/100
 - Decision accuracy: 100%
 - Finding recall: 100%
 - Localization: 100%
-- Precision: 100% (19 matched, 0 related, 0 false positives across 19 reported findings)
+- Precision: 100% — 19 matched of 19 reported (0 near-miss, 0 false positives; both lower precision)
 
 | Case | Score | Decision | Recall | Notes |
 | --- | ---: | --- | ---: | --- |

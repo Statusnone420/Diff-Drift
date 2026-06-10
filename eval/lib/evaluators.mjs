@@ -31,9 +31,33 @@ export function collectEvaluators(scored) {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function externalValidationPending(evaluators) {
+// Per-case external-review coverage. A case counts as externally validated
+// only if one of its answers came from a human evaluator explicitly marked
+// `external: true`. Keyed by caseId so partial coverage (one external human on
+// a subset of cases) is visible, not hidden by the aggregated evaluator list.
+export function summarizeExternalValidation(scored) {
+  const caseHasExternal = new Map();
+  const evaluatorKeys = new Set();
+  scored.forEach((score, index) => {
+    const evaluator = normalizeEvaluator(score.evaluator);
+    evaluatorKeys.add(`${evaluator.id}|${evaluator.kind}|${evaluator.external === true ? "ext" : "int"}`);
+    const caseKey = score.caseId ?? score.answerFile ?? `#${index}`;
+    const isExternalHuman = evaluator.kind === "human" && evaluator.external === true;
+    caseHasExternal.set(caseKey, (caseHasExternal.get(caseKey) ?? false) || isExternalHuman);
+  });
+  return {
+    evaluatorCount: evaluatorKeys.size,
+    externalCases: [...caseHasExternal.values()].filter(Boolean).length,
+    totalCases: caseHasExternal.size,
+  };
+}
+
+export function externalValidationPending(coverage) {
+  // Independent validation requires at least two evaluators AND an external
+  // human review on EVERY case. Zero or partial external coverage stays pending.
   return (
-    evaluators.length < 2 ||
-    !evaluators.some((evaluator) => evaluator.kind === "human" && evaluator.external === true)
+    coverage.evaluatorCount < 2 ||
+    coverage.totalCases === 0 ||
+    coverage.externalCases < coverage.totalCases
   );
 }

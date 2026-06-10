@@ -96,7 +96,10 @@ export function scoreAgentAnswer(caseDef, answer) {
   const required = caseDef.oracle.requiredFlags ?? [];
   const findings = answer.findings;
   const matched = new Set();
-  const usedFindingTypes = new Map();
+  // Global: a reported finding can be credited to AT MOST ONE expected risk.
+  // Once consumed it is unavailable to every other expectation, so one finding
+  // cannot satisfy multiple risks (no cross-type or duplicate reuse).
+  const usedFindings = new Set();
   const matchedExpectations = [];
   const missedExpectations = [];
   const mislocalizedExpectations = [];
@@ -107,11 +110,11 @@ export function scoreAgentAnswer(caseDef, answer) {
   required.forEach((expected, index) => {
     const weight = severityWeight(expected.severity);
     weightedTotal += weight;
-    const findingIndex = bestFindingIndex(findings, usedFindingTypes, expected);
+    const findingIndex = bestFindingIndex(findings, usedFindings, expected);
     const finding = findingIndex === -1 ? null : findings[findingIndex];
     if (finding) {
       matched.add(index);
-      markFindingUsedForType(usedFindingTypes, findingIndex, expected.type);
+      usedFindings.add(findingIndex);
       weightedHit += weight;
       if (findingFileMatches(finding, expected)) {
         localized += 1;
@@ -124,7 +127,6 @@ export function scoreAgentAnswer(caseDef, answer) {
     }
   });
 
-  const usedFindings = new Set(usedFindingTypes.keys());
   const unmatchedFindings = findings.filter((_finding, index) => !usedFindings.has(index));
   const relatedFindings = [];
   const falsePositiveFindings = [];
@@ -223,7 +225,10 @@ export function summarizeAgentScores(scores) {
     decisionAccuracy: average(scores.map((score) => (score.decisionAccepted ? 1 : 0))),
     averageRecall: average(scores.map((score) => score.recall)),
     averageLocalization: average(scores.map((score) => score.localization)),
-    precision: totalFindings === 0 ? 1 : (matchedReportedFindings + totalRelatedFindings) / totalFindings,
+    // Precision = fraction of reported findings that actually matched a
+    // required risk. Near-miss "related" findings did NOT match, so they lower
+    // precision (they sit in the denominator, never the numerator).
+    precision: totalFindings === 0 ? 1 : matchedReportedFindings / totalFindings,
     matchedFindings,
     matchedReportedFindings,
     totalFindings,
@@ -289,28 +294,13 @@ export function flagMatches(flag, expected) {
   return true;
 }
 
-function bestFindingIndex(findings, usedFindingTypes, expected) {
+function bestFindingIndex(findings, usedFindings, expected) {
   const candidates = findings
     .map((finding, index) => ({ finding, index }))
-    .filter(
-      ({ finding, index }) =>
-        !findingAlreadyUsedForType(usedFindingTypes, index, expected.type) &&
-        findingMatchesExpected(finding, expected),
-    );
+    .filter(({ finding, index }) => !usedFindings.has(index) && findingMatchesExpected(finding, expected));
 
   const localized = candidates.find(({ finding }) => findingFileMatches(finding, expected));
   return (localized ?? candidates[0])?.index ?? -1;
-}
-
-function markFindingUsedForType(usedFindingTypes, index, type) {
-  const key = normalize(type);
-  const usedTypes = usedFindingTypes.get(index) ?? new Set();
-  usedTypes.add(key);
-  usedFindingTypes.set(index, usedTypes);
-}
-
-function findingAlreadyUsedForType(usedFindingTypes, index, type) {
-  return usedFindingTypes.get(index)?.has(normalize(type)) ?? false;
 }
 
 function findingMatchesRisk(finding, expected) {
