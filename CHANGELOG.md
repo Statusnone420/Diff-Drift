@@ -4,6 +4,10 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 
 ## [Unreleased]
 
+### Added
+
+- Public feedback funnel: README first screen rewritten around trust-point review, feedback issue templates (tried it, install problem, noisy flag, confusing output), release notes for the public feedback release (`docs/releases/v0.3.0-rc.1-public-feedback.md`), a demo storyboard (`docs/demo/demo-script.md`), a demo capture script (`npm run demo:capture`), and a feedback triage tracker (`docs/feedback/feedback-triage.md`).
+
 ## [0.2.1] — 2026-06-10
 
 ### Added
