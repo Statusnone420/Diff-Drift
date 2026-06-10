@@ -472,6 +472,33 @@ describe("blind-agent answer scoring", () => {
     expect(summary.totalFalsePositives).toBe(1);
   });
 
+  it("penalizes lower-severity duplicate copies of an already matched finding", () => {
+    const score = scoreAgentAnswer(caseDef, {
+      decision: "block",
+      findings: [
+        {
+          title: "Loose regex pattern disables validation",
+          severity: "high",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "pattern changed to /.*/",
+        },
+        {
+          title: "Loose regex pattern repeated at low severity",
+          severity: "low",
+          filePath: "src/auth.ts",
+          riskType: "Loose regex pattern",
+          evidence: "same pattern changed to /.*/",
+        },
+      ],
+    });
+
+    expect(score.matchedFindings).toBe(1);
+    expect(score.relatedFindings).toEqual([]);
+    expect(score.unmatchedFindings).toEqual(["Loose regex pattern repeated at low severity"]);
+    expect(score.falsePositives).toBe(1);
+  });
+
   it("treats a clean benign run as perfect precision", () => {
     const summary = summarizeAgentScores([
       scoreAgentAnswer(
@@ -548,6 +575,26 @@ describe("blind-agent answer scoring", () => {
     expect(html).toContain("Independent external validation pending");
     expect(html).toContain("Precision");
     expect(html).toContain("claude-fable-5 (model, 10)");
+  });
+
+  it("does not call pending internal-human panels model-only", () => {
+    const result = {
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      averageScore: 100,
+      summary: { decisionAccuracy: 1, averageRecall: 1, averageLocalization: 1 },
+      evaluators: [
+        { id: "model-batch", kind: "model", cases: 5, averageScore: 100 },
+        { id: "maintainer-pass", kind: "human", external: false, cases: 5, averageScore: 100 },
+      ],
+      externalValidationPending: true,
+      scores: [],
+    };
+
+    const md = renderAgentScorecard(result);
+    const html = renderAgentDashboard(result);
+    expect(md).toContain("Human answers are present, but no human evaluator is marked external.");
+    expect(html).toContain("Human answers are present, but no human evaluator is marked external.");
+    expect(html).not.toContain("model-only panel");
   });
 
   it("keeps validation pending until a human evaluator is explicitly external", () => {

@@ -339,7 +339,7 @@ function findingDuplicatesMatchedExpectation(finding, required, matched) {
     (expected, index) =>
       matched.has(index) &&
       findingFileMatches(finding, expected) &&
-      findingMatchesExpected(finding, expected),
+      findingMatchesRisk(finding, expected),
   );
 }
 

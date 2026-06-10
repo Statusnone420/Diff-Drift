@@ -1,12 +1,12 @@
 # Diff Drift blind-agent scorecard
 
-Generated: 2026-06-10T16:40:54.071Z
+Generated: 2026-06-10T17:01:39.118Z
 
 > Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.
 
 Evaluators: gpt-5.5-codex-v3-batch-a (model, 5 cases), gpt-5.5-codex-v3-batch-b (model, 5 cases), gpt-5.5-codex-v3-batch-c (model, 5 cases)
 
-> **Independent external validation pending.** All answers so far come from a single evaluator or an all-model panel. Treat the score as an internal product-quality signal, not third-party validation.
+> **Independent external validation pending.** No external human evaluator has contributed answers yet. Treat the score as an internal product-quality signal, not third-party validation.
 
 Overall score: [##########] 100/100
 

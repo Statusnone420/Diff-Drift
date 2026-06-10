@@ -40,7 +40,7 @@ export function renderAgentScorecard(result) {
   }
   if (result.externalValidationPending) {
     lines.push(
-      "> **Independent external validation pending.** All answers so far come from a single evaluator or an all-model panel. Treat the score as an internal product-quality signal, not third-party validation.",
+      `> **Independent external validation pending.** ${pendingValidationText(result.evaluators)} Treat the score as an internal product-quality signal, not third-party validation.`,
       "",
     );
   }
@@ -110,6 +110,7 @@ export function renderAgentDashboard(result) {
   const scoreRange = describeScoreRange(scores);
   const caseCount = result.scores?.length ?? 0;
   const evaluatorCount = result.evaluators?.length ?? 0;
+  const panelKind = panelKindText(result.evaluators);
   const answerCount =
     result.evaluators?.reduce((sum, evaluator) => sum + (evaluator.cases ?? 0), 0) ?? caseCount;
   const falsePositives = summary.totalFalsePositives ?? 0;
@@ -123,7 +124,7 @@ export function renderAgentDashboard(result) {
     ? `<span>${escapeHtml(result.evaluators.map((e) => `${e.id} (${evaluatorKind(e)}, ${e.cases})`).join(" | "))}</span>`
     : "<span>No evaluator metadata</span>";
   const pendingBanner = result.externalValidationPending
-    ? `<p class="pending"><b>Independent external validation pending.</b> All answers so far come from a model-only panel. Treat this as an internal product-quality signal, not third-party validation.</p>`
+    ? `<p class="pending"><b>Independent external validation pending.</b> ${escapeHtml(pendingValidationText(result.evaluators))} Treat this as an internal product-quality signal, not third-party validation.</p>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -520,7 +521,7 @@ export function renderAgentDashboard(result) {
         <div>
           <div class="label-row">
             <span class="label good">${caseCount} cases</span>
-            <span class="label">${evaluatorCount} model batches</span>
+            <span class="label">${evaluatorCount} evaluator${evaluatorCount === 1 ? "" : "s"}</span>
             <span class="label">${answerCount} blind answers</span>
             <span class="label">${falsePositives} false positives</span>
           </div>
@@ -533,7 +534,7 @@ export function renderAgentDashboard(result) {
         <div class="score-head">
           <div>
             <h2>Benchmark summary</h2>
-            <p>Packet-only blind review, model-only panel</p>
+            <p>${escapeHtml(panelKind)}</p>
           </div>
           <div class="score-value"><strong>${score}</strong>/100</div>
         </div>
@@ -777,6 +778,28 @@ function renderScoreHistogram(scores) {
 
 function evaluatorKind(evaluator) {
   return evaluator.external === true ? `external ${evaluator.kind}` : evaluator.kind;
+}
+
+function pendingValidationText(evaluators = []) {
+  const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
+  if (hasHuman) {
+    return "Human answers are present, but no human evaluator is marked external.";
+  }
+  return "No external human evaluator has contributed answers yet.";
+}
+
+function panelKindText(evaluators = []) {
+  const hasExternalHuman = evaluators.some(
+    (evaluator) => evaluator.kind === "human" && evaluator.external === true,
+  );
+  const hasHuman = evaluators.some((evaluator) => evaluator.kind === "human");
+  if (hasExternalHuman) {
+    return "Packet-only blind review, external human panel";
+  }
+  if (hasHuman) {
+    return "Packet-only blind review, internal human panel";
+  }
+  return "Packet-only blind review, model-only panel";
 }
 
 function describeScoreRange(scores) {
