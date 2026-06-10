@@ -1,0 +1,15 @@
+{
+  "$comment": "Copy to fp-replay.config.json (gitignored) and list local repos + baselines you consider benign. Baseline accepts head, trust-point, merge-base, or any rev. Run: npm run eval:fp-replay",
+  "targets": [
+    {
+      "label": "my-app, last release branch",
+      "repoPath": "C:/code/my-app",
+      "baseline": "merge-base"
+    },
+    {
+      "label": "my-lib, since v2.3.0",
+      "repoPath": "C:/code/my-lib",
+      "baseline": "v2.3.0"
+    }
+  ]
+}
