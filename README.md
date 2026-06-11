@@ -82,7 +82,7 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
 
-The blind-agent panel below is advisory: each model plays a blind reviewer over the same benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. Across the current panel it lands **91–99 / 100** — Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91 — three blind models, independent external validation pending. No case is missed by every model, so the gaps are reviewer variance, not detection failures. The models are rulers; Diff Drift is what's measured — read the spread, not a pooled average. The rubric, the panel, and version history are in [Eval Methodology](docs/wiki/Eval-Methodology.md).
+The blind-agent panel is advisory, model-only, and based on a small synthetic suite — treat any headline number accordingly. Each model plays a blind reviewer over benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. The current panel lands **91–99 / 100** across three models (Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91); independent external validation pending. Details, version history, and the rubric are in [BENCHMARKING.md](BENCHMARKING.md) and [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
 <p align="center">
   <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent multi-model panel: Claude Opus 4.8 and Sonnet 4.6 score 99/100, Haiku 4.5 91/100 over 20 cases (benchmark v4); model-only evaluators, independent external validation pending" width="920">
@@ -99,7 +99,7 @@ To predict your own triage burden, run `npm run eval:fp-replay` on your repos; t
 
 - [User Guide](docs/wiki/User-Guide.md) · [Concepts](docs/wiki/Concepts.md) · [Rule Reference](docs/wiki/Rule-Reference.md) · [FAQ](docs/wiki/FAQ.md)
 - [Threat Model](docs/wiki/Threat-Model.md) · [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md)
-- [Eval Methodology](docs/wiki/Eval-Methodology.md) · [A/B Study Design](docs/wiki/AB-Study-Design.md)
+- [Benchmarking](BENCHMARKING.md) · [Eval Methodology](docs/wiki/Eval-Methodology.md) · [A/B Study Design](docs/wiki/AB-Study-Design.md)
 - [Architecture](docs/wiki/Architecture.md) · [Development](docs/wiki/Development.md) · [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md) · [Troubleshooting](docs/wiki/Troubleshooting.md)
 - [Demo script](docs/demo/demo-script.md) · [Feedback triage](docs/feedback/feedback-triage.md)
 
