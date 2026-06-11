@@ -314,10 +314,9 @@ fn process_change(
             .rels
             .into_iter()
             .map(|rel| {
-                let baseline_rev = baseline.sha.as_deref().unwrap_or("HEAD");
                 let git_invisible = repo
                     .as_ref()
-                    .is_some_and(|repo| git::is_ignored_untracked(repo, baseline_rev, &rel));
+                    .is_some_and(|repo| git::is_ignored_untracked(repo, &rel));
                 let res = if git_invisible {
                     None
                 } else {
@@ -413,9 +412,6 @@ fn classify_paths_with_git_dirs(
             continue;
         };
         let analyzable = git::is_analyzable(&rel);
-        if is_generated_path(&p) && !analyzable {
-            continue;
-        }
         // package.json drift depends on the lockfile (phantom-dep flags), and
         // ignore-rule changes can invalidate previously cached watcher entries.
         if rel == "package.json"
@@ -424,6 +420,8 @@ fn classify_paths_with_git_dirs(
             || crate::deps_diff::LOCKFILE_NAMES.contains(&rel.as_str())
         {
             change.full_scan = true;
+        } else if is_generated_path(&p) && !analyzable {
+            continue;
         } else if analyzable {
             change.rels.push(rel);
         }
@@ -568,6 +566,7 @@ mod tests {
         for path in [
             root().join(".gitignore"),
             root().join("packages").join("app").join(".gitignore"),
+            root().join("target").join(".gitignore"),
         ] {
             let change = classify_paths(&root(), Some(&git_dir()), vec![path.clone()]);
             assert!(
@@ -967,6 +966,57 @@ mod tests {
                 .any(|f| f.file_path == rel && f.r#type == "Loose regex pattern"),
             "the new file should be analyzed with the normal rule set"
         );
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn committed_ignored_file_added_after_baseline_stays_visible_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let trusted = crate::test_fixture::head_sha(&root);
+
+        let rel = "vendor/lib.ts";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+        crate::test_fixture::commit_all(&root, "agent commits tracked ignored source");
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        crate::test_fixture::commit_all(&root, "ignore vendor output");
+
+        let (shared, state_file) = shared_for(&root);
+        let state = RepoState {
+            baseline: Some(trusted),
+            ..RepoState::default()
+        };
+        let baseline = session::resolve_baseline(&root, &state);
+        {
+            let mut g = shared.lock().unwrap();
+            g.repo_state = state;
+            g.baseline = baseline.clone();
+            g.results = session::analyze_all(&root, &baseline);
+        }
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "full scans report the committed file as drift from the selected baseline"
+            );
+        }
+
+        std::fs::write(&path, "const parser = /.+/;\n").unwrap();
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("tracked ignored source should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "incremental saves must keep tracked ignored files visible"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "tracked ignored files must not be pruned from the cache"
+            );
+        }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
 
