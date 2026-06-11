@@ -23,7 +23,7 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.3.0`.
+- Version: `0.3.1`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
 - Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs` files plus `package.json` dependency drift, against a selectable baseline.

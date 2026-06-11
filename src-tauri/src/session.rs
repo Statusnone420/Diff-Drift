@@ -382,6 +382,17 @@ pub fn assemble(
     meta: &Meta,
     state: &RepoState,
 ) -> SessionData {
+    // A live update can race a revert: a file is analyzed while dirty, then git
+    // reports zero changed files by the time the session metadata is rebuilt.
+    // Render the git-visible state instead of crashing debug builds or showing
+    // stale cached drift.
+    let empty_results = HashMap::new();
+    let results = if meta.changed_files == 0 {
+        &empty_results
+    } else {
+        results
+    };
+
     let mut files: Vec<FileEntry> = results.values().map(|r| r.entry.clone()).collect();
     let mut flags: Vec<Flag> = results.values().flat_map(|r| r.flags.clone()).collect();
 
@@ -1177,6 +1188,30 @@ mod tests {
         };
         let data = assemble(&HashMap::new(), &meta, &RepoState::default());
         assert_eq!(data.session.changed_files, 3);
+        assert!(data.files.is_empty());
+    }
+
+    #[test]
+    fn assemble_tolerates_stale_results_when_git_changed_count_reaches_zero() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        let results = analyze_all(&root, &Baseline::default());
+        assert!(!results.is_empty(), "precondition: cached drift exists");
+
+        let meta = Meta {
+            project: "repo".into(),
+            branch: "main".into(),
+            repo_path: "repo".into(),
+            changed_files: 0,
+            baseline_spec: "head".into(),
+            baseline_label: "HEAD".into(),
+        };
+
+        let data = assemble(&results, &meta, &RepoState::default());
+        assert_eq!(data.session.changed_files, 0);
+        assert_eq!(data.session.risk_count, 0);
+        assert_eq!(data.session.file_count, 0);
+        assert!(data.flags.is_empty());
         assert!(data.files.is_empty());
     }
 

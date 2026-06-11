@@ -81,12 +81,8 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBu
         }
     }
 
-    let g = shared.lock().unwrap();
-    session::assemble(
-        &g.results,
-        &session::meta(&root, &g.baseline),
-        &g.repo_state,
-    )
+    let mut g = shared.lock().unwrap();
+    assemble_cached(&mut g)
 }
 
 /// Stable key for the persisted per-repo state.
@@ -104,11 +100,11 @@ fn update_triage(
     if g.root.as_os_str().is_empty() {
         return Err("No repository is open.".into());
     }
+    let meta = clear_clean_results(&mut g);
     let results = std::mem::take(&mut g.results);
     apply(&mut g.repo_state, &results);
     g.results = results;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
@@ -212,6 +208,7 @@ pub fn set_approved(
     if let Some(results) = reanalyzed {
         g.results = results;
     }
+    let meta = clear_clean_results(&mut g);
     state.approved_fingerprint = Some(session::fingerprint(&g.results));
     state.approved_at = approved_at;
     // Reviewing the whole drift reviews every node in it — and rebuilding the
@@ -222,7 +219,6 @@ pub fn set_approved(
     g.repo_state = state;
     g.baseline = baseline;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
@@ -243,6 +239,11 @@ pub fn set_baseline(shared: &Shared, spec: String) -> Result<SessionData, String
     };
     let baseline = session::resolve_baseline_strict(&root, &state).map_err(|e| e.to_string())?;
     let results = session::analyze_all(&root, &baseline);
+    let live: HashSet<String> = session::changed_node_hashes(&results)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    state.reviewed_nodes.retain(|id, _| live.contains(id));
 
     let mut g = shared.lock().unwrap();
     if g.root != root {
@@ -252,18 +253,29 @@ pub fn set_baseline(shared: &Shared, spec: String) -> Result<SessionData, String
     g.baseline = baseline;
     g.results = results;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
-    Ok(session::assemble(&g.results, &meta, &g.repo_state))
+    Ok(assemble_cached(&mut g))
 }
 
 /// Current session snapshot (for export). Errors if no repository is open.
 pub fn current_data(shared: &Shared) -> Result<SessionData, String> {
-    let g = shared.lock().unwrap();
+    let mut g = shared.lock().unwrap();
     if g.root.as_os_str().is_empty() {
         return Err("No repository is open.".into());
     }
+    Ok(assemble_cached(&mut g))
+}
+
+fn clear_clean_results(g: &mut WatchState) -> session::Meta {
     let meta = session::meta(&g.root, &g.baseline);
-    Ok(session::assemble(&g.results, &meta, &g.repo_state))
+    if meta.changed_files == 0 {
+        g.results.clear();
+    }
+    meta
+}
+
+fn assemble_cached(g: &mut WatchState) -> SessionData {
+    let meta = clear_clean_results(g);
+    session::assemble(&g.results, &meta, &g.repo_state)
 }
 
 fn process_change(
@@ -297,18 +309,31 @@ fn process_change(
         g.deps = deps;
         g.baseline = baseline;
         g.results = results;
-        let meta = session::meta(root, &g.baseline);
-        session::assemble(&g.results, &meta, &g.repo_state)
+        assemble_cached(&mut g)
     } else {
         let (deps, baseline) = {
             let g = shared.lock().unwrap();
             (g.deps.clone(), g.baseline.clone())
         };
+        let repo = git::open(root);
         let updates: Vec<(String, Option<FileResult>)> = change
             .rels
             .into_iter()
             .map(|rel| {
-                let res = session::analyze_file(root, &rel, &deps, &baseline);
+                let git_invisible = repo
+                    .as_ref()
+                    .is_some_and(|repo| {
+                        let in_selected_baseline = baseline
+                            .sha
+                            .as_deref()
+                            .is_some_and(|sha| git::blob_oid_at_in(repo, sha, &rel).is_some());
+                        !in_selected_baseline && git::is_ignored_untracked(repo, &rel)
+                    });
+                let res = if git_invisible {
+                    None
+                } else {
+                    session::analyze_file(root, &rel, &deps, &baseline)
+                };
                 (rel, res)
             })
             .collect();
@@ -326,8 +351,7 @@ fn process_change(
                 }
             }
         }
-        let meta = session::meta(root, &g.baseline);
-        session::assemble(&g.results, &meta, &g.repo_state)
+        assemble_cached(&mut g)
     })
 }
 
@@ -399,13 +423,16 @@ fn classify_paths_with_git_dirs(
             continue;
         };
         let analyzable = git::is_analyzable(&rel);
-        if is_generated_path(&p) && !analyzable {
-            continue;
-        }
-        // package.json drift depends on the lockfile (phantom-dep flags), so a
-        // root-level change to either forces a full re-scan.
-        if rel == "package.json" || crate::deps_diff::LOCKFILE_NAMES.contains(&rel.as_str()) {
+        // package.json drift depends on the lockfile (phantom-dep flags), and
+        // ignore-rule changes can invalidate previously cached watcher entries.
+        if rel == "package.json"
+            || rel == ".gitignore"
+            || rel.ends_with("/.gitignore")
+            || crate::deps_diff::LOCKFILE_NAMES.contains(&rel.as_str())
+        {
             change.full_scan = true;
+        } else if is_generated_path(&p) && !analyzable {
+            continue;
         } else if analyzable {
             change.rels.push(rel);
         }
@@ -543,6 +570,23 @@ mod tests {
         );
         assert!(!change.full_scan);
         assert!(change.rels.is_empty());
+    }
+
+    #[test]
+    fn gitignore_edits_force_a_full_scan() {
+        for path in [
+            root().join(".gitignore"),
+            root().join("packages").join("app").join(".gitignore"),
+            root().join("target").join(".gitignore"),
+        ] {
+            let change = classify_paths(&root(), Some(&git_dir()), vec![path.clone()]);
+            assert!(
+                change.full_scan,
+                "{} should force a full scan because ignore rules changed",
+                path.display()
+            );
+            assert!(change.rels.is_empty());
+        }
     }
 
     #[test]
@@ -763,6 +807,45 @@ mod tests {
     }
 
     #[test]
+    fn set_baseline_prunes_dead_reviewed_nodes() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+
+        let initial = current_data(&shared).unwrap();
+        let node_id = initial.flags[0].node_id.clone();
+        set_node_reviewed(&shared, node_id.clone(), true).unwrap();
+        let original_hash = {
+            let mut g = shared.lock().unwrap();
+            let hash = g
+                .repo_state
+                .reviewed_nodes
+                .get(&node_id)
+                .cloned()
+                .expect("real reviewed node hash was pinned");
+            g.repo_state
+                .reviewed_nodes
+                .insert("ghost:node:id".into(), "deadbeef".into());
+            hash
+        };
+
+        set_baseline(&shared, "head".into()).unwrap();
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                !g.repo_state.reviewed_nodes.contains_key("ghost:node:id"),
+                "baseline switches should prune reviewed-node ids that are no longer live"
+            );
+            assert_eq!(
+                g.repo_state.reviewed_nodes.get(&node_id),
+                Some(&original_hash),
+                "live reviewed nodes keep their pinned hash"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
     fn switching_to_the_trust_point_baseline_sees_committed_drift() {
         let fixture = crate::test_fixture::payments_api();
         let root = crate::git::repo_root(&fixture.root).unwrap();
@@ -837,6 +920,216 @@ mod tests {
     }
 
     #[test]
+    fn gitignored_generated_js_is_never_analyzed_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        crate::test_fixture::commit_file_from_memory(
+            &root,
+            ".gitignore",
+            b"target/\n",
+            "ignore build output",
+        );
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        let (shared, state_file) = shared_for(&root);
+
+        let rel = "target/debug/out/__global-api-script.js";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "window.__TAURI__ = {};\n").unwrap();
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("the watcher should still publish a refreshed session");
+        assert!(
+            data.files
+                .iter()
+                .all(|f| !format!("{}{}", f.dir, f.name).starts_with("target/")),
+            "ignored build output must not appear in analyzed files"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                !g.results.contains_key(rel),
+                "ignored build output must not pollute the cached results"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn untracked_new_file_still_appears_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+
+        let rel = "auth/brandnew.ts";
+        let path = root.join(rel);
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("untracked non-ignored source should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "new source files are core drift and must still appear"
+        );
+        assert!(
+            data.flags
+                .iter()
+                .any(|f| f.file_path == rel && f.r#type == "Loose regex pattern"),
+            "the new file should be analyzed with the normal rule set"
+        );
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn committed_ignored_file_added_after_baseline_stays_visible_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let trusted = crate::test_fixture::head_sha(&root);
+
+        let rel = "vendor/lib.ts";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+        crate::test_fixture::commit_all(&root, "agent commits tracked ignored source");
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        crate::test_fixture::commit_all(&root, "ignore vendor output");
+
+        let (shared, state_file) = shared_for(&root);
+        let state = RepoState {
+            baseline: Some(trusted),
+            ..RepoState::default()
+        };
+        let baseline = session::resolve_baseline(&root, &state);
+        {
+            let mut g = shared.lock().unwrap();
+            g.repo_state = state;
+            g.baseline = baseline.clone();
+            g.results = session::analyze_all(&root, &baseline);
+        }
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "full scans report the committed file as drift from the selected baseline"
+            );
+        }
+
+        std::fs::write(&path, "const parser = /.+/;\n").unwrap();
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("tracked ignored source should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "incremental saves must keep tracked ignored files visible"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "tracked ignored files must not be pruned from the cache"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn ignored_file_deleted_after_baseline_stays_visible_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+
+        let rel = "vendor/lib.ts";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+        let trusted = crate::test_fixture::commit_all(&root, "track vendor source");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        crate::test_fixture::commit_all(&root, "agent deletes ignored source");
+
+        let (shared, state_file) = shared_for(&root);
+        let state = RepoState {
+            baseline: Some(trusted),
+            ..RepoState::default()
+        };
+        let baseline = session::resolve_baseline(&root, &state);
+        {
+            let mut g = shared.lock().unwrap();
+            g.repo_state = state;
+            g.baseline = baseline.clone();
+            g.results = session::analyze_all(&root, &baseline);
+        }
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "full scans report baseline-only ignored deletions"
+            );
+        }
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("baseline-only ignored deletion should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "incremental updates must keep baseline-only ignored deletions visible"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "baseline-only ignored deletions must not be pruned from the cache"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn clean_snapshot_clears_stale_results_before_next_incremental_edit() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key("auth/validateToken.ts"),
+                "precondition: stale candidate is cached"
+            );
+        }
+
+        crate::test_fixture::commit_all(&root, "agent commits drift");
+        let clean = current_data(&shared).expect("clean snapshot should render");
+        assert_eq!(clean.session.changed_files, 0);
+        assert!(
+            clean.files.is_empty(),
+            "clean snapshots must not render stale cached files"
+        );
+
+        let rel = "auth/brandnew.ts";
+        let path = root.join(rel);
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("new source should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "the new edit should still render"
+        );
+        assert!(
+            data.files
+                .iter()
+                .all(|f| format!("{}{}", f.dir, f.name) != "auth/validateToken.ts"),
+            "stale pre-clean drift must not reappear on the next edit"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                !g.results.contains_key("auth/validateToken.ts"),
+                "clean snapshots must clear stale cache entries"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
     fn skipped_generated_file_update_revokes_approval() {
         let fixture = crate::test_fixture::payments_api();
         let root = crate::git::repo_root(&fixture.root).unwrap();
@@ -866,6 +1159,51 @@ mod tests {
             !data.session.approved,
             "editing a skipped generated file must revoke approval"
         );
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn touching_a_ghost_entry_prunes_it() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        crate::test_fixture::commit_file_from_memory(
+            &root,
+            ".gitignore",
+            b"target/\n",
+            "ignore build output",
+        );
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+
+        let rel = "target/debug/out/__global-api-script.js";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "window.__TAURI__ = { first: true };\n").unwrap();
+
+        let baseline = session::resolve_baseline(&root, &RepoState::default());
+        let ghost = session::analyze_file(&root, rel, &HashSet::new(), &baseline)
+            .expect("pre-fix ghost entry shape");
+        let (shared, state_file) = shared_for(&root);
+        {
+            let mut g = shared.lock().unwrap();
+            g.results.insert(rel.to_string(), ghost);
+        }
+
+        std::fs::write(&path, "window.__TAURI__ = { second: true };\n").unwrap();
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("touching a ghost should publish a refreshed session");
+        assert!(
+            data.files
+                .iter()
+                .all(|f| format!("{}{}", f.dir, f.name) != rel),
+            "touched ghost entries must disappear from the rendered session"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                !g.results.contains_key(rel),
+                "touched ghost entries must be removed from the cache"
+            );
+        }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
     }
 }

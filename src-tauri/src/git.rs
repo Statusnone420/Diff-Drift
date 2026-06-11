@@ -86,6 +86,22 @@ pub fn changed_files(root: &Path) -> Vec<String> {
     files
 }
 
+/// True when `rel` is ignored by git and not tracked by the current HEAD/index.
+/// Tracked files inside ignored directories still matter: git can report drift
+/// for them, so the watcher must not drop them just because an ignore pattern
+/// also matches the path.
+pub fn is_ignored_untracked(repo: &Repository, rel: &str) -> bool {
+    let path = Path::new(rel);
+    if !repo.is_path_ignored(path).unwrap_or(false) {
+        return false;
+    }
+    let tracked_in_index = repo
+        .index()
+        .ok()
+        .is_some_and(|index| index.get_path(path, 0).is_some());
+    !tracked_in_index && blob_oid_at_in(repo, "HEAD", rel).is_none()
+}
+
 /// File contents at HEAD (the "before"). `None` if the path is new / not in HEAD.
 #[allow(dead_code)]
 pub fn head_content(root: &Path, rel: &str) -> Option<String> {
@@ -355,6 +371,38 @@ mod tests {
         assert!(changed_files_vs(&root, "not-a-rev").is_empty());
         assert!(resolve_rev(&root, "not-a-rev").is_none());
         assert_eq!(resolve_rev(&root, "HEAD"), head_sha(&root));
+    }
+
+    #[test]
+    fn ignored_untracked_respects_tracked_files_in_ignored_dirs() {
+        let fixture = test_fixture::payments_api();
+        let root = repo_root(&fixture.root).unwrap();
+        let trusted = test_fixture::head_sha(&root);
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/lib.ts"), "export const tracked = true;\n").unwrap();
+        test_fixture::commit_all(&root, "track vendor file");
+
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        test_fixture::commit_all(&root, "ignore vendor");
+        std::fs::write(root.join("vendor/new.ts"), "export const ignored = true;\n").unwrap();
+
+        let repo = open(&root).unwrap();
+        assert!(
+            !is_ignored_untracked(&repo, "vendor/lib.ts"),
+            "tracked files inside ignored directories are still git-visible drift"
+        );
+        assert!(
+            blob_oid_at_in(&repo, &trusted, "vendor/lib.ts").is_none(),
+            "the file was added after the old baseline"
+        );
+        assert!(
+            !is_ignored_untracked(&repo, "vendor/lib.ts"),
+            "baseline absence must not hide a file tracked by the current repo"
+        );
+        assert!(
+            is_ignored_untracked(&repo, "vendor/new.ts"),
+            "ignored files absent from current tracking are git-invisible"
+        );
     }
 
     #[test]
