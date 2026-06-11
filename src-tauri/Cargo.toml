@@ -3,6 +3,8 @@ name = "diff-drift"
 version = "0.3.2"
 description = "Diff Drift — AST-level security inspector for the code drift AI coding agents leave behind"
 edition = "2021"
+# Two bins below; keep `cargo run -- check` meaning the app/GUI binary.
+default-run = "diff-drift"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,6 +19,13 @@ bench = false
 [[bin]]
 name = "diff-drift"
 path = "src/main.rs"
+bench = false
+
+# Console-subsystem twin of the `check` CLI: shells wait for it and see the
+# real exit code, unlike the windows-subsystem app binary above.
+[[bin]]
+name = "diff-drift-cli"
+path = "src/bin/diff-drift-cli.rs"
 bench = false
 
 [build-dependencies]

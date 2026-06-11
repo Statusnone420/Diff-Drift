@@ -38,10 +38,10 @@ Flags point you at security-shaped drift — a loosened validation regex, remove
 
 **Desktop:** download the Windows installer from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) and check it against `SHA256SUMS.txt`. Releases are currently unsigned, so SmartScreen will warn on first run — details and reproducible builds in [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md).
 
-**CLI:** the same `diff-drift.exe` works headless — installed, or downloaded bare from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) (verify against `SHA256SUMS.txt`). Add it to `PATH`, then:
+**CLI:** `diff-drift-cli.exe` runs the same check headless — installed next to the app, or downloaded bare from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) (verify against `SHA256SUMS.txt`). It is a console binary, so every shell — PowerShell included — sees its exit code. Add it to `PATH`, then:
 
 ```bash
-diff-drift check . --baseline merge-base --md > diff-drift-report.md
+diff-drift-cli check . --baseline merge-base --md > diff-drift-report.md
 ```
 
 The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3` high, `64` usage error), so it drops straight into CI or a pre-commit hook. Copy-paste recipes: [CI and hook recipes](docs/wiki/User-Guide.md#ci-and-hook-recipes).

@@ -60,35 +60,35 @@ runs:
         $dir = Join-Path $env:RUNNER_TEMP "diff-drift-cli"
         New-Item -ItemType Directory -Force $dir | Out-Null
         gh release download $env:DIFF_DRIFT_VERSION --repo Statusnone420/Diff-Drift `
-          --pattern diff-drift.exe --pattern SHA256SUMS.txt --dir $dir --clobber
-        if ($LASTEXITCODE -ne 0) { Write-Error "Could not download diff-drift.exe from release $env:DIFF_DRIFT_VERSION" }
+          --pattern diff-drift-cli.exe --pattern SHA256SUMS.txt --dir $dir --clobber
+        if ($LASTEXITCODE -ne 0) { Write-Error "Could not download diff-drift-cli.exe from release $env:DIFF_DRIFT_VERSION" }
         $expected = (Get-Content (Join-Path $dir "SHA256SUMS.txt") |
-          Where-Object { $_ -match '\sdiff-drift\.exe$' }) -split '\s+' | Select-Object -First 1
-        if (-not $expected) { Write-Error "SHA256SUMS.txt in release $env:DIFF_DRIFT_VERSION has no entry for diff-drift.exe" }
-        $actual = (Get-FileHash (Join-Path $dir "diff-drift.exe") -Algorithm SHA256).Hash.ToLower()
-        if ($actual -ne $expected) { Write-Error "diff-drift.exe checksum mismatch: expected $expected, got $actual" }
-        "Verified diff-drift.exe ($actual)"
+          Where-Object { $_ -match '\sdiff-drift-cli\.exe$' }) -split '\s+' | Select-Object -First 1
+        if (-not $expected) { Write-Error "SHA256SUMS.txt in release $env:DIFF_DRIFT_VERSION has no entry for diff-drift-cli.exe" }
+        $actual = (Get-FileHash (Join-Path $dir "diff-drift-cli.exe") -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $expected) { Write-Error "diff-drift-cli.exe checksum mismatch: expected $expected, got $actual" }
+        "Verified diff-drift-cli.exe ($actual)"
         Add-Content $env:GITHUB_PATH $dir
 
-    # bash, not pwsh: the release exe is a Windows GUI-subsystem binary, so
-    # PowerShell and cmd start it without waiting and never see its exit code.
-    # bash (and Node) wait on the process handle, so the exit code is real.
+    # diff-drift-cli.exe is a console binary, so PowerShell waits for it and
+    # $LASTEXITCODE is the real severity exit code.
     - name: Run diff-drift check
       id: run
-      shell: bash
+      shell: pwsh
       env:
         DIFF_DRIFT_PATH: ${{ inputs.path }}
         DIFF_DRIFT_BASELINE: ${{ inputs.baseline }}
       run: |
-        report="diff-drift-report.md"
-        code=0
-        diff-drift.exe check "$DIFF_DRIFT_PATH" --baseline "$DIFF_DRIFT_BASELINE" --md > "$report" 2>&1 || code=$?
-        cat "$report" >> "$GITHUB_STEP_SUMMARY"
-        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        echo "report-path=$report" >> "$GITHUB_OUTPUT"
-        echo "diff-drift check exited $code (0 none, 1 low, 2 medium, 3 high, 64 usage error)"
+        $report = "diff-drift-report.md"
+        diff-drift-cli.exe check $env:DIFF_DRIFT_PATH --baseline $env:DIFF_DRIFT_BASELINE --md > $report 2>&1
+        $code = $LASTEXITCODE
+        Get-Content $report | Add-Content $env:GITHUB_STEP_SUMMARY
+        "exit-code=$code" | Add-Content $env:GITHUB_OUTPUT
+        "report-path=$report" | Add-Content $env:GITHUB_OUTPUT
+        "diff-drift check exited $code (0 none, 1 low, 2 medium, 3 high, 64 usage error)"
         # The exit code is judged against fail-on in the next step; this step
         # only fails on its own errors.
+        exit 0
 
     - name: Apply fail-on threshold
       shell: pwsh

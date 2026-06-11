@@ -13,20 +13,52 @@ use std::path::{Path, PathBuf};
 use crate::model::Severity;
 use crate::{git, report, session, store};
 
-/// Entry point from `main`: `Some(exit_code)` when the first arg is a CLI
-/// subcommand, `None` to launch the GUI.
+/// Entry point from the GUI exe's `main`: `Some(exit_code)` when the first
+/// arg is a CLI subcommand, `None` to launch the GUI.
 pub fn try_run() -> Option<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) != Some("check") {
         return None;
     }
     let (code, output) = run_check(&args[1..]);
-    if code == 64 {
-        eprintln!("{output}");
-    } else {
-        println!("{output}");
-    }
+    write_report(code, &output);
     Some(code)
+}
+
+/// Entry point for the `diff-drift-cli` console bin: there is no GUI to fall
+/// back to, so anything that isn't `check` (or help) is a usage error.
+pub fn run_cli_only() -> i32 {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (code, output) = dispatch_cli(&args);
+    write_report(code, &output);
+    code
+}
+
+/// Top-level arg dispatch for the console bin, pure for tests. No args is a
+/// usage error (64), not help: exit 0 means "no active flags", and a gate
+/// script that forgot `check` must not read usage output as a clean pass.
+fn dispatch_cli(args: &[String]) -> (i32, String) {
+    match args.first().map(String::as_str) {
+        Some("check") => run_check(&args[1..]),
+        Some("--help") | Some("-h") => (0, USAGE.into()),
+        _ => (64, USAGE.into()),
+    }
+}
+
+/// Report to stdout, usage errors to stderr. Failed writes are ignored: the
+/// reader side can close mid-print (`check | head`, a dropped pipe), and
+/// `println!` would panic on that ("os error 232" on Windows). The exit code
+/// already carries the verdict, so a torn report must not turn into a panic.
+fn write_report(code: i32, output: &str) {
+    if code == 64 {
+        write_report_to(&mut std::io::stderr(), output);
+    } else {
+        write_report_to(&mut std::io::stdout(), output);
+    }
+}
+
+fn write_report_to(w: &mut impl std::io::Write, output: &str) {
+    let _ = writeln!(w, "{output}");
 }
 
 /// The check itself, pure enough to test: returns (exit code, stdout text).
@@ -193,6 +225,47 @@ mod tests {
             assert_eq!(code, 0, "{flag} is not a usage error");
             assert!(out.contains("Usage:"));
         }
+    }
+
+    #[test]
+    fn cli_dispatch_maps_top_level_args() {
+        // `check` delegates to run_check: the fixture has a High flag → 3.
+        let fixture = test_fixture::payments_api();
+        let (code, _) = dispatch_cli(&s(&["check", fixture.root.to_str().unwrap()]));
+        assert_eq!(code, 3);
+
+        // Help is not an error…
+        for flag in ["--help", "-h"] {
+            let (code, out) = dispatch_cli(&s(&[flag]));
+            assert_eq!(code, 0, "{flag}");
+            assert!(out.contains("Usage:"));
+        }
+        // …but anything else — including no args at all — is usage (64).
+        // Exit 0 means "no active flags", so a gate that forgot `check`
+        // must not read usage output as a clean pass.
+        for args in [&[][..], &["frobnicate"][..], &["--json"][..]] {
+            let (code, out) = dispatch_cli(&s(args));
+            assert_eq!(code, 64, "{args:?}");
+            assert!(out.contains("Usage:"));
+        }
+    }
+
+    #[test]
+    fn report_writes_quietly_into_a_closed_pipe() {
+        // The reader side of stdout can vanish mid-print (`check | head`,
+        // pwsh closing the pipe). `println!` panics on that ("os error 232"
+        // on Windows); the report writer must swallow it — the exit code
+        // already carries the verdict.
+        struct ClosedPipe;
+        impl std::io::Write for ClosedPipe {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_report_to(&mut ClosedPipe, "# a report nobody is reading");
     }
 
     #[test]

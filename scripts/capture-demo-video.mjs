@@ -306,7 +306,7 @@ async function run() {
     // Closing card — how to try it.
     await d.card(`
       <h2>Try it</h2>
-      <pre>diff-drift check . --baseline merge-base --md</pre>
+      <pre>diff-drift-cli check . --baseline merge-base --md</pre>
       <pre>- uses: actions/checkout@v4
   with: { fetch-depth: 0 }
 - uses: Statusnone420/Diff-Drift@v0.3.2

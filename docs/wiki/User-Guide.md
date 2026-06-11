@@ -57,27 +57,30 @@ Reports include the repo, branch, baseline, flag state, reviewed state, analyzed
 
 ## Headless Check (for scripts and agents)
 
-The CLI is not a separate install — it is the same `diff-drift.exe` the app runs, invoked from a terminal with the `check` subcommand. The Windows installer puts it at `%LOCALAPPDATA%\Diff Drift\diff-drift.exe` by default (per-user install). Since v0.3.2 each release also carries the bare `diff-drift.exe` as a downloadable asset (verify it against `SHA256SUMS.txt`), so scripts and CI can use the CLI without the installer. In a development checkout it is `src-tauri\target\debug\diff-drift.exe` after a build.
+The CLI ships as `diff-drift-cli.exe`, a console build of the same engine the app runs. The Windows installer puts it next to the app, at `%LOCALAPPDATA%\Diff Drift\diff-drift-cli.exe` by default (per-user install). Since v0.3.2 each release also carries the bare `diff-drift-cli.exe` as a downloadable asset (verify it against `SHA256SUMS.txt`), so scripts and CI can use the CLI without the installer. In a development checkout it is `src-tauri\target\debug\diff-drift-cli.exe` after a build.
+
+Because it is a console binary, every shell waits for it and sees its real exit code — `$LASTEXITCODE` in PowerShell, `%ERRORLEVEL%` in cmd, `$?` in sh. (The app binary `diff-drift.exe` still answers `check` for existing hooks, but shells don't wait for GUI-subsystem binaries, so use `diff-drift-cli.exe` for anything scripted.)
 
 Run it with the full path, or add the install folder to your `PATH` once:
 
 ```powershell
-& "$env:LOCALAPPDATA\Diff Drift\diff-drift.exe" check . --json
+& "$env:LOCALAPPDATA\Diff Drift\diff-drift-cli.exe" check . --json
+$LASTEXITCODE   # the severity exit code
 
-# Optional: make `diff-drift` available everywhere (new terminals)
+# Optional: make `diff-drift-cli` available everywhere (new terminals)
 [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$env:LOCALAPPDATA\Diff Drift", "User")
 ```
 
 Usage:
 
 ```bash
-diff-drift check [path] [--json|--md] [--baseline <head|trust-point|merge-base|rev>]
+diff-drift-cli check [path] [--json|--md] [--baseline <head|trust-point|merge-base|rev>]
 ```
 
 It prints the session (JSON by default) and exits with the highest active severity: `0` none, `1` low, `2` medium, `3` high, `64` usage error (`--help` exits `0`). Dismissed flags don't count — it reads the same per-repo triage state as the app, and never writes anything. An explicit `--baseline` that can't resolve (unknown ref, trust point not pinned, no default branch for a merge-base) fails with exit `64` and the cause on stderr — it never silently falls back to `HEAD`. Example gate in an agent hook or CI step:
 
 ```bash
-diff-drift check . --baseline trust-point || echo "drift needs review"
+diff-drift-cli check . --baseline trust-point || echo "drift needs review"
 ```
 
 ## CI and Hook Recipes
@@ -88,10 +91,10 @@ The contract that makes these safe to wire up: the CLI is **read-only** (never w
 
 ```bash
 #!/bin/sh
-diff-drift check . --json > /dev/null
+diff-drift-cli check . --json > /dev/null
 code=$?
 if [ "$code" -ge 3 ]; then
-  echo "diff-drift: high-severity drift — review in the app or run: diff-drift check . --md"
+  echo "diff-drift: high-severity drift — review in the app or run: diff-drift-cli check . --md"
   exit 1
 fi
 ```
@@ -100,22 +103,19 @@ fi
 
 ```bash
 #!/bin/sh
-diff-drift check . --baseline trust-point --md
+diff-drift-cli check . --baseline trust-point --md
 code=$?
 if [ "$code" -ge 2 ]; then exit 2; fi  # surface medium+ drift back to the agent loop
 ```
 
-With the `trust-point` baseline the gate keeps seeing everything since *you* last clicked **Mark reviewed**, even while the agent commits as it works.
-
-A Windows caveat that matters for hooks: the installed `diff-drift.exe` is a GUI-subsystem binary (so the app opens without a console window), which means **PowerShell and cmd start it without waiting and never see its exit code** — `$LASTEXITCODE` stays unset. `sh`/`bash` hooks and Node-based runners wait correctly, so prefer those. If the hook must be PowerShell, wait explicitly:
+The same hook in PowerShell:
 
 ```powershell
-$p = Start-Process "$env:LOCALAPPDATA\Diff Drift\diff-drift.exe" `
-  -ArgumentList 'check', '.', '--baseline', 'trust-point', '--md' `
-  -NoNewWindow -Wait -PassThru -RedirectStandardOutput drift-report.md
-Get-Content drift-report.md
-if ($p.ExitCode -ge 2) { exit 2 }
+& "$env:LOCALAPPDATA\Diff Drift\diff-drift-cli.exe" check . --baseline trust-point --md
+if ($LASTEXITCODE -ge 2) { exit 2 }
 ```
+
+With the `trust-point` baseline the gate keeps seeing everything since *you* last clicked **Mark reviewed**, even while the agent commits as it works.
 
 **GitHub Actions** — gate a PR on medium+ drift vs the merge-base. The published action downloads the release CLI (checksum-verified), runs the check, and writes the report to the job summary. No Rust toolchain needed. Two requirements: a Windows runner, and `fetch-depth: 0` (the `merge-base` baseline needs `origin/main` in the checkout):
 
@@ -152,16 +152,15 @@ To post the report as a PR comment, give the job `pull-requests: write` permissi
             });
 ```
 
-If you'd rather pin to source, build the same binary yourself — it's the binary the app installs. Use a `bash` step to run it: the release build is a GUI-subsystem binary, and PowerShell/cmd don't wait for those or see their exit codes (see the agent-hook caveat above):
+If you'd rather pin to source, build the same binary yourself — it's the CLI the app installs:
 
 ```yaml
-- run: cargo build --release --manifest-path src-tauri/Cargo.toml --bin diff-drift
+- run: cargo build --release --manifest-path src-tauri/Cargo.toml --bin diff-drift-cli
 - name: Drift gate (medium+ fails)
-  shell: bash
   run: |
-    code=0
-    ./src-tauri/target/release/diff-drift.exe check . --baseline merge-base --md || code=$?
-    if [ "$code" -ge 2 ]; then exit 1; fi
+    ./src-tauri/target/release/diff-drift-cli.exe check . --baseline merge-base --md
+    if ($LASTEXITCODE -ge 2) { exit 1 }
+    exit 0
 ```
 
 ## What Diff Drift Is Not

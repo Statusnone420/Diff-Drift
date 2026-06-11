@@ -63,12 +63,19 @@ jobs:
           if ($msi.Count -ne 1) { Write-Error "Expected exactly one MSI installer, found $($msi.Count)" }
           Copy-Item $nsis[0].FullName dist-release/
           Copy-Item $msi[0].FullName dist-release/
-          # Bare CLI binary: the same exe the installers ship, published standalone
-          # so CI jobs and the GitHub Action can download it without an installer.
-          if (-not (Test-Path "src-tauri/target/release/diff-drift.exe")) {
-            Write-Error "Expected src-tauri/target/release/diff-drift.exe after the bundle build"
+          # Bare CLI binary: the console-subsystem diff-drift-cli.exe (the same
+          # one the installers place next to the app), published standalone so
+          # CI jobs and the GitHub Action can download it without an installer.
+          # Not the GUI exe: shells don't wait for windows-subsystem binaries,
+          # so its exit codes are invisible to PowerShell/cmd.
+          # Size check, not just existence: build.rs pre-creates an EMPTY
+          # placeholder at this path to satisfy tauri-build's resource
+          # validation, so a missing real build would otherwise slip through.
+          $cli = Get-Item "src-tauri/target/release/diff-drift-cli.exe" -ErrorAction SilentlyContinue
+          if (-not $cli -or $cli.Length -lt 100KB) {
+            Write-Error "diff-drift-cli.exe missing or placeholder-sized ($(if ($cli) { $cli.Length } else { 0 }) bytes) after the bundle build"
           }
-          Copy-Item src-tauri/target/release/diff-drift.exe dist-release/
+          Copy-Item $cli.FullName dist-release/
 
       # --- Code signing (skipped unless configured) -------------------------
       # Gate on the repo VARIABLE `WINDOWS_SIGNING` ('azure' | 'pfx' | unset).
@@ -183,7 +190,7 @@ jobs:
 
           $signingNote
 
-          Artifacts: NSIS installer, MSI installer, bare diff-drift.exe CLI (for CI and the GitHub Action), SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
+          Artifacts: NSIS installer, MSI installer, bare diff-drift-cli.exe (console CLI for CI and the GitHub Action), SHA256SUMS.txt, CycloneDX SBOMs (Rust core + npm production deps).
           "@
           # Pass the multiline body via a file — avoids any PowerShell/native
           # argument quoting or newline-encoding pitfalls.
