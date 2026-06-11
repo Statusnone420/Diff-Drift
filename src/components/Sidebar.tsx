@@ -59,7 +59,7 @@ export function Sidebar({
 
         <div
           className="sb-section-label"
-          title="TypeScript, TSX, JavaScript, and JSX files are parsed as AST drift; package.json gets a dependency and script diff"
+          title="TypeScript, TSX, JavaScript, JSX, Rust, Go, Python, and Java files are parsed as AST drift; package.json gets a dependency and script diff"
         >
           <span>Analyzed files</span>
           <span className="count">{files.length}</span>

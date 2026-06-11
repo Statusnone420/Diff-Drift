@@ -40,7 +40,7 @@ export function Center({
           </div>
           <div className="center-clean-sub" data-testid="center-clean-sub">
             {hasUnanalyzedChanges
-              ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are TypeScript, TSX, JavaScript, JSX, or package.json files Diff Drift can inspect.`
+              ? `${changedFiles} changed file${changedFiles === 1 ? "" : "s"} found, but none are source files Diff Drift can inspect (TS, TSX, JS, JSX, Rust, Go, Python, Java, or package.json).`
               : `Nothing has changed since ${baselinePhrase}.`}
           </div>
         </div>
