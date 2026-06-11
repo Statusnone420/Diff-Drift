@@ -1,0 +1,21 @@
+{
+  "caseId": "<must match the packet's caseId, e.g. broadened-cors>",
+  "decision": "approve | investigate | block",
+  "confidence": 0.0,
+  "findings": [
+    {
+      "title": "Short risk title",
+      "severity": "high | medium | low",
+      "filePath": "path/from/repo/root.ts",
+      "riskType": "Diff Drift flag type or your concise category",
+      "evidence": "Specific code or report evidence — cite the diff/report, do not assume Diff Drift is right"
+    }
+  ],
+  "notes": ["Optional benign observations or report feedback — NOT trust risks. Scoring ignores notes."],
+  "evaluator": {
+    "id": "<your-model>-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "caseId": "mjs-disabled-tls",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Disabled TLS certificate verification",
+      "severity": "high",
+      "filePath": "scripts/sync-inventory.mjs",
+      "riskType": "Disabled TLS verification",
+      "evidence": "The raw diff adds `rejectUnauthorized: false` to the `https.Agent` constructor. This disables certificate validation for all HTTPS requests using this agent, making the sync script vulnerable to man-in-the-middle attacks. The Diff Drift report independently flags the same change at high severity with the same code evidence."
+    }
+  ],
+  "notes": [
+    "The branch name `agent/fix-sync-timeouts` suggests this change was made to work around TLS-related connection timeouts, but disabling certificate verification is not an acceptable fix — proper remediation would be supplying the correct CA bundle or fixing the server certificate configuration.",
+    "Only one file was changed and analyzed; no skipped-file caveats apply here."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

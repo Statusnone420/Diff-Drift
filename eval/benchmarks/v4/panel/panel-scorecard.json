@@ -1,0 +1,655 @@
+{
+  "generatedAt": "2026-06-11T02:09:51.276Z",
+  "benchmark": "v4",
+  "models": [
+    {
+      "key": "opus-4-8",
+      "label": "Claude Opus 4.8",
+      "vendor": "Anthropic",
+      "cases": 20,
+      "total": 99,
+      "decisionAccuracy": 0.95,
+      "recall": 1,
+      "perCase": {
+        "benign-eval-in-string": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "benign-formatting-only": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "broadened-cors": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "child-process-execution": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "constant-falsy-guard-evasion": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "disabled-tls-verification": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "dynamic-code-execution": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "guard-removed-around-call": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "jsx-hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "mjs-disabled-tls": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "noisy-benign-refactor": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "oversized-file-skip": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "package-dependency-script-drift": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "payments-api-auth-regression": {
+          "score": 90,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "regex-anchors-removed": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "test-file-hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "try-catch-removed": {
+          "score": 80,
+          "decisionAccepted": false,
+          "recall": 1
+        },
+        "tsx-removed-sanitization": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "weakened-cookie-flags": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        }
+      }
+    },
+    {
+      "key": "sonnet-4-6",
+      "label": "Claude Sonnet 4.6",
+      "vendor": "Anthropic",
+      "cases": 20,
+      "total": 99,
+      "decisionAccuracy": 0.95,
+      "recall": 1,
+      "perCase": {
+        "benign-eval-in-string": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "benign-formatting-only": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "broadened-cors": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "child-process-execution": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "constant-falsy-guard-evasion": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "disabled-tls-verification": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "dynamic-code-execution": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "guard-removed-around-call": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "jsx-hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "mjs-disabled-tls": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "noisy-benign-refactor": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "oversized-file-skip": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "package-dependency-script-drift": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "payments-api-auth-regression": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "regex-anchors-removed": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "test-file-hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "try-catch-removed": {
+          "score": 80,
+          "decisionAccepted": false,
+          "recall": 1
+        },
+        "tsx-removed-sanitization": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "weakened-cookie-flags": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        }
+      }
+    },
+    {
+      "key": "haiku-4-5",
+      "label": "Claude Haiku 4.5",
+      "vendor": "Anthropic",
+      "cases": 20,
+      "total": 91,
+      "decisionAccuracy": 0.95,
+      "recall": 0.9,
+      "perCase": {
+        "benign-eval-in-string": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "benign-formatting-only": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "broadened-cors": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "child-process-execution": {
+          "score": 15,
+          "decisionAccepted": true,
+          "recall": 0
+        },
+        "constant-falsy-guard-evasion": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "disabled-tls-verification": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "dynamic-code-execution": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "guard-removed-around-call": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "jsx-hardcoded-secret": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "mjs-disabled-tls": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "noisy-benign-refactor": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "oversized-file-skip": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "package-dependency-script-drift": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "payments-api-auth-regression": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "regex-anchors-removed": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "test-file-hardcoded-secret": {
+          "score": 0,
+          "decisionAccepted": false,
+          "recall": 0
+        },
+        "try-catch-removed": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "tsx-removed-sanitization": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        },
+        "weakened-cookie-flags": {
+          "score": 100,
+          "decisionAccepted": true,
+          "recall": 1
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "test-file-hardcoded-secret",
+      "title": "Hardcoded secret in a test fixture is still flagged"
+    },
+    {
+      "caseId": "child-process-execution",
+      "title": "Archive helper imports child_process"
+    },
+    {
+      "caseId": "try-catch-removed",
+      "title": "Telemetry flush loses its try/catch"
+    },
+    {
+      "caseId": "payments-api-auth-regression",
+      "title": "Payments API token validation regression"
+    },
+    {
+      "caseId": "benign-eval-in-string",
+      "title": "Lint message mentioning eval() must not flag"
+    },
+    {
+      "caseId": "benign-formatting-only",
+      "title": "Formatting-only route cleanup"
+    },
+    {
+      "caseId": "broadened-cors",
+      "title": "CORS allowlist widened to any origin"
+    },
+    {
+      "caseId": "constant-falsy-guard-evasion",
+      "title": "Rate-limit guard neutralised with if (0) instead of if (false)"
+    },
+    {
+      "caseId": "disabled-tls-verification",
+      "title": "HTTPS agent disables certificate validation"
+    },
+    {
+      "caseId": "dynamic-code-execution",
+      "title": "Runtime expression evaluator introduced"
+    },
+    {
+      "caseId": "guard-removed-around-call",
+      "title": "Payment capture loses its verification guard"
+    },
+    {
+      "caseId": "hardcoded-secret",
+      "title": "API key committed in source"
+    },
+    {
+      "caseId": "jsx-hardcoded-secret",
+      "title": "Upload widget gains a hardcoded AWS key"
+    },
+    {
+      "caseId": "mjs-disabled-tls",
+      "title": "Sync script disables TLS certificate verification"
+    },
+    {
+      "caseId": "noisy-benign-refactor",
+      "title": "Currency formatter rename-and-reorder refactor"
+    },
+    {
+      "caseId": "oversized-file-skip",
+      "title": "Agent appends to a 3 MB generated bundle"
+    },
+    {
+      "caseId": "package-dependency-script-drift",
+      "title": "Package dependency and install script drift"
+    },
+    {
+      "caseId": "regex-anchors-removed",
+      "title": "Webhook signature pattern loses its anchors but stays specific-looking"
+    },
+    {
+      "caseId": "tsx-removed-sanitization",
+      "title": "React comment body loses HTML sanitization"
+    },
+    {
+      "caseId": "weakened-cookie-flags",
+      "title": "Session cookie protections removed"
+    }
+  ],
+  "matrix": [
+    {
+      "caseId": "test-file-hardcoded-secret",
+      "title": "Hardcoded secret in a test fixture is still flagged",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 0,
+        "sonnet-4-6": 100
+      },
+      "mean": 67,
+      "agreement": "split"
+    },
+    {
+      "caseId": "child-process-execution",
+      "title": "Archive helper imports child_process",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 15,
+        "sonnet-4-6": 100
+      },
+      "mean": 72,
+      "agreement": "split"
+    },
+    {
+      "caseId": "try-catch-removed",
+      "title": "Telemetry flush loses its try/catch",
+      "scores": {
+        "opus-4-8": 80,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 80
+      },
+      "mean": 87,
+      "agreement": "split"
+    },
+    {
+      "caseId": "payments-api-auth-regression",
+      "title": "Payments API token validation regression",
+      "scores": {
+        "opus-4-8": 90,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 97,
+      "agreement": "split"
+    },
+    {
+      "caseId": "benign-eval-in-string",
+      "title": "Lint message mentioning eval() must not flag",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "benign-formatting-only",
+      "title": "Formatting-only route cleanup",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "broadened-cors",
+      "title": "CORS allowlist widened to any origin",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "constant-falsy-guard-evasion",
+      "title": "Rate-limit guard neutralised with if (0) instead of if (false)",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "disabled-tls-verification",
+      "title": "HTTPS agent disables certificate validation",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "dynamic-code-execution",
+      "title": "Runtime expression evaluator introduced",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "guard-removed-around-call",
+      "title": "Payment capture loses its verification guard",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "hardcoded-secret",
+      "title": "API key committed in source",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "jsx-hardcoded-secret",
+      "title": "Upload widget gains a hardcoded AWS key",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "mjs-disabled-tls",
+      "title": "Sync script disables TLS certificate verification",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "noisy-benign-refactor",
+      "title": "Currency formatter rename-and-reorder refactor",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "oversized-file-skip",
+      "title": "Agent appends to a 3 MB generated bundle",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "package-dependency-script-drift",
+      "title": "Package dependency and install script drift",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "regex-anchors-removed",
+      "title": "Webhook signature pattern loses its anchors but stays specific-looking",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "tsx-removed-sanitization",
+      "title": "React comment body loses HTML sanitization",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    },
+    {
+      "caseId": "weakened-cookie-flags",
+      "title": "Session cookie protections removed",
+      "scores": {
+        "opus-4-8": 100,
+        "haiku-4-5": 100,
+        "sonnet-4-6": 100
+      },
+      "mean": 100,
+      "agreement": "clean"
+    }
+  ],
+  "spread": {
+    "min": 91,
+    "max": 99
+  },
+  "productSignals": [],
+  "splits": [
+    "test-file-hardcoded-secret",
+    "child-process-execution",
+    "try-catch-removed",
+    "payments-api-auth-regression"
+  ],
+  "externalValidationPending": true
+}

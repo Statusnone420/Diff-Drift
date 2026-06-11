@@ -1,0 +1,25 @@
+{
+  "caseId": "try-catch-removed",
+  "decision": "block",
+  "confidence": 0.95,
+  "findings": [
+    {
+      "title": "Error handling removed from critical flush operation",
+      "severity": "high",
+      "filePath": "src/flush.ts",
+      "riskType": "Unhandled exception in telemetry pipeline",
+      "evidence": "The try/catch block around pushEvents(queue) was removed entirely. The original code caught errors and invoked scheduleRetry(queue, err) for resilience; now any failure in pushEvents() will propagate uncaught, potentially crashing the telemetry pipeline. In a telemetry system, unhandled errors in the flush operation break data delivery guarantees and loss-of-signal monitoring."
+    }
+  ],
+  "notes": [
+    "Diff Drift correctly flagged this as 'Error handling removed' but scored it as 'Low severity'. The actual risk is higher: telemetry flush is a critical reliability operation, and removing its catch block creates an uncaught-exception risk in a data-delivery path. Conservative escalation from Low to High is justified.",
+    "The diff shows clean removal with no fallback handler or error-tolerant refactoring in place—this is not a refactor to a different error-handling pattern, it's bare removal.",
+    "The scheduleRetry function is still referenced implicitly as dead code removal, but without evidence it's been moved elsewhere or that failures are now handled at a higher level, this appears to be incomplete cleanup."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

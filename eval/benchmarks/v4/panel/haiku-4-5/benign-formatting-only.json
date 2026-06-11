@@ -1,0 +1,15 @@
+{
+  "caseId": "benign-formatting-only",
+  "decision": "approve",
+  "confidence": 0.99,
+  "findings": [],
+  "notes": [
+    "Raw diff confirms pure indentation formatting change (2→4 spaces). No logic, dependencies, or security-relevant code altered. Diff Drift correctly identified as formatting-only with zero active flags."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

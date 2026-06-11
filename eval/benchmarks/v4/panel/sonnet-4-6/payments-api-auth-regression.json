@@ -1,0 +1,60 @@
+{
+  "caseId": "payments-api-auth-regression",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Validation regex widened to accept any string",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Loose regex pattern",
+      "evidence": "Pattern changed from /^[A-Za-z0-9_\\-]{32,}$/ to /.*/ — every string including empty string now passes the format check, confirmed in both the report and the raw diff."
+    },
+    {
+      "title": "Cryptographic signature verification replaced with non-verifying decode",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Crypto downgrade",
+      "evidence": "Raw diff shows `return verify(token, PUBLIC_KEY)` replaced with `return decode(token)` from jwt-tiny-decode. decode() only parses the JWT payload without checking the signature, allowing forged tokens to pass validation."
+    },
+    {
+      "title": "Undeclared dependency jwt-tiny-decode imported",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Undeclared import",
+      "evidence": "Raw diff adds `import { decode } from \"jwt-tiny-decode\"` at line 1. Package is not declared in package.json per the report — introduces an unvetted dependency providing the non-verifying decode function used in the crypto downgrade."
+    },
+    {
+      "title": "Token format guard hardcoded to false — check permanently disabled",
+      "severity": "low",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Disabled guard",
+      "evidence": "Raw diff replaces `if (!pattern.test(token))` with `if (false)` — the malformed-token throw can never be reached regardless of the regex value above it."
+    },
+    {
+      "title": "Input sanitization call removed",
+      "severity": "low",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Removed sanitization",
+      "evidence": "Raw diff removes the `sanitizeInput(token)` call entirely, eliminating any injection filtering prior to token processing."
+    },
+    {
+      "title": "Logger redaction list emptied and level lowered to debug",
+      "severity": "low",
+      "filePath": "utils/logger.ts",
+      "riskType": "Permissive logging config",
+      "evidence": "Raw diff removes `redact: [\"req.headers.authorization\", \"token\"]` and changes level from \"info\" to \"debug\" — authorization headers and raw token values may now appear in debug log output."
+    }
+  ],
+  "notes": [
+    "routes/session.ts change is whitespace/formatting only (indentation and a blank line added); confirmed benign by both the report and the raw diff — no logic touched.",
+    "The combination of the regex widening, the hardcoded-false guard, the removal of sanitizeInput, and the swap from verify() to decode() in a single commit is a coherent regression pattern that eliminates all layers of token validation simultaneously; treat as high-priority block.",
+    "jwt-tiny-decode is not in package.json; the undeclared-import flag was scored medium by Diff Drift, which is reasonable — the dependency risk compounds the crypto-downgrade finding rather than standing alone."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

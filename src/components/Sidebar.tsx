@@ -19,6 +19,8 @@ export function Sidebar({
   watchingSince,
   justUpdated,
 }: SidebarProps) {
+  const otherChangedFiles = Math.max(session.changedFiles - files.length, 0);
+
   return (
     <div className="col sidebar">
       <div className="col-scroll">
@@ -62,6 +64,12 @@ export function Sidebar({
           <span>Analyzed files</span>
           <span className="count">{files.length}</span>
         </div>
+        {otherChangedFiles > 0 && (
+          <div className="sb-scope-note">
+            {otherChangedFiles} other changed file{otherChangedFiles === 1 ? "" : "s"} not shown
+            here: unsupported type or no analyzable package/script drift.
+          </div>
+        )}
         <div className="file-list">
           {files.map((f) => (
             <button

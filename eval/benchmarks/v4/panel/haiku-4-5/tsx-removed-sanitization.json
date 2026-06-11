@@ -1,0 +1,25 @@
+{
+  "caseId": "tsx-removed-sanitization",
+  "decision": "block",
+  "confidence": 0.95,
+  "findings": [
+    {
+      "title": "XSS vulnerability: removed HTML sanitization on user-supplied comment content",
+      "severity": "high",
+      "filePath": "src/components/CommentBody.tsx",
+      "riskType": "Removed input sanitization",
+      "evidence": "Line 2-3: Removed 'const safe = sanitizeHtml(raw);' and changed render from '{safe}' to '{raw}'. User-supplied comment text now renders without HTML escaping, enabling stored/reflected XSS attacks via malicious HTML in comment body."
+    }
+  ],
+  "notes": [
+    "Diff Drift severity marked as LOW, but this is a critical security issue: direct rendering of unsanitized user input enables injection attacks.",
+    "Avatar.tsx change is formatting-only and carries no risk.",
+    "The change simplifies the code but at the cost of removing essential input validation."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

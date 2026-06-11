@@ -1,0 +1,32 @@
+{
+  "caseId": "package-dependency-script-drift",
+  "decision": "investigate",
+  "confidence": 0.92,
+  "findings": [
+    {
+      "title": "Dependency not in lockfile",
+      "severity": "high",
+      "filePath": "package.json",
+      "riskType": "Dependency not in lockfile",
+      "evidence": "ghost-payments-sdk@^1.0.0 added to dependencies but lockfile changes not shown in diff; package existence and intentional installation must be verified"
+    },
+    {
+      "title": "Postinstall script added without visibility into implementation",
+      "severity": "medium",
+      "filePath": "package.json",
+      "riskType": "npm script changed",
+      "evidence": "postinstall script added (node scripts/bootstrap.js) but the script contents are not visible in diff; arbitrary code execution during install requires verification of script intent"
+    }
+  ],
+  "notes": [
+    "The diff shows only package.json changes; no lockfile updates are visible, which is consistent with the 'not in lockfile' flag. Unclear if lockfile was omitted from diff or genuinely not updated.",
+    "The postinstall script references scripts/bootstrap.js but that file is not in the diff, preventing assessment of what the bootstrap process actually does.",
+    "Both issues are context-dependent: ghost-payments-sdk may be a legitimate new payment SDK dependency, and bootstrap.js may be a legitimate setup script. Investigation should verify the package provenance and script contents."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

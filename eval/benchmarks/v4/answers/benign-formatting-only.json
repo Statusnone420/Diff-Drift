@@ -1,0 +1,18 @@
+{
+  "caseId": "benign-formatting-only",
+  "decision": "approve",
+  "confidence": 0.97,
+  "findings": [],
+  "notes": [
+    "The raw diff touches a single file, src/routes/profile.ts, and the only change is indentation of the return statement from 2 to 4 spaces. The returned object { id, active: true } and the function signature getProfile(id: string) are byte-for-byte identical, so there is no behavioral change.",
+    "Diff Drift reports '1 changed file · 0 active flags' and classifies src/routes/profile.ts as 'Formatting only', which is consistent with the raw diff evidence.",
+    "No files were marked 'Skipped — file too large to analyze'; the single analyzed file was fully reviewed.",
+    "No secrets, network calls, auth/permission logic, eval/exec, or dependency changes appear in the diff — consistent with a whitespace-only cleanup."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-a",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

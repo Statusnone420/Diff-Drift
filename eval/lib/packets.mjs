@@ -56,7 +56,11 @@ export function renderAgentScorecard(result) {
     const related = summary.totalRelatedFindings ?? 0;
     const falsePositives = summary.totalFalsePositives ?? 0;
     lines.push(
-      `- Precision: ${percent(summary.precision)} — ${matchedReported} matched of ${summary.totalFindings} reported (${related} near-miss, ${falsePositives} false positives; both lower precision)`,
+      `- Precision: ${percent(summary.precision)} — ${matchedReported} matched of ${summary.totalFindings} reported (${countLabel(
+        related,
+        "near-miss",
+        "near-misses",
+      )}, ${countLabel(falsePositives, "false positive")}; both lower precision)`,
     );
   }
   lines.push(
@@ -523,7 +527,7 @@ export function renderAgentDashboard(result) {
             <span class="label good">${caseCount} cases</span>
             <span class="label">${evaluatorCount} evaluator${evaluatorCount === 1 ? "" : "s"}</span>
             <span class="label">${answerCount} blind answers</span>
-            <span class="label">${falsePositives} false positives</span>
+            <span class="label">${countLabel(falsePositives, "false positive")}</span>
           </div>
           <h1>Blind-agent scorecard</h1>
           <p class="lede">Can a reviewer use Diff Drift packets to make the right trust decision and cite the right evidence? This report scores that reviewer workflow. It is advisory evidence for product quality, not a release gate.</p>
@@ -659,6 +663,10 @@ function bar(score) {
 
 function percent(value) {
   return `${Math.round((value ?? 0) * 100)}%`;
+}
+
+function countLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function notesFor(score) {

@@ -35,7 +35,7 @@ test.describe("Diff Drift browser-mode E2E", () => {
 
     await page.getByRole("button", { name: "Dismiss all" }).click();
     await expect(page.getByText("No active risk flags")).toBeVisible();
-    await expect(page.getByText(/No flags in 3 changed files/)).toBeVisible();
+    await expect(page.getByText("No flags — 6 changed nodes to review")).toBeVisible();
     await expectNoAxeViolations(page);
   });
 

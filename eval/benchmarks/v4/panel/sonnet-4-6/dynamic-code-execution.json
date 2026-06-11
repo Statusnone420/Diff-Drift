@@ -1,0 +1,25 @@
+{
+  "caseId": "dynamic-code-execution",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Direct eval() call on unsanitized string input",
+      "severity": "high",
+      "filePath": "src/renderExpression.ts",
+      "riskType": "Dynamic code execution",
+      "evidence": "The diff replaces `return input.trim()` with `return eval(input)`. The function accepts an arbitrary caller-supplied string and passes it directly to `eval()` with no validation, sandboxing, or allowlist. In a billing-worker context this allows arbitrary JavaScript execution with full process privileges, enabling data exfiltration, RCE, or privilege escalation if any caller-controlled value reaches this function."
+    }
+  ],
+  "notes": [
+    "The change is a single-line diff; the risk is unambiguous — Diff Drift's high-severity flag is correct and well-evidenced by the raw patch.",
+    "No mitigating controls (input validation, allowlist parsing, sandboxed eval alternative) are visible in the diff.",
+    "A safe alternative would be a restricted expression parser (e.g., a math/template AST evaluator) that never executes arbitrary JS."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

@@ -112,8 +112,13 @@ impl Rule for HardcodedSecret {
     fn id(&self) -> &'static str {
         "hardcoded-secret"
     }
-    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if ctx.is_test_file || !added_or_modified(node.state) {
+    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+        // Unlike the other rules, secrets are NOT suppressed in test files: a
+        // real key pasted into a fixture is still a leak, and the AWS/OpenAI/PEM
+        // markers are specific enough that flagging them stays low-noise. The
+        // analysis is drift-scoped, so this only fires on a secret an agent just
+        // added — not the existing test corpus.
+        if !added_or_modified(node.state) {
             return None;
         }
         static AWS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"AKIA[0-9A-Z]{16}").unwrap());
@@ -1108,7 +1113,9 @@ mod tests {
                 &ctx()
             )
             .is_none());
-        // suppressed in test files
+        // Secrets are flagged even in test files: a real key pasted into a
+        // fixture is still a leak, and the AWS/OpenAI/PEM markers are specific
+        // enough to stay low-noise. Other rules still suppress in test paths.
         assert!(r
             .check(
                 &node(
@@ -1119,7 +1126,7 @@ mod tests {
                 ),
                 &test_ctx()
             )
-            .is_none());
+            .is_some());
         // removed (not added) → no fire
         assert!(r
             .check(

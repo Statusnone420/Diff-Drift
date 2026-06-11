@@ -47,9 +47,16 @@ against a memoized parse) would recover most of it without touching detection �
 ## Blind-agent scorecard
 
 The deterministic `eval:engine` gate covers all 20 cases through the real binary (20/20). The
-advisory blind-agent scorecard (`eval:score-agent`) is **not** re-run here: a faithful rescore
-needs fresh *blind* model answers, and generating them inside the change that adds the cases
-would defeat the blindness — left pending, same posture as the v1→v3 history.
+advisory blind-agent scorecard (`eval:score-agent`) was re-run blind against this engine as
+**benchmark v4**: all 20 packets regenerated from the engine-v2 binary, fresh model answers
+produced from packet-only context, the rubric and prompt frozen and byte-identical across the run.
+An initial pass scored 94/100 and surfaced one real gap — the engine detected the `AKIA…` secret in
+a test fixture but silently suppressed it because the path was test-like. That was fixed in the
+engine (the hardcoded-secret rule no longer suppresses in test files; the noisier rules still do),
+and the case was redefined to expect the flag. Single-model **Claude Opus 4.8 now scores 99/100**
+with 100% per-rule recall; a multi-model panel (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) lands at a
+**91–99 spread**. Per-case gap analysis and the panel in
+[Eval Methodology](wiki/Eval-Methodology.md#multi-model-panel).
 
 ## Known limits (out of lane by design)
 

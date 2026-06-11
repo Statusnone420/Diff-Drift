@@ -1,0 +1,1131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diff Drift Blind-Agent Scorecard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f6f8fb;
+      --surface: #ffffff;
+      --surface-quiet: #f0f4f8;
+      --border: #d9e1eb;
+      --border-strong: #b9c6d6;
+      --ink: #152032;
+      --text: #2b3547;
+      --dim: #566276;
+      --mute: #718096;
+      --accent: #d89024;
+      --amber-soft: #fff4dc;
+      --green: #15824f;
+      --green-soft: #e7f6ee;
+      --teal: #15858f;
+      --teal-soft: #e4f6f8;
+      --blue: #3468c7;
+      --blue-soft: #e8effd;
+      --purple: #7650bd;
+      --purple-soft: #f0eafa;
+      --red: #c24135;
+      --red-soft: #fff0ee;
+      --mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+      --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font-family: var(--ui);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    main { max-width: 1800px; min-width: 1180px; margin: 0 auto; padding: 18px 28px 20px; }
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 10px;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 700; }
+    .mark {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: linear-gradient(145deg, #2a2d37, #15171d);
+      position: relative;
+    }
+    .mark:after {
+      content: "";
+      position: absolute;
+      inset: 7px 6px;
+      border-top: 2px solid var(--accent);
+      border-left: 2px solid var(--accent);
+      transform: rotate(45deg);
+    }
+    .run-meta {
+      max-width: 720px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 560px;
+      gap: 28px;
+      align-items: stretch;
+      margin-bottom: 10px;
+    }
+    .hero-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .label-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .label {
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: var(--surface-quiet);
+      color: var(--dim);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .label.good {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: #b8e5cc;
+    }
+    h1 {
+      margin: 0 0 8px;
+      color: var(--ink);
+      font-size: 44px;
+      line-height: 1.02;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+    .lede { max-width: 72ch; margin: 0; color: var(--dim); font-size: 15px; }
+    .pending {
+      margin: 12px 0 0;
+      padding: 8px 10px;
+      border: 1px solid #e7bf79;
+      border-radius: 8px;
+      background: var(--amber-soft);
+      color: #6f4a10;
+      font-size: 13px;
+      max-width: 78ch;
+    }
+    .score-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fbfcfe;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .score-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .score-head h2 {
+      margin: 0 0 2px;
+      color: var(--ink);
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .score-head p {
+      margin: 0;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .score-value {
+      text-align: right;
+      color: var(--dim);
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .score-value strong {
+      display: block;
+      color: var(--ink);
+      font-family: var(--ui);
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+    .score-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #dfe6ef;
+      overflow: hidden;
+    }
+    .score-bar i {
+      display: block;
+      height: 100%;
+      width: 99%;
+      background: var(--accent);
+    }
+    .metric-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px 12px;
+    }
+    .metric-row {
+      display: grid;
+      grid-template-columns: 104px minmax(0, 1fr) 44px;
+      gap: 8px;
+      align-items: center;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .metric-row strong {
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 12px;
+      text-align: right;
+    }
+    .metric-track,
+    .hist-track {
+      height: 7px;
+      border-radius: 999px;
+      background: #dfe6ef;
+      overflow: hidden;
+    }
+    .metric-track i,
+    .hist-track i {
+      display: block;
+      height: 100%;
+      width: var(--value);
+      background: var(--fill);
+    }
+    .panel-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .hint { color: var(--mute); font-size: 12px; font-weight: 500; }
+    .distribution {
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+    .histogram {
+      display: grid;
+      gap: 5px;
+    }
+    .hist-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 34px;
+      gap: 8px;
+      align-items: center;
+      color: var(--mute);
+      font: 11px var(--mono);
+    }
+    .hist-row.active {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .hist-row.active .hist-track {
+      background: var(--amber-soft);
+    }
+    .cases-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .cases-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: #fbfcfe;
+    }
+    h2 { margin: 0; color: var(--ink); font-size: 17px; letter-spacing: 0; }
+    .case-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .case-table th {
+      text-align: left;
+      color: var(--mute);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+    }
+    .case-table td {
+      padding: 4px 14px;
+      border-bottom: 1px solid #edf1f6;
+      vertical-align: middle;
+    }
+    .case-table tr:last-child td { border-bottom: 0; }
+    .case-name {
+      color: var(--ink);
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+    .case-sub {
+      color: var(--mute);
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-top: 1px;
+      display: none;
+    }
+    .score-cell {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+    .score-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 26px;
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: #6f4a10;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .bar {
+      height: 7px;
+      border-radius: 999px;
+      background: #dfe6ef;
+      overflow: hidden;
+    }
+    .bar > i {
+      display: block;
+      height: 100%;
+      width: var(--value);
+      background: var(--fill);
+    }
+    .mini-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .mini-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      color: var(--dim);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .mini-row b { color: var(--ink); font-weight: 650; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 18px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 10.5px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .chip.ok { color: var(--green); border-color: #b8e5cc; background: var(--green-soft); }
+    .chip.miss { color: var(--red); border-color: #f0bbb6; background: var(--red-soft); }
+    .finding-stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .finding-stack .chip { color: var(--dim); background: #f9fbfd; }
+    .why {
+      color: var(--dim);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @media (max-width: 1180px) {
+      main { min-width: 0; }
+      .hero { grid-template-columns: 1fr; }
+      .metric-list { grid-template-columns: 1fr; }
+      .case-table { min-width: 980px; }
+      .cases-panel { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topline">
+      <div class="brand"><span class="mark"></span><span>Diff Drift benchmark</span></div>
+      <div class="run-meta"><span>claude-opus-4-8-v4-batch-a (model, 7) | claude-opus-4-8-v4-batch-b (model, 7) | claude-opus-4-8-v4-batch-c (model, 6)</span></div>
+      <div>2026-06-11T01:55:31.516Z</div>
+    </div>
+    <section class="hero">
+      <div class="hero-copy">
+        <div>
+          <div class="label-row">
+            <span class="label good">20 cases</span>
+            <span class="label">3 evaluators</span>
+            <span class="label">20 blind answers</span>
+            <span class="label">0 false positives</span>
+          </div>
+          <h1>Blind-agent scorecard</h1>
+          <p class="lede">Can a reviewer use Diff Drift packets to make the right trust decision and cite the right evidence? This report scores that reviewer workflow. It is advisory evidence for product quality, not a release gate.</p>
+        </div>
+        <p class="pending"><b>Independent external validation pending.</b> No external human evaluator has contributed answers yet. Treat this as an internal product-quality signal, not third-party validation.</p>
+      </div>
+      <aside class="score-panel" aria-label="Benchmark summary">
+        <div class="score-head">
+          <div>
+            <h2>Benchmark summary</h2>
+            <p>Packet-only blind review, model-only panel</p>
+          </div>
+          <div class="score-value"><strong>99</strong>/100</div>
+        </div>
+        <div class="score-bar" aria-hidden="true"><i></i></div>
+        <div class="metric-list">
+          <div class="metric-row">
+    <span>Decision accuracy</span>
+    <div class="metric-track" style="--fill: var(--green); --value: 95%"><i></i></div>
+    <strong>95%</strong>
+  </div>
+          <div class="metric-row">
+    <span>Finding recall</span>
+    <div class="metric-track" style="--fill: var(--teal); --value: 100%"><i></i></div>
+    <strong>100%</strong>
+  </div>
+          <div class="metric-row">
+    <span>Localization</span>
+    <div class="metric-track" style="--fill: var(--blue); --value: 100%"><i></i></div>
+    <strong>100%</strong>
+  </div>
+          <div class="metric-row">
+    <span>Precision</span>
+    <div class="metric-track" style="--fill: var(--purple); --value: 100%"><i></i></div>
+    <strong>100%</strong>
+  </div>
+        </div>
+        <section class="distribution" aria-label="Case score distribution">
+          <div class="panel-title">
+            <span>Case score histogram</span>
+            <span class="hint">range 80-100; median 100</span>
+          </div>
+          <div class="histogram"><div class="hist-row ">
+    <span>0-59</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: 0%"><i></i></div>
+    <strong>0</strong>
+  </div>
+<div class="hist-row ">
+    <span>60-79</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: 0%"><i></i></div>
+    <strong>0</strong>
+  </div>
+<div class="hist-row active">
+    <span>80-89</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: 6%"><i></i></div>
+    <strong>1</strong>
+  </div>
+<div class="hist-row active">
+    <span>90-99</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: 6%"><i></i></div>
+    <strong>1</strong>
+  </div>
+<div class="hist-row active">
+    <span>100</span>
+    <div class="hist-track" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    <strong>18</strong>
+  </div></div>
+        </section>
+      </aside>
+    </section>
+    <section class="cases-panel" aria-label="Case results">
+      <div class="cases-head">
+        <h2>Case results</h2>
+        <div class="hint">Weighted recall, decision accuracy, top-risk ranking, localization, and unmatched findings.</div>
+      </div>
+      <table class="case-table">
+        <thead>
+          <tr>
+            <th style="width: 23%">Case</th>
+            <th style="width: 18%">Score</th>
+            <th style="width: 11%">Decision</th>
+            <th style="width: 22%">Coverage</th>
+            <th style="width: 13%">Findings</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+  <td>
+    <div class="case-name">try-catch-removed</div>
+    <div class="case-sub">score 80/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">80</span>
+      <div class="bar" style="--fill: var(--accent); --value: 80%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip miss">miss</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">decision expected block</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">payments-api-auth-regression</div>
+    <div class="case-sub">score 90/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">90</span>
+      <div class="bar" style="--fill: var(--accent); --value: 90%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">6/6</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">benign-eval-in-string</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">0/0</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">benign-formatting-only</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">0/0</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">broadened-cors</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">child-process-execution</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">constant-falsy-guard-evasion</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">disabled-tls-verification</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">dynamic-code-execution</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">guard-removed-around-call</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">hardcoded-secret</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">jsx-hardcoded-secret</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">mjs-disabled-tls</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">noisy-benign-refactor</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">0/0</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">oversized-file-skip</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">0/0</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">package-dependency-script-drift</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">2/2</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">regex-anchors-removed</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">test-file-hardcoded-secret</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">tsx-removed-sanitization</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">weakened-cookie-flags</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">3/3</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

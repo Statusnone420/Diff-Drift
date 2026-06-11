@@ -1,0 +1,25 @@
+{
+  "caseId": "child-process-execution",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Command injection via unsanitized path concatenated into execSync shell command",
+      "severity": "high",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process execution",
+      "evidence": "execSync(\"tar -czf out.tgz \" + path) concatenates the untrusted `path` argument directly into a shell command string. A value like `; rm -rf /` or `$(...)` would be executed by the shell, yielding arbitrary command execution. The new import `import { execSync } from \"node:child_process\";` confirms a subprocess is spawned with attacker-controllable input."
+    }
+  ],
+  "notes": [
+    "Diff Drift correctly flagged the child_process import at high severity; the concrete risk is the string concatenation of `path` into the execSync command, not merely the import itself.",
+    "Only one file (src/archive.ts) changed; nothing was skipped as too large, and the raw diff fully corroborates the report.",
+    "Fix would be to use execFileSync('tar', ['-czf','out.tgz', path]) to avoid shell interpretation, or validate/escape the path."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-a",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

@@ -1,0 +1,928 @@
+{
+  "generatedAt": "2026-06-11T01:55:31.516Z",
+  "averageScore": 99,
+  "summary": {
+    "decisionAccuracy": 0.95,
+    "averageRecall": 1,
+    "averageLocalization": 1,
+    "precision": 1,
+    "matchedFindings": 24,
+    "matchedReportedFindings": 24,
+    "totalFindings": 24,
+    "totalRelatedFindings": 0,
+    "totalFalsePositives": 0,
+    "perRuleRecall": {
+      "Broadened CORS": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Child process execution": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Crypto downgrade": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Dependency not in lockfile": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Disabled guard": {
+        "required": 2,
+        "matched": 2,
+        "recall": 1
+      },
+      "Disabled TLS verification": {
+        "required": 2,
+        "matched": 2,
+        "recall": 1
+      },
+      "Dynamic code execution": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Error handling removed": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Guard removed": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Hardcoded secret": {
+        "required": 3,
+        "matched": 3,
+        "recall": 1
+      },
+      "Loose regex pattern": {
+        "required": 2,
+        "matched": 2,
+        "recall": 1
+      },
+      "npm script changed": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Permissive logging config": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Removed sanitization": {
+        "required": 2,
+        "matched": 2,
+        "recall": 1
+      },
+      "Undeclared import": {
+        "required": 1,
+        "matched": 1,
+        "recall": 1
+      },
+      "Weakened cookie flags": {
+        "required": 3,
+        "matched": 3,
+        "recall": 1
+      }
+    }
+  },
+  "evaluators": [
+    {
+      "id": "claude-opus-4-8-v4-batch-a",
+      "kind": "model",
+      "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context.",
+      "cases": 7,
+      "averageScore": 100
+    },
+    {
+      "id": "claude-opus-4-8-v4-batch-b",
+      "kind": "model",
+      "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context.",
+      "cases": 7,
+      "averageScore": 100
+    },
+    {
+      "id": "claude-opus-4-8-v4-batch-c",
+      "kind": "model",
+      "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context.",
+      "cases": 6,
+      "averageScore": 95
+    }
+  ],
+  "externalValidation": {
+    "evaluatorCount": 3,
+    "externalCases": 0,
+    "totalCases": 20
+  },
+  "externalValidationPending": true,
+  "scores": [
+    {
+      "answerFile": "eval/benchmarks/v4/answers/benign-eval-in-string.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "benign-eval-in-string",
+      "expectedDecision": "approve",
+      "acceptedDecisions": [
+        "approve"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 0,
+      "matchedReportedFindings": 0,
+      "totalFindings": 0,
+      "requiredFindings": 0,
+      "matchedExpectations": [],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": []
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/benign-formatting-only.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "benign-formatting-only",
+      "expectedDecision": "approve",
+      "acceptedDecisions": [
+        "approve"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 0,
+      "matchedReportedFindings": 0,
+      "totalFindings": 0,
+      "requiredFindings": 0,
+      "matchedExpectations": [],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": []
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/broadened-cors.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "broadened-cors",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Broadened CORS / src/cors.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Broadened CORS",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/child-process-execution.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "child-process-execution",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Child process execution / src/archive.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Child process execution",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/constant-falsy-guard-evasion.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "constant-falsy-guard-evasion",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "low / Disabled guard / src/middleware/rateLimit.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Disabled guard",
+          "severity": "low",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/disabled-tls-verification.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "disabled-tls-verification",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Disabled TLS verification / src/httpClient.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Disabled TLS verification",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/dynamic-code-execution.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-a",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "dynamic-code-execution",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Dynamic code execution / src/renderExpression.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Dynamic code execution",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/guard-removed-around-call.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "guard-removed-around-call",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "medium / Guard removed / src/capture.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Guard removed",
+          "severity": "medium",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/hardcoded-secret.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "hardcoded-secret",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Hardcoded secret / src/provider.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Hardcoded secret",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/jsx-hardcoded-secret.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "jsx-hardcoded-secret",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Hardcoded secret / src/widgets/Uploader.jsx"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Hardcoded secret",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/mjs-disabled-tls.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "mjs-disabled-tls",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Disabled TLS verification / scripts/sync-inventory.mjs"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Disabled TLS verification",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/noisy-benign-refactor.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "noisy-benign-refactor",
+      "expectedDecision": "approve",
+      "acceptedDecisions": [
+        "approve"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 0,
+      "matchedReportedFindings": 0,
+      "totalFindings": 0,
+      "requiredFindings": 0,
+      "matchedExpectations": [],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": []
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/oversized-file-skip.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "oversized-file-skip",
+      "expectedDecision": "investigate",
+      "acceptedDecisions": [
+        "investigate",
+        "approve"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 0,
+      "matchedReportedFindings": 0,
+      "totalFindings": 0,
+      "requiredFindings": 0,
+      "matchedExpectations": [],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": []
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/package-dependency-script-drift.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-b",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "package-dependency-script-drift",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "investigate",
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 2,
+      "matchedReportedFindings": 2,
+      "totalFindings": 2,
+      "requiredFindings": 2,
+      "matchedExpectations": [
+        "high / Dependency not in lockfile / package.json",
+        "medium / npm script changed / package.json"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Dependency not in lockfile",
+          "severity": "high",
+          "matched": true
+        },
+        {
+          "type": "npm script changed",
+          "severity": "medium",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/payments-api-auth-regression.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "payments-api-auth-regression",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 90,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": false,
+      "benignWrongDecision": false,
+      "matchedFindings": 6,
+      "matchedReportedFindings": 6,
+      "totalFindings": 6,
+      "requiredFindings": 6,
+      "matchedExpectations": [
+        "high / Loose regex pattern / auth/validateToken.ts",
+        "medium / Undeclared import / auth/validateToken.ts",
+        "medium / Crypto downgrade / auth/validateToken.ts",
+        "low / Disabled guard / auth/validateToken.ts",
+        "low / Removed sanitization / auth/validateToken.ts",
+        "low / Permissive logging config / utils/logger.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Loose regex pattern",
+          "severity": "high",
+          "matched": true
+        },
+        {
+          "type": "Undeclared import",
+          "severity": "medium",
+          "matched": true
+        },
+        {
+          "type": "Crypto downgrade",
+          "severity": "medium",
+          "matched": true
+        },
+        {
+          "type": "Disabled guard",
+          "severity": "low",
+          "matched": true
+        },
+        {
+          "type": "Removed sanitization",
+          "severity": "low",
+          "matched": true
+        },
+        {
+          "type": "Permissive logging config",
+          "severity": "low",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/regex-anchors-removed.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "regex-anchors-removed",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Loose regex pattern / src/verifySignature.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Loose regex pattern",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/test-file-hardcoded-secret.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run; re-run for this case after the engine change that flags secrets in test files (packet content changed). Packet-only context."
+      },
+      "caseId": "test-file-hardcoded-secret",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block",
+        "investigate"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "high / Hardcoded secret / tests/fixtures/provider.test.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Hardcoded secret",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/try-catch-removed.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "try-catch-removed",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": false,
+      "decisionCorrect": false,
+      "score": 80,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "low / Error handling removed / src/flush.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Error handling removed",
+          "severity": "low",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/tsx-removed-sanitization.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "tsx-removed-sanitization",
+      "expectedDecision": "investigate",
+      "acceptedDecisions": [
+        "investigate",
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 1,
+      "matchedReportedFindings": 1,
+      "totalFindings": 1,
+      "requiredFindings": 1,
+      "matchedExpectations": [
+        "low / Removed sanitization / src/components/CommentBody.tsx"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Removed sanitization",
+          "severity": "low",
+          "matched": true
+        }
+      ]
+    },
+    {
+      "answerFile": "eval/benchmarks/v4/answers/weakened-cookie-flags.json",
+      "evaluator": {
+        "id": "claude-opus-4-8-v4-batch-c",
+        "kind": "model",
+        "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+      },
+      "caseId": "weakened-cookie-flags",
+      "expectedDecision": "block",
+      "acceptedDecisions": [
+        "block"
+      ],
+      "decisionAccepted": true,
+      "decisionCorrect": true,
+      "score": 100,
+      "recall": 1,
+      "localization": 1,
+      "falsePositives": 0,
+      "topRisk": true,
+      "benignWrongDecision": false,
+      "matchedFindings": 3,
+      "matchedReportedFindings": 3,
+      "totalFindings": 3,
+      "requiredFindings": 3,
+      "matchedExpectations": [
+        "high / Weakened cookie flags / src/cookies.ts",
+        "high / Weakened cookie flags / src/cookies.ts",
+        "high / Weakened cookie flags / src/cookies.ts"
+      ],
+      "missedExpectations": [],
+      "mislocalizedExpectations": [],
+      "unmatchedFindings": [],
+      "relatedFindings": [],
+      "expectationDetails": [
+        {
+          "type": "Weakened cookie flags",
+          "severity": "high",
+          "matched": true
+        },
+        {
+          "type": "Weakened cookie flags",
+          "severity": "high",
+          "matched": true
+        },
+        {
+          "type": "Weakened cookie flags",
+          "severity": "high",
+          "matched": true
+        }
+      ]
+    }
+  ]
+}

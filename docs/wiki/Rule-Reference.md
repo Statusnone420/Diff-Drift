@@ -14,7 +14,7 @@ Most code rules match **structurally**: the changed node's before/after source i
 
 | Rule | Severity | Match type | Triggers On | Notes |
 | --- | --- | --- | --- | --- |
-| Hardcoded secret | High | Text (markers) | AWS-style keys, OpenAI-style keys, or private key markers added to source | Suppressed in test-like files. Marker-based, like gitleaks; does not detect every secret format. |
+| Hardcoded secret | High | Text (markers) | AWS-style keys, OpenAI-style keys, or private key markers added to source | Flagged everywhere, including test files — a real key in a fixture is still a leak (other rules still suppress in test paths). Marker-based, like gitleaks; does not detect every secret format. |
 | Dynamic code execution | High | Structural | Newly added `eval(...)`/`window.eval(...)` or `new Function(...)` | Matches the real call syntax (incl. optional chaining and member form); the words inside a string or comment never flag. |
 | Child process execution | High | Text | Newly added `child_process` imports or subprocess calls | Suppressed in test-like files. |
 | Disabled TLS verification | High | Structural + text | `rejectUnauthorized: false` (object property) or `NODE_TLS_REJECT_UNAUTHORIZED=0` (env var) introduced | The object-property form matches quoted or unquoted keys; the env-var form is text. Review for local-dev exceptions before dismissing. |

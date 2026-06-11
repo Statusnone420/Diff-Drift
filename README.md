@@ -71,7 +71,15 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
+A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
+
+The blind-agent panel below is advisory: each model plays a blind reviewer over the same benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. Across the current panel it lands **91–99 / 100** — Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91 — three blind models, independent external validation pending. No case is missed by every model, so the gaps are reviewer variance, not detection failures. The models are rulers; Diff Drift is what's measured — read the spread, not a pooled average. The rubric, the panel, and version history are in [Eval Methodology](docs/wiki/Eval-Methodology.md).
+
+<p align="center">
+  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent multi-model panel: Claude Opus 4.8 and Sonnet 4.6 score 99/100, Haiku 4.5 91/100 over 20 cases (benchmark v4); model-only evaluators, independent external validation pending" width="920">
+</p>
+
+To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
 
 ## Status
 

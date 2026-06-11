@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { collectAnswerFiles } from "./lib/answers.mjs";
+import { answerFileLabel, collectAnswerFiles } from "./lib/answers.mjs";
 import { loadCases, projectRoot } from "./lib/cases.mjs";
 import {
   collectEvaluators,
@@ -33,7 +33,11 @@ for (const file of answerFiles) {
     throw new Error(`No eval case found for answer ${file} with caseId "${caseId}"`);
   }
   const score = scoreAgentAnswer(caseDef, { ...answer, caseId });
-  scores.push({ answerFile: file, evaluator: normalizeEvaluator(answer.evaluator), ...score });
+  scores.push({
+    answerFile: answerFileLabel(file, projectRoot),
+    evaluator: normalizeEvaluator(answer.evaluator),
+    ...score,
+  });
   console.log(
     `SCORE ${caseId}: ${score.score}/100 decision=${score.decisionCorrect ? "ok" : "miss"} recall=${score.recall.toFixed(
       2,

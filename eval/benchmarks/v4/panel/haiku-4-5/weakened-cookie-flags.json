@@ -1,0 +1,35 @@
+{
+  "caseId": "weakened-cookie-flags",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "Removed httpOnly flag from accessCookie",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "accessCookie httpOnly: true was removed, allowing scripts to read the session cookie via XSS"
+    },
+    {
+      "title": "Removed secure flag from refreshCookie",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "refreshCookie secure: true was removed, allowing transmission over unencrypted HTTP connections"
+    },
+    {
+      "title": "Downgraded sameSite from Strict to None on csrfCookie",
+      "severity": "high",
+      "filePath": "src/cookies.ts",
+      "riskType": "Weakened cookie flags",
+      "evidence": "csrfCookie sameSite changed from 'Strict' to 'None', restoring CSRF vulnerability"
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

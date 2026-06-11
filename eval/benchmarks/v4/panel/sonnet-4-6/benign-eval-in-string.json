@@ -1,0 +1,15 @@
+{
+  "caseId": "benign-eval-in-string",
+  "decision": "approve",
+  "confidence": 0.97,
+  "findings": [],
+  "notes": [
+    "The sole change is a string literal update in src/messages.ts: the text 'eval(code)' and 'new Function(code)' appear only inside a human-readable lint message, not as actual code invocations. There is no dynamic code execution introduced. Diff Drift correctly reported 0 active flags. The mention of eval() is descriptive/educational content within a string value, which is the expected behavior this case is designed to verify."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

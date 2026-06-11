@@ -35,6 +35,8 @@ The top toolbar shows the current repo, branch, baseline, review progress, flag 
 - **Reviewed**: changed nodes you've marked reviewed vs the total ( shown per file as `n/m` and drift-wide in the toolbar).
 - **Node legend**: added, modified, and removed AST nodes inside the selected analyzed file.
 
+Zero flags means no active heuristic findings. It does not mean the drift is reviewed; if changed nodes remain, review progress still shows what needs a human pass.
+
 ## Review Flags
 
 Each flag card shows its file path and node path (for example `validateToken › pattern`), so you can see what it points to before clicking. Click a risk flag to jump to the related node in the center panel. The flag text explains what changed and why it may need review.

@@ -1,0 +1,23 @@
+{
+  "caseId": "dynamic-code-execution",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "Direct eval() call enables arbitrary code execution",
+      "severity": "high",
+      "filePath": "src/renderExpression.ts",
+      "riskType": "Dynamic code execution",
+      "evidence": "renderExpression() now executes eval(input) directly on user-supplied input with no sanitization, validation, or sandboxing. This allows code injection attacks where attackers controlling the input parameter can execute arbitrary JavaScript within the billing-worker process."
+    }
+  ],
+  "notes": [
+    "The change completely removes the safe input.trim() operation and replaces it with eval(). No mitigating factors, input validation, or safe alternatives are apparent in the diff. The Diff Drift report's high-severity assessment is correct."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

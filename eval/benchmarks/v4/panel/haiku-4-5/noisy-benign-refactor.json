@@ -1,0 +1,18 @@
+{
+  "caseId": "noisy-benign-refactor",
+  "decision": "approve",
+  "confidence": 0.95,
+  "findings": [],
+  "notes": [
+    "Diff Drift found 0 active risk flags; no security concerns detected.",
+    "Refactoring includes function renames (formatAmount→formatCurrency, padLabel→padColumnLabel) and reordering, which are benign code quality improvements.",
+    "Currency formatting logic is unchanged and correct.",
+    "Single file changed; consistent updates to function names and exports indicate coherent refactoring."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}
