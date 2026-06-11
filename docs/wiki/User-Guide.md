@@ -57,7 +57,7 @@ Reports include the repo, branch, baseline, flag state, reviewed state, analyzed
 
 ## Headless Check (for scripts and agents)
 
-The CLI is not a separate install — it is the same `diff-drift.exe` the app runs, invoked from a terminal with the `check` subcommand. The Windows installer puts it at `%LOCALAPPDATA%\Diff Drift\diff-drift.exe` by default (per-user install). In a development checkout it is `src-tauri\target\debug\diff-drift.exe` after a build.
+The CLI is not a separate install — it is the same `diff-drift.exe` the app runs, invoked from a terminal with the `check` subcommand. The Windows installer puts it at `%LOCALAPPDATA%\Diff Drift\diff-drift.exe` by default (per-user install). Since v0.3.2 each release also carries the bare `diff-drift.exe` as a downloadable asset (verify it against `SHA256SUMS.txt`), so scripts and CI can use the CLI without the installer. In a development checkout it is `src-tauri\target\debug\diff-drift.exe` after a build.
 
 Run it with the full path, or add the install folder to your `PATH` once:
 
@@ -98,26 +98,71 @@ fi
 
 **Agent hook** (e.g. a Claude Code Stop/PostToolUse hook) — make the agent's own loop fail until drift is reviewed:
 
-```powershell
+```bash
+#!/bin/sh
 diff-drift check . --baseline trust-point --md
-if ($LASTEXITCODE -ge 2) { exit 2 }  # surface medium+ drift back to the agent loop
+code=$?
+if [ "$code" -ge 2 ]; then exit 2; fi  # surface medium+ drift back to the agent loop
 ```
 
 With the `trust-point` baseline the gate keeps seeing everything since *you* last clicked **Mark reviewed**, even while the agent commits as it works.
 
-**GitHub Actions** (Windows runner) — gate a PR on medium+ drift vs the merge-base. Build the CLI from source in CI (or restore it from a cache/artifact); it's the same binary the app installs:
+A Windows caveat that matters for hooks: the installed `diff-drift.exe` is a GUI-subsystem binary (so the app opens without a console window), which means **PowerShell and cmd start it without waiting and never see its exit code** — `$LASTEXITCODE` stays unset. `sh`/`bash` hooks and Node-based runners wait correctly, so prefer those. If the hook must be PowerShell, wait explicitly:
+
+```powershell
+$p = Start-Process "$env:LOCALAPPDATA\Diff Drift\diff-drift.exe" `
+  -ArgumentList 'check', '.', '--baseline', 'trust-point', '--md' `
+  -NoNewWindow -Wait -PassThru -RedirectStandardOutput drift-report.md
+Get-Content drift-report.md
+if ($p.ExitCode -ge 2) { exit 2 }
+```
+
+**GitHub Actions** — gate a PR on medium+ drift vs the merge-base. The published action downloads the release CLI (checksum-verified), runs the check, and writes the report to the job summary. No Rust toolchain needed. Two requirements: a Windows runner, and `fetch-depth: 0` (the `merge-base` baseline needs `origin/main` in the checkout):
+
+```yaml
+jobs:
+  drift:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Statusnone420/Diff-Drift@v0.3.2
+        with:
+          baseline: merge-base
+          fail-on: medium
+```
+
+Inputs: `baseline` (default `merge-base`), `fail-on` (`none`/`low`/`medium`/`high`, default `medium`), `path` (default `.`), `version` (release tag to download). Outputs: `exit-code` and `report-path`. Pick the threshold deliberately: `high` gates only High (low triage burden), `low` gates everything (strictest).
+
+To post the report as a PR comment, give the job `pull-requests: write` permission and add:
+
+```yaml
+      - uses: actions/github-script@v7
+        if: always() && github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('diff-drift-report.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: report,
+            });
+```
+
+If you'd rather pin to source, build the same binary yourself — it's the binary the app installs. Use a `bash` step to run it: the release build is a GUI-subsystem binary, and PowerShell/cmd don't wait for those or see their exit codes (see the agent-hook caveat above):
 
 ```yaml
 - run: cargo build --release --manifest-path src-tauri/Cargo.toml --bin diff-drift
 - name: Drift gate (medium+ fails)
-  shell: pwsh
+  shell: bash
   run: |
-    & src-tauri/target/release/diff-drift.exe check . --baseline merge-base --md
-    if ($LASTEXITCODE -ge 2) { exit 1 }
-    if ($LASTEXITCODE -eq 64) { exit 1 }
+    code=0
+    ./src-tauri/target/release/diff-drift.exe check . --baseline merge-base --md || code=$?
+    if [ "$code" -ge 2 ]; then exit 1; fi
 ```
-
-Pick the threshold deliberately: `-ge 3` gates only High (low triage burden), `-ge 1` gates everything (strictest). Markdown output (`--md`) pastes well into PR comments and agent transcripts.
 
 ## What Diff Drift Is Not
 

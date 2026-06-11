@@ -50,9 +50,10 @@ Releases are tag-driven. The [release workflow](../../.github/workflows/release.
 1. Verify the tree: `npm run test:rust`, `npm run build`, `npm run test:unit`, `npm run test:e2e:web`, `npm run eval:engine`. Run native E2E for native behavior changes.
 2. Align the three version fields and move `CHANGELOG.md` entries from `[Unreleased]` to the new version. Commit as `chore(release): prepare X.Y.Z`.
 3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-4. The workflow builds the NSIS and MSI installers, signs them if signing secrets are configured (see below), generates `SHA256SUMS.txt` and CycloneDX SBOMs, and creates a **draft** GitHub Release with all artifacts attached.
-5. Download the draft installers and smoke-test on a real machine: install, open a real repo, dismiss/restore a flag, mark reviewed, export a report, run `diff-drift check --json`.
+4. The workflow builds the NSIS and MSI installers plus the bare `diff-drift.exe` CLI, signs them if signing secrets are configured (see below), generates `SHA256SUMS.txt` and CycloneDX SBOMs, and creates a **draft** GitHub Release with all artifacts attached.
+5. Download the draft installers and smoke-test on a real machine: install, open a real repo, dismiss/restore a flag, mark reviewed, export a report, run `diff-drift check --json`. Also run the downloaded bare `diff-drift.exe check` once and check it against `SHA256SUMS.txt`.
 6. Paste the changelog section into the release notes and publish the draft. Never publish a release whose installer you have not run.
+7. After publishing, run the [action smoke workflow](../../.github/workflows/action-smoke.yml) (`gh workflow run action-smoke.yml -f version=vX.Y.Z`) so the GitHub Action is verified against the published assets before anyone is pointed at it.
 
 ## Code Signing (not yet configured)
 

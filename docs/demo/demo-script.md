@@ -26,6 +26,17 @@ npm run demo:capture
 
 This drives the browser UI (mock session — the same `SessionData` contract the Rust engine emits) through the storyboard with Playwright, writes keyframes to `docs/assets/demo/`, and encodes `docs/assets/diff-drift-demo.gif`. No screen recording, no ffmpeg.
 
+## Recording the 60–90 second MP4
+
+```bash
+npm install
+npm run demo:video
+```
+
+This drives the same storyboard through the browser UI with Playwright at slower, watchable pacing, adds a title card and a closing card (the CLI one-liner and the GitHub Action snippet), and records it as WebM. Converting to `.eval/demo/diff-drift-demo.mp4` needs a system ffmpeg (`winget install -e --id Gyan.FFmpeg`) — Playwright's bundled ffmpeg only encodes WebM, so without one the script keeps the WebM and says so.
+
+The MP4 is not committed — attach it to the GitHub release and upload it natively wherever it's shown. The GIF above stays the README artifact.
+
 ## Recording it by hand (if you want the native app instead)
 
 About ten minutes:

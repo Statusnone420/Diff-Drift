@@ -1,0 +1,52 @@
+name: Action smoke test
+
+# Exercises the repo-root composite action (uses: ./) against this repo's own
+# history so the action is CI-verified before anyone is pointed at it.
+# fail-on: none — this proves the plumbing (download, checksum, run, report,
+# outputs), not a drift gate.
+#
+# Manual trigger only: the download step needs a PUBLISHED release carrying
+# diff-drift.exe (drafts are invisible to the read-only job token), so run this
+# right after publishing a release, per the release runbook.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to download the CLI from"
+        required: false
+        default: "v0.3.2"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Run the action against HEAD~1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Diff Drift action
+        id: drift
+        uses: ./
+        with:
+          baseline: HEAD~1
+          fail-on: none
+          version: ${{ inputs.version || 'v0.3.2' }}
+
+      - name: Check outputs
+        shell: pwsh
+        env:
+          DRIFT_EXIT: ${{ steps.drift.outputs.exit-code }}
+          DRIFT_REPORT: ${{ steps.drift.outputs.report-path }}
+        run: |
+          if ($env:DRIFT_EXIT -notin "0", "1", "2", "3") {
+            Write-Error "Expected a severity exit code (0-3), got '$($env:DRIFT_EXIT)'"
+          }
+          if (-not (Test-Path $env:DRIFT_REPORT)) {
+            Write-Error "Report file missing at '$($env:DRIFT_REPORT)'"
+          }
+          "exit-code=$($env:DRIFT_EXIT), report at $($env:DRIFT_REPORT)"

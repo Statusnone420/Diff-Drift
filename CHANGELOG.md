@@ -2,6 +2,22 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.3.2] — 2026-06-11
+
+### Added
+
+- The bare `diff-drift.exe` CLI is now a release asset alongside the installers, covered by `SHA256SUMS.txt`, so CI jobs and scripts can use the headless check without installing the app.
+- A GitHub Action (`uses: Statusnone420/Diff-Drift@v0.3.2`): downloads the release CLI, verifies its checksum, runs `diff-drift check`, writes the Markdown report to the job summary, and fails the job at a configurable severity threshold (`fail-on: none|low|medium|high`). Windows runners only; needs `fetch-depth: 0` for the merge-base baseline. A smoke workflow (`action-smoke.yml`) exercises the action in CI.
+- Demo video capture (`npm run demo:video`): drives the demo storyboard through the browser UI at watchable pacing with a title and closing card and produces an MP4 via Playwright's bundled ffmpeg. The video is a release asset, not a repo file.
+
+### Changed
+
+- The GitHub Actions recipe in the User Guide uses the published action instead of building the CLI from source; the source build remains documented as an alternative.
+
+### Fixed
+
+- The PowerShell CI and agent-hook recipes assumed `$LASTEXITCODE` is set after running the release `diff-drift.exe`. It is not: the release binary is GUI-subsystem (no console window for the app), and PowerShell/cmd start those without waiting. The recipes now use `sh`/`bash` (which wait correctly), the User Guide documents the caveat with an explicit `Start-Process -Wait` PowerShell variant, and the GitHub Action runs the check from a `bash` step for the same reason.
+
 ## [0.3.1] — 2026-06-11
 
 ### Fixed
