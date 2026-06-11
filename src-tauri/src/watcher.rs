@@ -81,12 +81,8 @@ pub fn start(app: &AppHandle, shared: &Shared, root: PathBuf, state_file: PathBu
         }
     }
 
-    let g = shared.lock().unwrap();
-    session::assemble(
-        &g.results,
-        &session::meta(&root, &g.baseline),
-        &g.repo_state,
-    )
+    let mut g = shared.lock().unwrap();
+    assemble_cached(&mut g)
 }
 
 /// Stable key for the persisted per-repo state.
@@ -104,11 +100,11 @@ fn update_triage(
     if g.root.as_os_str().is_empty() {
         return Err("No repository is open.".into());
     }
+    let meta = clear_clean_results(&mut g);
     let results = std::mem::take(&mut g.results);
     apply(&mut g.repo_state, &results);
     g.results = results;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
@@ -212,6 +208,7 @@ pub fn set_approved(
     if let Some(results) = reanalyzed {
         g.results = results;
     }
+    let meta = clear_clean_results(&mut g);
     state.approved_fingerprint = Some(session::fingerprint(&g.results));
     state.approved_at = approved_at;
     // Reviewing the whole drift reviews every node in it — and rebuilding the
@@ -222,7 +219,6 @@ pub fn set_approved(
     g.repo_state = state;
     g.baseline = baseline;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
     Ok(session::assemble(&g.results, &meta, &g.repo_state))
 }
 
@@ -257,18 +253,29 @@ pub fn set_baseline(shared: &Shared, spec: String) -> Result<SessionData, String
     g.baseline = baseline;
     g.results = results;
     store::save(&g.state_file, &repo_key(&g.root), &g.repo_state);
-    let meta = session::meta(&g.root, &g.baseline);
-    Ok(session::assemble(&g.results, &meta, &g.repo_state))
+    Ok(assemble_cached(&mut g))
 }
 
 /// Current session snapshot (for export). Errors if no repository is open.
 pub fn current_data(shared: &Shared) -> Result<SessionData, String> {
-    let g = shared.lock().unwrap();
+    let mut g = shared.lock().unwrap();
     if g.root.as_os_str().is_empty() {
         return Err("No repository is open.".into());
     }
+    Ok(assemble_cached(&mut g))
+}
+
+fn clear_clean_results(g: &mut WatchState) -> session::Meta {
     let meta = session::meta(&g.root, &g.baseline);
-    Ok(session::assemble(&g.results, &meta, &g.repo_state))
+    if meta.changed_files == 0 {
+        g.results.clear();
+    }
+    meta
+}
+
+fn assemble_cached(g: &mut WatchState) -> SessionData {
+    let meta = clear_clean_results(g);
+    session::assemble(&g.results, &meta, &g.repo_state)
 }
 
 fn process_change(
@@ -302,8 +309,7 @@ fn process_change(
         g.deps = deps;
         g.baseline = baseline;
         g.results = results;
-        let meta = session::meta(root, &g.baseline);
-        session::assemble(&g.results, &meta, &g.repo_state)
+        assemble_cached(&mut g)
     } else {
         let (deps, baseline) = {
             let g = shared.lock().unwrap();
@@ -345,8 +351,7 @@ fn process_change(
                 }
             }
         }
-        let meta = session::meta(root, &g.baseline);
-        session::assemble(&g.results, &meta, &g.repo_state)
+        assemble_cached(&mut g)
     })
 }
 
@@ -1072,6 +1077,53 @@ mod tests {
             assert!(
                 g.results.contains_key(rel),
                 "baseline-only ignored deletions must not be pruned from the cache"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn clean_snapshot_clears_stale_results_before_next_incremental_edit() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key("auth/validateToken.ts"),
+                "precondition: stale candidate is cached"
+            );
+        }
+
+        crate::test_fixture::commit_all(&root, "agent commits drift");
+        let clean = current_data(&shared).expect("clean snapshot should render");
+        assert_eq!(clean.session.changed_files, 0);
+        assert!(
+            clean.files.is_empty(),
+            "clean snapshots must not render stale cached files"
+        );
+
+        let rel = "auth/brandnew.ts";
+        let path = root.join(rel);
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("new source should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "the new edit should still render"
+        );
+        assert!(
+            data.files
+                .iter()
+                .all(|f| format!("{}{}", f.dir, f.name) != "auth/validateToken.ts"),
+            "stale pre-clean drift must not reappear on the next edit"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                !g.results.contains_key("auth/validateToken.ts"),
+                "clean snapshots must clear stale cache entries"
             );
         }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
