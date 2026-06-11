@@ -9,7 +9,7 @@ import { join, dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const require = createRequire(import.meta.url);
-const { PNG } = require('D:/Diff Drift/node_modules/pngjs/lib/png.js');
+const { PNG } = require('pngjs');
 
 const ICON_DIR = join(__dirname, '..', 'src-tauri', 'icons');
 
