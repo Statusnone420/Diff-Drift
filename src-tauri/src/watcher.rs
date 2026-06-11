@@ -316,7 +316,13 @@ fn process_change(
             .map(|rel| {
                 let git_invisible = repo
                     .as_ref()
-                    .is_some_and(|repo| git::is_ignored_untracked(repo, &rel));
+                    .is_some_and(|repo| {
+                        let in_selected_baseline = baseline
+                            .sha
+                            .as_deref()
+                            .is_some_and(|sha| git::blob_oid_at_in(repo, sha, &rel).is_some());
+                        !in_selected_baseline && git::is_ignored_untracked(repo, &rel)
+                    });
                 let res = if git_invisible {
                     None
                 } else {
@@ -1015,6 +1021,57 @@ mod tests {
             assert!(
                 g.results.contains_key(rel),
                 "tracked ignored files must not be pruned from the cache"
+            );
+        }
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn ignored_file_deleted_after_baseline_stays_visible_incrementally() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+
+        let rel = "vendor/lib.ts";
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "const parser = /.*/;\n").unwrap();
+        let trusted = crate::test_fixture::commit_all(&root, "track vendor source");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        crate::test_fixture::commit_all(&root, "agent deletes ignored source");
+
+        let (shared, state_file) = shared_for(&root);
+        let state = RepoState {
+            baseline: Some(trusted),
+            ..RepoState::default()
+        };
+        let baseline = session::resolve_baseline(&root, &state);
+        {
+            let mut g = shared.lock().unwrap();
+            g.repo_state = state;
+            g.baseline = baseline.clone();
+            g.results = session::analyze_all(&root, &baseline);
+        }
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "full scans report baseline-only ignored deletions"
+            );
+        }
+
+        let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
+            .expect("baseline-only ignored deletion should update incrementally");
+        assert!(
+            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            "incremental updates must keep baseline-only ignored deletions visible"
+        );
+        {
+            let g = shared.lock().unwrap();
+            assert!(
+                g.results.contains_key(rel),
+                "baseline-only ignored deletions must not be pruned from the cache"
             );
         }
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
