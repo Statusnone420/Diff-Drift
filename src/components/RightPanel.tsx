@@ -4,6 +4,8 @@ import { Ico, SEV_LABEL } from "../lib/icons";
 
 interface RightPanelProps {
   flags: Flag[];
+  changedNodes: number;
+  reviewedNodes: number;
   activeFlagId: string | null;
   onSelectFlag: (flagId: string) => void;
   onDismissFlag: (flagId: string, dismissed: boolean) => void;
@@ -63,9 +65,21 @@ function FlagCard({
   );
 }
 
-export function RightPanel({ flags, activeFlagId, onSelectFlag, onDismissFlag, onExport }: RightPanelProps) {
+export function RightPanel({
+  flags,
+  changedNodes,
+  reviewedNodes,
+  activeFlagId,
+  onSelectFlag,
+  onDismissFlag,
+  onExport,
+}: RightPanelProps) {
   const active = flags.filter((f) => !f.dismissed);
   const dismissed = flags.filter((f) => f.dismissed);
+  const pendingReviewNodes = Math.max(changedNodes - reviewedNodes, 0);
+  const pendingReviewCopy = `${pendingReviewNodes} changed node${pendingReviewNodes === 1 ? "" : "s"} ${
+    pendingReviewNodes === 1 ? "still needs" : "still need"
+  } review.`;
   const [showDismissed, setShowDismissed] = useState(false);
   const [exportState, setExportState] = useState<"idle" | "busy" | "done">("idle");
   const exportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -97,9 +111,11 @@ export function RightPanel({ flags, activeFlagId, onSelectFlag, onDismissFlag, o
             <span className="rp-empty-ic">{Ico.check}</span>
             <div className="rp-empty-title">No active risk flags</div>
             <div className="rp-empty-sub">
-              {dismissed.length > 0
-                ? "Every flag in this drift has been dismissed."
-                : "Nothing suspicious in this drift."}
+              {pendingReviewNodes > 0
+                ? pendingReviewCopy
+                : dismissed.length > 0
+                  ? "Every flag in this drift has been dismissed."
+                  : "No heuristic flags in this drift."}
             </div>
           </div>
         ) : (

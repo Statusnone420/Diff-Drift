@@ -345,6 +345,8 @@ export default function App() {
         />
         <RightPanel
           flags={flags}
+          changedNodes={session.changedNodes}
+          reviewedNodes={session.reviewedNodes}
           activeFlagId={activeFlag?.id ?? null}
           onSelectFlag={selectFlag}
           onDismissFlag={handleDismissFlag}

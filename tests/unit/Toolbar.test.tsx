@@ -103,6 +103,19 @@ describe("Toolbar status copy", () => {
     expect(screen.getByTestId("summary-pill")).toHaveTextContent("No flags — 1 skipped file not analyzed");
   });
 
+  it("keeps no-flag drift distinct from reviewed drift", () => {
+    renderToolbar(
+      makeSession({
+        changedFiles: 3,
+        riskCount: 0,
+        fileCount: 0,
+        changedNodes: 8,
+        reviewedNodes: 0,
+      }),
+    );
+    expect(screen.getByTestId("summary-pill")).toHaveTextContent("No flags — 8 changed nodes to review");
+  });
+
   it("keeps approved no-flag copy honest when files were skipped", () => {
     renderToolbar(
       makeSession({

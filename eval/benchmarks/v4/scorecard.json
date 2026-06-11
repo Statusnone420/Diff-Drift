@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-11T01:09:29.953Z",
+  "generatedAt": "2026-06-11T01:34:25.891Z",
   "averageScore": 94,
   "summary": {
     "decisionAccuracy": 0.9,
@@ -125,7 +125,7 @@
   "externalValidationPending": true,
   "scores": [
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\benign-eval-in-string.json",
+      "answerFile": "eval/benchmarks/v4/answers/benign-eval-in-string.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -156,7 +156,7 @@
       "expectationDetails": []
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\benign-formatting-only.json",
+      "answerFile": "eval/benchmarks/v4/answers/benign-formatting-only.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -187,7 +187,7 @@
       "expectationDetails": []
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\broadened-cors.json",
+      "answerFile": "eval/benchmarks/v4/answers/broadened-cors.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -226,7 +226,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\child-process-execution.json",
+      "answerFile": "eval/benchmarks/v4/answers/child-process-execution.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -265,7 +265,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\constant-falsy-guard-evasion.json",
+      "answerFile": "eval/benchmarks/v4/answers/constant-falsy-guard-evasion.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -304,7 +304,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\disabled-tls-verification.json",
+      "answerFile": "eval/benchmarks/v4/answers/disabled-tls-verification.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -343,7 +343,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\dynamic-code-execution.json",
+      "answerFile": "eval/benchmarks/v4/answers/dynamic-code-execution.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-a",
         "kind": "model",
@@ -382,7 +382,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\guard-removed-around-call.json",
+      "answerFile": "eval/benchmarks/v4/answers/guard-removed-around-call.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -421,7 +421,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\hardcoded-secret.json",
+      "answerFile": "eval/benchmarks/v4/answers/hardcoded-secret.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -460,7 +460,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\jsx-hardcoded-secret.json",
+      "answerFile": "eval/benchmarks/v4/answers/jsx-hardcoded-secret.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -499,7 +499,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\mjs-disabled-tls.json",
+      "answerFile": "eval/benchmarks/v4/answers/mjs-disabled-tls.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -538,7 +538,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\noisy-benign-refactor.json",
+      "answerFile": "eval/benchmarks/v4/answers/noisy-benign-refactor.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -569,7 +569,7 @@
       "expectationDetails": []
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\oversized-file-skip.json",
+      "answerFile": "eval/benchmarks/v4/answers/oversized-file-skip.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -601,7 +601,7 @@
       "expectationDetails": []
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\package-dependency-script-drift.json",
+      "answerFile": "eval/benchmarks/v4/answers/package-dependency-script-drift.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-b",
         "kind": "model",
@@ -647,7 +647,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\payments-api-auth-regression.json",
+      "answerFile": "eval/benchmarks/v4/answers/payments-api-auth-regression.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",
@@ -716,7 +716,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\regex-anchors-removed.json",
+      "answerFile": "eval/benchmarks/v4/answers/regex-anchors-removed.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",
@@ -755,7 +755,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\test-fixture-suppression.json",
+      "answerFile": "eval/benchmarks/v4/answers/test-fixture-suppression.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",
@@ -788,7 +788,7 @@
       "expectationDetails": []
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\try-catch-removed.json",
+      "answerFile": "eval/benchmarks/v4/answers/try-catch-removed.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",
@@ -827,7 +827,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\tsx-removed-sanitization.json",
+      "answerFile": "eval/benchmarks/v4/answers/tsx-removed-sanitization.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",
@@ -867,7 +867,7 @@
       ]
     },
     {
-      "answerFile": "D:\\Diff Drift\\.eval\\answers\\weakened-cookie-flags.json",
+      "answerFile": "eval/benchmarks/v4/answers/weakened-cookie-flags.json",
       "evaluator": {
         "id": "claude-opus-4-8-v4-batch-c",
         "kind": "model",

@@ -19,6 +19,8 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
   const skippedFiles = session.skippedFiles ?? 0;
   const hasSkippedFiles = skippedFiles > 0;
   const skippedCopy = `${skippedFiles} skipped file${skippedFiles === 1 ? "" : "s"} not analyzed`;
+  const pendingReviewNodes = Math.max(session.changedNodes - session.reviewedNodes, 0);
+  const pendingReviewCopy = `${pendingReviewNodes} changed node${pendingReviewNodes === 1 ? "" : "s"} to review`;
   const summaryClassName = [
     "summary-pill",
     zero ? "calm" : "",
@@ -234,8 +236,15 @@ export function Toolbar({ session, onSwitchRepo, onDismissAll, onToggleApprove, 
               </>
             ) : (
               <>
-                <b>No flags</b> in {session.changedFiles} changed file
-                {session.changedFiles === 1 ? "" : "s"}
+                <b>No flags</b>{" "}
+                {pendingReviewNodes > 0 ? (
+                  <>— {pendingReviewCopy}</>
+                ) : (
+                  <>
+                    in {session.changedFiles} changed file
+                    {session.changedFiles === 1 ? "" : "s"}
+                  </>
+                )}
               </>
             )
           ) : (

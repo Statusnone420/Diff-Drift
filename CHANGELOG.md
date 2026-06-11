@@ -14,6 +14,7 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 
 ### Fixed
 
+- Clarified the no-flags/no-review state: zero heuristic flags no longer reads as "nothing to review" when changed AST/package nodes still need human review, and the sidebar now calls out changed files outside the analyzed-files view.
 - Quieted the drift-listener `console.error` path in the renderer.
 
 ## [0.2.1] — 2026-06-10

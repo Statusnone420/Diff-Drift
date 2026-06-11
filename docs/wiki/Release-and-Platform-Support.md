@@ -90,6 +90,8 @@ Until then, the supported install paths are the GitHub Release installer or buil
 - Run `npm run build`.
 - Run `npm run test:e2e:web`.
 - Run native E2E for native behavior changes.
+- For public-build UX or copy changes, build local NSIS and MSI installers with `npm run tauri -- build --bundles nsis,msi --ci` before tagging.
 - Update `CHANGELOG.md` and align the three version fields.
+- Push the release tag so the GitHub release workflow creates fresh NSIS/MSI assets for the draft release.
 - After the workflow's draft release: smoke-test the actual installer artifacts (open a real repo, dismiss/restore a flag, mark reviewed, export a report).
 - Update README and docs only for behavior that actually exists.

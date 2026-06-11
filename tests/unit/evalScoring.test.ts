@@ -645,11 +645,15 @@ describe("blind-agent answer scoring", () => {
     expect(md).toContain("Per-rule recall");
     expect(md).toContain("| Undeclared import | 1/2 | 50% |");
     expect(md).toContain("Precision: 90%");
+    expect(md).toContain("1 false positive");
+    expect(md).not.toContain("1 false positives");
 
     const html = renderAgentDashboard(result);
     expect(html).toContain("Independent external validation pending");
     expect(html).toContain("Precision");
     expect(html).toContain("claude-fable-5 (model, 10)");
+    expect(html).toContain("1 false positive");
+    expect(html).not.toContain("1 false positives");
   });
 
   it("does not call pending internal-human panels model-only", () => {
@@ -809,7 +813,7 @@ describe("blind-agent answer scoring", () => {
 
 describe("answer file collection", () => {
   it("expands a directory argument into its sorted .json answers", async () => {
-    const { collectAnswerFiles } = await import("../../eval/lib/answers.mjs");
+    const { answerFileLabel, collectAnswerFiles } = await import("../../eval/lib/answers.mjs");
     const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
@@ -836,42 +840,20 @@ describe("answer file collection", () => {
 
       // A missing default directory yields an empty list, not a throw.
       expect(collectAnswerFiles([], join(dir, "missing"))).toEqual([]);
+
+      // Scorecard JSON should be portable across machines.
+      expect(answerFileLabel(join(dir, "a-case.json"), dir)).toBe("a-case.json");
+      expect(answerFileLabel(join(dir, "nested", "case.json"), dir)).toBe("nested/case.json");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
-describe("v3 benchmark reproduces the committed scorecard", () => {
-  it("rescores the committed answers to the published headline", async () => {
-    const { loadCases, projectRoot } = await import("../../eval/lib/cases.mjs");
-    const { readFileSync, readdirSync } = await import("node:fs");
-    const { join } = await import("node:path");
+describe("published benchmark snapshots reproduce committed scorecards", () => {
+  it("rescores v3 answers to the historical published headline", async () => {
+    const { averageScore, summary, coverage, committed } = await scoreCommittedBenchmark("v3");
 
-    const answersDir = join(projectRoot, "eval", "benchmarks", "v3", "answers");
-    const cases = await loadCases();
-    const byId = new Map(cases.map((caseDef) => [caseDef.id, caseDef]));
-
-    const scores = readdirSync(answersDir)
-      .filter((file) => file.endsWith(".json"))
-      .sort()
-      .map((file) => {
-        const answer = JSON.parse(readFileSync(join(answersDir, file), "utf8"));
-        const caseId = answer.caseId ?? file.replace(/\.json$/i, "");
-        const caseDef = byId.get(caseId);
-        if (!caseDef) throw new Error(`No eval case for committed answer ${caseId}`);
-        return { caseId, evaluator: answer.evaluator, ...scoreAgentAnswer(caseDef, { ...answer, caseId }) };
-      });
-
-    const summary = summarizeAgentScores(scores);
-    const averageScore = Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length);
-    const coverage = summarizeExternalValidation(scores);
-    const committed = JSON.parse(
-      readFileSync(join(projectRoot, "eval", "benchmarks", "v3", "scorecard.json"), "utf8"),
-    );
-
-    // The committed snapshot must equal what the live scorer produces — this
-    // catches any future scorer change that silently drifts the headline.
     expect(averageScore).toBe(committed.averageScore);
     expect(summary.precision).toBe(committed.summary.precision);
     expect(summary.averageRecall).toBe(committed.summary.averageRecall);
@@ -884,7 +866,54 @@ describe("v3 benchmark reproduces the committed scorecard", () => {
     expect(summary.totalFalsePositives).toBe(0);
     expect(externalValidationPending(coverage)).toBe(true);
   });
+
+  it("rescores v4 answers to the current published headline", async () => {
+    const { averageScore, summary, coverage, committed } = await scoreCommittedBenchmark("v4");
+
+    expect(averageScore).toBe(committed.averageScore);
+    expect(summary.precision).toBe(committed.summary.precision);
+    expect(summary.averageRecall).toBe(committed.summary.averageRecall);
+    expect(summary.totalFalsePositives).toBe(committed.summary.totalFalsePositives);
+    expect(externalValidationPending(coverage)).toBe(committed.externalValidationPending);
+
+    expect(averageScore).toBe(94);
+    expect(summary.totalFalsePositives).toBe(1);
+    expect(externalValidationPending(coverage)).toBe(true);
+    expect(committed.scores.map((score) => score.answerFile)).toEqual(
+      committed.scores.map((score) => `eval/benchmarks/v4/answers/${score.caseId}.json`),
+    );
+  });
 });
+
+async function scoreCommittedBenchmark(version) {
+  const { loadCases, projectRoot } = await import("../../eval/lib/cases.mjs");
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const answersDir = join(projectRoot, "eval", "benchmarks", version, "answers");
+  const cases = await loadCases();
+  const byId = new Map(cases.map((caseDef) => [caseDef.id, caseDef]));
+
+  const scores = readdirSync(answersDir)
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .map((file) => {
+      const answer = JSON.parse(readFileSync(join(answersDir, file), "utf8"));
+      const caseId = answer.caseId ?? file.replace(/\.json$/i, "");
+      const caseDef = byId.get(caseId);
+      if (!caseDef) throw new Error(`No eval case for committed answer ${caseId}`);
+      return { caseId, evaluator: answer.evaluator, ...scoreAgentAnswer(caseDef, { ...answer, caseId }) };
+    });
+
+  return {
+    summary: summarizeAgentScores(scores),
+    averageScore: Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length),
+    coverage: summarizeExternalValidation(scores),
+    committed: JSON.parse(
+      readFileSync(join(projectRoot, "eval", "benchmarks", version, "scorecard.json"), "utf8"),
+    ),
+  };
+}
 
 describe("eval CLI command selection", () => {
   it("builds the current checkout before running an isolated binary", () => {
