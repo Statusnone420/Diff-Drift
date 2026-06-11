@@ -14,6 +14,7 @@
     "seed:demo": "node scripts/seed-demo.mjs",
     "demo:capture": "node scripts/capture-demo.mjs",
     "demo:video": "node scripts/capture-demo-video.mjs",
+    "demo:trailer": "node scripts/capture-trailer.mjs",
     "eval:engine": "node eval/run-engine.mjs",
     "eval:packets": "node eval/make-packets.mjs",
     "eval:score-agent": "node eval/score-agent.mjs",
