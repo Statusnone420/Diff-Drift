@@ -1,0 +1,21 @@
+{
+  "caseId": "guard-removed-around-call",
+  "decision": "block",
+  "confidence": 0.95,
+  "findings": [
+    {
+      "title": "Payment verification guard removed before card charge",
+      "severity": "high",
+      "filePath": "src/capture.ts",
+      "riskType": "Guard removed",
+      "evidence": "isVerified(order) check removed; chargeCard(order) now executes unconditionally without authorization verification"
+    }
+  ],
+  "notes": [],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

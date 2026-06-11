@@ -41,6 +41,8 @@ Those artifacts include screenshots, CLI JSON, exported Markdown reports, raw di
 
    The blind reviewer flagged `tests/dogfood/spawn.test.ts` because the raw diff exported an `execSync(command)` helper and an AWS-shaped fixture string. Diff Drift intentionally suppressed child-process and secret rules in test-like paths, but the exported packet did not make that policy obvious. Either the report should clearly state that test-like files were suppressed, or the rule policy should be revisited for exported helpers that accept caller-controlled command strings.
 
+   **Resolved (benchmark v4, 2026-06-10):** the secret half of this was revisited — the hardcoded-secret rule no longer suppresses in test files (a real key in a fixture is still a leak; the AWS/OpenAI/PEM markers are specific and drift-scoped enough to stay low-noise). The child-process suppression in test paths stays. See [Eval Methodology](Eval-Methodology.md#benchmark-versions).
+
 2. Export packet generation must include untracked files.
 
    The first raw diff helper used plain `git diff`, which omitted untracked scenario files. The final packet was regenerated with untracked files included. Any dogfood/export workflow that feeds an agent should treat untracked files as first-class review input.

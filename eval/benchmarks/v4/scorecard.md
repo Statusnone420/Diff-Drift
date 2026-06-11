@@ -1,6 +1,6 @@
 # Diff Drift blind-agent scorecard
 
-Generated: 2026-06-11T01:34:25.891Z
+Generated: 2026-06-11T01:55:31.516Z
 
 > Advisory only: this score is not a CI gate. The CI blocker is `npm run eval:engine`; blind-agent scoring measures whether reviewers can use Diff Drift packets to reach the right evidence and decision.
 
@@ -8,16 +8,15 @@ Evaluators: claude-opus-4-8-v4-batch-a (model, 7 cases), claude-opus-4-8-v4-batc
 
 > **Independent external validation pending.** No external human evaluator has contributed answers yet. Treat the score as an internal product-quality signal, not third-party validation.
 
-Overall score: [#########.] 94/100
+Overall score: [##########] 99/100
 
-- Decision accuracy: 90%
-- Finding recall: 95%
+- Decision accuracy: 95%
+- Finding recall: 100%
 - Localization: 100%
-- Precision: 96% — 23 matched of 24 reported (0 near-misses, 1 false positive; both lower precision)
+- Precision: 100% — 24 matched of 24 reported (0 near-misses, 0 false positives; both lower precision)
 
 | Case | Score | Decision | Recall | Notes |
 | --- | ---: | --- | ---: | --- |
-| test-fixture-suppression | 0 | miss (approve) | 0% | decision expected approve; 1 unmatched; wrong decision on benign case |
 | try-catch-removed | 80 | miss (block) | 100% | decision expected block |
 | payments-api-auth-regression | 90 | ok (block) | 100% | clean |
 | benign-eval-in-string | 100 | ok (approve) | 100% | clean |
@@ -35,6 +34,7 @@ Overall score: [#########.] 94/100
 | oversized-file-skip | 100 | ok (investigate/approve) | 100% | clean |
 | package-dependency-script-drift | 100 | ok (investigate/block) | 100% | clean |
 | regex-anchors-removed | 100 | ok (block) | 100% | clean |
+| test-file-hardcoded-secret | 100 | ok (block/investigate) | 100% | clean |
 | tsx-removed-sanitization | 100 | ok (investigate/block) | 100% | clean |
 | weakened-cookie-flags | 100 | ok (block) | 100% | clean |
 
@@ -53,7 +53,7 @@ Across every case that required the flag type:
 | Dynamic code execution | 1/1 | 100% |
 | Error handling removed | 1/1 | 100% |
 | Guard removed | 1/1 | 100% |
-| Hardcoded secret | 2/2 | 100% |
+| Hardcoded secret | 3/3 | 100% |
 | Loose regex pattern | 2/2 | 100% |
 | npm script changed | 1/1 | 100% |
 | Permissive logging config | 1/1 | 100% |

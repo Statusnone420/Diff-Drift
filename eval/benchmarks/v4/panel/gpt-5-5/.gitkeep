@@ -1,0 +1,1 @@
+Drop one <caseId>.json per case here (see ../answer-template.json), then run: npm run eval:panel

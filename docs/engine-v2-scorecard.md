@@ -50,9 +50,13 @@ The deterministic `eval:engine` gate covers all 20 cases through the real binary
 advisory blind-agent scorecard (`eval:score-agent`) was re-run blind against this engine as
 **benchmark v4**: all 20 packets regenerated from the engine-v2 binary, fresh model answers
 produced from packet-only context, the rubric and prompt frozen and byte-identical across the run.
-It scored **94/100** with 100% per-rule recall — the lost points are reviewer-vs-rubric decision
-disagreements on three cases, not missed detections. Per-case gap analysis in
-[Eval Methodology](wiki/Eval-Methodology.md#benchmark-versions).
+An initial pass scored 94/100 and surfaced one real gap — the engine detected the `AKIA…` secret in
+a test fixture but silently suppressed it because the path was test-like. That was fixed in the
+engine (the hardcoded-secret rule no longer suppresses in test files; the noisier rules still do),
+and the case was redefined to expect the flag. Single-model **Claude Opus 4.8 now scores 99/100**
+with 100% per-rule recall; a multi-model panel (Opus 4.8 / Sonnet 4.6 / Haiku 4.5) lands at a
+**91–99 spread**. Per-case gap analysis and the panel in
+[Eval Methodology](wiki/Eval-Methodology.md#multi-model-panel).
 
 ## Known limits (out of lane by design)
 

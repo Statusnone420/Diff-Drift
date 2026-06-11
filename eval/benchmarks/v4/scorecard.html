@@ -180,7 +180,7 @@
     .score-bar i {
       display: block;
       height: 100%;
-      width: 94%;
+      width: 99%;
       background: var(--accent);
     }
     .metric-list {
@@ -386,7 +386,7 @@
     <div class="topline">
       <div class="brand"><span class="mark"></span><span>Diff Drift benchmark</span></div>
       <div class="run-meta"><span>claude-opus-4-8-v4-batch-a (model, 7) | claude-opus-4-8-v4-batch-b (model, 7) | claude-opus-4-8-v4-batch-c (model, 6)</span></div>
-      <div>2026-06-11T01:34:25.891Z</div>
+      <div>2026-06-11T01:55:31.516Z</div>
     </div>
     <section class="hero">
       <div class="hero-copy">
@@ -395,7 +395,7 @@
             <span class="label good">20 cases</span>
             <span class="label">3 evaluators</span>
             <span class="label">20 blind answers</span>
-            <span class="label">1 false positive</span>
+            <span class="label">0 false positives</span>
           </div>
           <h1>Blind-agent scorecard</h1>
           <p class="lede">Can a reviewer use Diff Drift packets to make the right trust decision and cite the right evidence? This report scores that reviewer workflow. It is advisory evidence for product quality, not a release gate.</p>
@@ -408,19 +408,19 @@
             <h2>Benchmark summary</h2>
             <p>Packet-only blind review, model-only panel</p>
           </div>
-          <div class="score-value"><strong>94</strong>/100</div>
+          <div class="score-value"><strong>99</strong>/100</div>
         </div>
         <div class="score-bar" aria-hidden="true"><i></i></div>
         <div class="metric-list">
           <div class="metric-row">
     <span>Decision accuracy</span>
-    <div class="metric-track" style="--fill: var(--green); --value: 90%"><i></i></div>
-    <strong>90%</strong>
+    <div class="metric-track" style="--fill: var(--green); --value: 95%"><i></i></div>
+    <strong>95%</strong>
   </div>
           <div class="metric-row">
     <span>Finding recall</span>
-    <div class="metric-track" style="--fill: var(--teal); --value: 95%"><i></i></div>
-    <strong>95%</strong>
+    <div class="metric-track" style="--fill: var(--teal); --value: 100%"><i></i></div>
+    <strong>100%</strong>
   </div>
           <div class="metric-row">
     <span>Localization</span>
@@ -429,19 +429,19 @@
   </div>
           <div class="metric-row">
     <span>Precision</span>
-    <div class="metric-track" style="--fill: var(--purple); --value: 96%"><i></i></div>
-    <strong>96%</strong>
+    <div class="metric-track" style="--fill: var(--purple); --value: 100%"><i></i></div>
+    <strong>100%</strong>
   </div>
         </div>
         <section class="distribution" aria-label="Case score distribution">
           <div class="panel-title">
             <span>Case score histogram</span>
-            <span class="hint">range 0-100; median 100</span>
+            <span class="hint">range 80-100; median 100</span>
           </div>
-          <div class="histogram"><div class="hist-row active">
+          <div class="histogram"><div class="hist-row ">
     <span>0-59</span>
-    <div class="hist-track" style="--fill: var(--accent); --value: 6%"><i></i></div>
-    <strong>1</strong>
+    <div class="hist-track" style="--fill: var(--accent); --value: 0%"><i></i></div>
+    <strong>0</strong>
   </div>
 <div class="hist-row ">
     <span>60-79</span>
@@ -461,7 +461,7 @@
 <div class="hist-row active">
     <span>100</span>
     <div class="hist-track" style="--fill: var(--accent); --value: 100%"><i></i></div>
-    <strong>17</strong>
+    <strong>18</strong>
   </div></div>
         </section>
       </aside>
@@ -484,38 +484,6 @@
         </thead>
         <tbody>
           <tr>
-  <td>
-    <div class="case-name">test-fixture-suppression</div>
-    <div class="case-sub">score 0/100</div>
-  </td>
-  <td>
-    <div class="score-cell">
-      <span class="score-pill">0</span>
-      <div class="bar" style="--fill: var(--accent); --value: 0%"><i></i></div>
-    </div>
-  </td>
-  <td><span class="chip miss">miss</span></td>
-  <td>
-    <div class="mini-metrics">
-      <div class="mini-row">
-    <b>Recall</b>
-    <span>0%</span>
-  </div>
-      <div class="mini-row">
-    <b>Locate</b>
-    <span>100%</span>
-  </div>
-    </div>
-  </td>
-  <td>
-    <div class="finding-stack">
-      <span class="chip">0/0</span>
-      <span class="chip">1 unmatched</span>
-    </div>
-  </td>
-  <td><div class="why">decision expected approve; 1 unmatched; wrong decision on benign case</div></td>
-</tr>
-<tr>
   <td>
     <div class="case-name">try-catch-removed</div>
     <div class="case-sub">score 80/100</div>
@@ -1030,6 +998,38 @@
 <tr>
   <td>
     <div class="case-name">regex-anchors-removed</div>
+    <div class="case-sub">score 100/100</div>
+  </td>
+  <td>
+    <div class="score-cell">
+      <span class="score-pill">100</span>
+      <div class="bar" style="--fill: var(--accent); --value: 100%"><i></i></div>
+    </div>
+  </td>
+  <td><span class="chip ok">ok</span></td>
+  <td>
+    <div class="mini-metrics">
+      <div class="mini-row">
+    <b>Recall</b>
+    <span>100%</span>
+  </div>
+      <div class="mini-row">
+    <b>Locate</b>
+    <span>100%</span>
+  </div>
+    </div>
+  </td>
+  <td>
+    <div class="finding-stack">
+      <span class="chip">1/1</span>
+      <span class="chip">0 unmatched</span>
+    </div>
+  </td>
+  <td><div class="why">clean</div></td>
+</tr>
+<tr>
+  <td>
+    <div class="case-name">test-file-hardcoded-secret</div>
     <div class="case-sub">score 100/100</div>
   </td>
   <td>

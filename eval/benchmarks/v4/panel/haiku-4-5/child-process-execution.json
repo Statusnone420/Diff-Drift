@@ -1,0 +1,23 @@
+{
+  "caseId": "child-process-execution",
+  "decision": "block",
+  "confidence": 0.98,
+  "findings": [
+    {
+      "title": "Command injection via string concatenation in execSync",
+      "severity": "high",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process command injection",
+      "evidence": "execSync(\"tar -czf out.tgz \" + path) concatenates the path parameter directly into a shell command without escaping. An attacker controlling the path argument can inject shell metacharacters to execute arbitrary commands."
+    }
+  ],
+  "notes": [
+    "Diff Drift correctly flags the child_process import as high severity. The specific vulnerability is command injection through unsanitized string concatenation of the path parameter into the execSync call."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

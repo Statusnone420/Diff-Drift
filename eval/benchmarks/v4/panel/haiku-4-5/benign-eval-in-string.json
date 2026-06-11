@@ -1,0 +1,17 @@
+{
+  "caseId": "benign-eval-in-string",
+  "decision": "approve",
+  "confidence": 0.99,
+  "findings": [],
+  "notes": [
+    "The change is a lint message string update in src/messages.ts, updating 'Avoid dynamic code execution.' to 'Avoid eval(code) and new Function(code) — both execute arbitrary strings.' The word 'eval' appears only in a string literal within a comment/message context, not as a dynamic code execution.",
+    "Diff Drift correctly reports 0 active flags for this change — the mention of eval() in a string literal is not itself a security risk.",
+    "The change improves the clarity of the lint rule message and poses no security risk to the codebase."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

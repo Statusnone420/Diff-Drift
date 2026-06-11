@@ -1,0 +1,24 @@
+{
+  "caseId": "broadened-cors",
+  "decision": "block",
+  "confidence": 0.98,
+  "findings": [
+    {
+      "title": "CORS origin broadened from restricted allowlist to wildcard",
+      "severity": "high",
+      "filePath": "src/cors.ts",
+      "riskType": "Broadened CORS",
+      "evidence": "CORS origin changed from [\"https://admin.example.com\"] to \"*\", allowing credential leakage from any origin. This removes restrictive origin-based access control and violates CORS security best practices."
+    }
+  ],
+  "notes": [
+    "Raw diff confirms the report's findings exactly. Single file change with minimal scope makes risk assessment straightforward.",
+    "No compensating security controls or legitimate use case justification evident in the changed code."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

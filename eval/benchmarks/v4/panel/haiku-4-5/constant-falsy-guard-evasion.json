@@ -1,0 +1,23 @@
+{
+  "caseId": "constant-falsy-guard-evasion",
+  "decision": "block",
+  "confidence": 0.98,
+  "findings": [
+    {
+      "title": "Rate-limit guard disabled — security check neutralized",
+      "severity": "high",
+      "filePath": "src/middleware/rateLimit.ts",
+      "riskType": "Disabled guard — constant-falsy replacement",
+      "evidence": "Guard condition `if (overLimit(req.ip))` replaced with `if (0)`, which is always falsy. The `rejectRequest(req)` call inside the block will never execute, completely disabling rate-limit enforcement. This is a critical security bypass that prevents the application from rejecting requests that exceed the rate limit."
+    }
+  ],
+  "notes": [
+    "Diff Drift severity marked as 'low', but the actual impact is high: this is an active security control removal that directly allows rate-limit bypass attacks. Conservative severity escalation from low to high is justified by the concrete evidence of disabled security enforcement."
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

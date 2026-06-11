@@ -1,0 +1,24 @@
+{
+  "caseId": "try-catch-removed",
+  "decision": "investigate",
+  "confidence": 0.92,
+  "findings": [
+    {
+      "title": "Error handling removed from telemetry flush",
+      "severity": "low",
+      "filePath": "src/flush.ts",
+      "riskType": "Error handling removed",
+      "evidence": "The try/catch wrapping pushEvents(queue) was deleted. Any error thrown by pushEvents is now unhandled and will propagate to callers. The removed catch block called scheduleRetry(queue, err), meaning retry logic is also silently dropped alongside the error handling."
+    }
+  ],
+  "notes": [
+    "Diff Drift rated this low severity, which is consistent with telemetry flush failures typically being non-critical. However, the removal of scheduleRetry is a behavioral regression beyond just silencing errors — events may be permanently lost on transient failures, which could be intentional (if retry logic moved elsewhere) or accidental. The diff does not provide enough context to confirm intent, warranting investigation rather than a block.",
+    "The raw diff is minimal (one file, four lines removed) and matches exactly what the Diff Drift report describes. No other files changed."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

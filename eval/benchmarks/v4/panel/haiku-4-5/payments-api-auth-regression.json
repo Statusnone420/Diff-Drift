@@ -1,0 +1,59 @@
+{
+  "caseId": "payments-api-auth-regression",
+  "decision": "block",
+  "confidence": 0.99,
+  "findings": [
+    {
+      "title": "Validation regex replaced with catch-all pattern",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Loose regex pattern",
+      "evidence": "Pattern changed from /^[A-Za-z0-9_\\-]{32,}$/ to /.*/, accepting any string as valid token"
+    },
+    {
+      "title": "Signature verification replaced with unsigned decode",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Crypto downgrade",
+      "evidence": "verify(token, PUBLIC_KEY) replaced with decode(token); forged tokens now pass authentication"
+    },
+    {
+      "title": "Malformed token guard disabled with constant false",
+      "severity": "high",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Disabled guard",
+      "evidence": "if (!pattern.test(token)) replaced with if (false), eliminating reachability of malformed token error"
+    },
+    {
+      "title": "Input sanitization call removed",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Removed sanitization",
+      "evidence": "sanitizeInput(token) call deleted; no input sanitization occurs before validation"
+    },
+    {
+      "title": "Undeclared import dependency",
+      "severity": "medium",
+      "filePath": "auth/validateToken.ts",
+      "riskType": "Undeclared import",
+      "evidence": "Import of jwt-tiny-decode added but not declared in package.json; missing dependency verification"
+    },
+    {
+      "title": "Logger redaction disabled, level lowered to debug",
+      "severity": "medium",
+      "filePath": "utils/logger.ts",
+      "riskType": "Permissive logging config",
+      "evidence": "level changed from 'info' to 'debug' and redact array emptied; authorization headers and tokens now logged"
+    }
+  ],
+  "notes": [
+    "routes/session.ts contains only whitespace formatting changes; no security impact",
+    "All token validation security controls are systematically removed, indicating either malicious intent or catastrophic refactoring error"
+  ],
+  "evaluator": {
+    "id": "claude-haiku-4-5-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

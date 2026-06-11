@@ -1,0 +1,25 @@
+{
+  "caseId": "broadened-cors",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "CORS wildcard on admin API exposes credentials to any origin",
+      "severity": "high",
+      "filePath": "src/cors.ts",
+      "riskType": "Broadened CORS",
+      "evidence": "The diff replaces a strict single-origin allowlist `[\"https://admin.example.com\"]` with the wildcard `\"*\"`. Any web page on any domain can now issue cross-origin requests to this admin API. Combined with any session-cookie or Authorization-header auth scheme, this enables cross-site request forgery and credential leakage. The Diff Drift report flags this as high severity with the same evidence."
+    }
+  ],
+  "notes": [
+    "Only one file changed and it is fully analyzed — no skipped-file ambiguity.",
+    "The wildcard value is a plain string `\"*\"`, not a dynamic reflect-origin function, so there is no conditional path that could restrict it at runtime based on this diff alone.",
+    "A fix should restore the explicit allowlist or introduce an environment-variable-driven allowlist rather than using a wildcard."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "caseId": "child-process-execution",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Unsanitized path argument passed to execSync via shell string concatenation",
+      "severity": "high",
+      "filePath": "src/archive.ts",
+      "riskType": "Child process execution / shell injection",
+      "evidence": "The diff adds `execSync(\"tar -czf out.tgz \" + path)` where `path` is the raw string argument received by `archivePath`. String concatenation into a shell command allows an attacker-controlled path (e.g., `\"; rm -rf /; echo \"`) to break out of the intended command and execute arbitrary shell instructions. The Diff Drift report flags the import as high severity but understates the risk — the actual danger is not merely that `child_process` is used, but that its argument is directly tainted by caller-supplied input with no escaping, quoting, or allow-list validation."
+    }
+  ],
+  "notes": [
+    "Diff Drift correctly flagged the child_process import at high severity, but its evidence snippet shows only the import line; the concatenation on the next added line is the concrete exploitation vector and should have been cited explicitly.",
+    "A safer implementation would use execFileSync (no shell expansion) with the path passed as a separate argument element, or shell-escape the path before interpolation.",
+    "The change to archivePath's return value (was a no-op identity function, now returns a fixed string 'out.tgz') is a behavioral break for callers expecting the original path back — benign from a security standpoint but worth noting for API compatibility."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

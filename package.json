@@ -16,6 +16,7 @@
     "eval:engine": "node eval/run-engine.mjs",
     "eval:packets": "node eval/make-packets.mjs",
     "eval:score-agent": "node eval/score-agent.mjs",
+    "eval:panel": "node eval/panel.mjs",
     "eval:fp-replay": "node scripts/fp-replay.mjs",
     "scorecard:capture": "node scripts/capture-scorecard.mjs",
     "bench": "cargo bench --manifest-path src-tauri/Cargo.toml",

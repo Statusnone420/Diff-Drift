@@ -1,0 +1,17 @@
+{
+  "caseId": "benign-formatting-only",
+  "decision": "approve",
+  "confidence": 0.98,
+  "findings": [],
+  "notes": [
+    "The raw diff shows a single whitespace-only change in src/routes/profile.ts: the return statement indentation changed from 2 spaces to 4 spaces. No logic, imports, exports, or data flow were altered.",
+    "Diff Drift correctly classified this as 'Formatting only · 0 active flags'. The report assessment matches the raw diff evidence.",
+    "No other files were changed. The diff is entirely cosmetic and presents no trust risk."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

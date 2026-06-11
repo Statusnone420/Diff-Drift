@@ -1,0 +1,25 @@
+{
+  "caseId": "guard-removed-around-call",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "Verification guard removed from payment capture",
+      "severity": "medium",
+      "filePath": "src/capture.ts",
+      "riskType": "Guard removed",
+      "evidence": "The diff removes the `if (isVerified(order))` check that previously gated `chargeCard(order)`. After this change, `chargeCard` is called unconditionally for every order regardless of verification status, allowing unverified or fraudulent orders to be charged. The Diff Drift report flags this explicitly: '`chargeCard(…)` ran behind a guard before this change and now runs unconditionally — confirm the check wasn't load-bearing.'"
+    }
+  ],
+  "notes": [
+    "Only one file changed in this diff (`src/capture.ts`). The raw diff confirms the report snippet exactly — no discrepancy between report and patch.",
+    "The report severity is 'medium'; this reviewer accepts that rating as-is rather than escalating, since no additional context (e.g. whether `isVerified` is called upstream) is available in the packet. However, the risk of charging unverified orders is severe enough in most payment systems that the change warrants a block until the intent is confirmed.",
+    "No package.json or lockfile changes are present, so dependency risk is not a factor here."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}

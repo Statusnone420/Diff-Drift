@@ -1,0 +1,25 @@
+{
+  "caseId": "tsx-removed-sanitization",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "HTML sanitization removed from comment body — XSS exposure",
+      "severity": "high",
+      "filePath": "src/components/CommentBody.tsx",
+      "riskType": "Removed sanitization",
+      "evidence": "The diff removes both `const safe = sanitizeHtml(raw);` and the use of `safe`, replacing it with direct `{raw}` interpolation. User-supplied comment content now flows unsanitized into the rendered output. Although React escapes text nodes, if `raw` is ever rendered via dangerouslySetInnerHTML or if the sanitizeHtml call was guarding against other injection vectors (e.g., protocol-relative URLs in attributes), removing it creates a concrete XSS or injection risk. The Diff Drift report flags this as 'Removed sanitization' and the raw diff confirms the deletion is complete and intentional."
+    }
+  ],
+  "notes": [
+    "Diff Drift rated this 'low' severity, but the raw diff confirms unconditional removal of the sanitization step with no replacement guard, which warrants escalating to high — the evidence supports the escalation.",
+    "Avatar.tsx change is pure whitespace/indentation and carries no risk.",
+    "The report correctly identifies the affected node (CommentBody › safe) and the removed call."
+  ],
+  "evaluator": {
+    "id": "claude-sonnet-4-6-v4",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 multi-model panel; blind, packet-only context."
+  }
+}
