@@ -68,9 +68,8 @@ jobs:
           # CI jobs and the GitHub Action can download it without an installer.
           # Not the GUI exe: shells don't wait for windows-subsystem binaries,
           # so its exit codes are invisible to PowerShell/cmd.
-          # Size check, not just existence: build.rs pre-creates an EMPTY
-          # placeholder at this path to satisfy tauri-build's resource
-          # validation, so a missing real build would otherwise slip through.
+          # Size check, not just existence: a stale or truncated file at this
+          # path must not ship as the CLI asset.
           $cli = Get-Item "src-tauri/target/release/diff-drift-cli.exe" -ErrorAction SilentlyContinue
           if (-not $cli -or $cli.Length -lt 100KB) {
             Write-Error "diff-drift-cli.exe missing or placeholder-sized ($(if ($cli) { $cli.Length } else { 0 }) bytes) after the bundle build"
