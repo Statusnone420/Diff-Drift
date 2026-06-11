@@ -70,7 +70,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
 
     out.push_str("## Analyzed files\n\n");
     out.push_str(
-        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).\n\n",
+        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX/Rust/Go/Python/Java as AST nodes, package.json as a dependency diff).\n\n",
     );
     if data.files.is_empty() {
         out.push_str("No analyzable drift.\n");
@@ -198,7 +198,7 @@ mod tests {
         );
         assert!(md.contains("## Analyzed files"));
         assert!(
-            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).")
+            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX/Rust/Go/Python/Java as AST nodes, package.json as a dependency diff).")
         );
         assert!(md.contains("`routes/session.ts` — Formatting only"));
         assert!(

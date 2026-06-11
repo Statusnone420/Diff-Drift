@@ -22,13 +22,21 @@ use tree_sitter::{Parser, Query, QueryCursor, Tree};
 
 use crate::parse::{grammar, Lang};
 
-/// Grammar group for cache keys: Ts and Tsx are distinct grammars; the JS
-/// grammar covers `.js/.jsx/.mjs/.cjs` natively.
+/// Grammar group for cache keys: each distinct tree-sitter grammar gets its own
+/// id so a compiled query is never reused across grammars. Ts and Tsx are
+/// distinct grammars; the JS grammar covers `.js/.jsx/.mjs/.cjs` natively. The
+/// core-four languages each have their own grammar. This match is exhaustive on
+/// purpose — adding a `Lang` variant forces a new group here, which is what
+/// keeps a query compiled for one grammar from leaking into another.
 fn group(lang: Lang) -> u8 {
     match lang {
         Lang::Ts => 0,
         Lang::Tsx => 1,
         Lang::Js | Lang::Jsx => 2,
+        Lang::Rust => 3,
+        Lang::Go => 4,
+        Lang::Python => 5,
+        Lang::Java => 6,
     }
 }
 
@@ -194,5 +202,56 @@ mod tests {
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, tree.root_node(), src.as_bytes());
         Some(matches.next().is_some())
+    }
+
+    #[test]
+    fn each_lang_gets_its_own_grammar_group() {
+        // Distinct grammars must never share a cache key — otherwise a query
+        // compiled for one grammar could be reused against another.
+        use std::collections::HashSet;
+        let mut seen: HashSet<u8> = HashSet::new();
+        // Ts, Tsx, Js are distinct groups; Js/Jsx share (same grammar).
+        assert_ne!(group(Lang::Ts), group(Lang::Js));
+        assert_ne!(group(Lang::Tsx), group(Lang::Js));
+        assert_eq!(group(Lang::Js), group(Lang::Jsx));
+        // The four new languages each get a group distinct from every other.
+        for lang in [
+            Lang::Ts,
+            Lang::Tsx,
+            Lang::Js,
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+        ] {
+            assert!(
+                seen.insert(group(lang)),
+                "duplicate grammar group for {lang:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn js_node_kind_query_fails_to_compile_against_foreign_grammars() {
+        // The eval query names `call_expression`/`identifier` — node kinds that
+        // exist in the JS grammar. Compiling it against Rust/Go/Python/Java must
+        // NOT silently succeed against a different node vocabulary. We compile
+        // directly (not via `compiled()`) to avoid the debug_assert; the point
+        // is that the JS-grammar query is grammar-specific. A query that DID
+        // compile would yield coincidental matches — the rule gate in rules.rs
+        // is what guarantees these queries are never run cross-grammar, and this
+        // test documents why that gate is load-bearing.
+        const TLS_REJECT: &str =
+            r#"(pair key: (property_identifier) @k (#eq? @k "x") value: (false))"#;
+        // `pair` and `property_identifier` are JS-grammar node kinds; they do
+        // not exist in the Rust/Go/Python/Java grammars, so compilation fails.
+        for lang in [Lang::Rust, Lang::Go, Lang::Python, Lang::Java] {
+            assert!(
+                Query::new(&grammar(lang), TLS_REJECT).is_err(),
+                "JS-specific query must not compile against {lang:?}"
+            );
+        }
+        // Sanity: it DOES compile against the JS/TS grammar.
+        assert!(Query::new(&grammar(Lang::Ts), TLS_REJECT).is_ok());
     }
 }

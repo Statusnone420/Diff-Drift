@@ -46,6 +46,13 @@ serde_json = "1"
 tree-sitter = "0.26.9"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-javascript = "0.25.0"
+# Core-four grammars for structural drift. Versions pinned so each grammar's
+# language ABI loads under tree-sitter 0.26.x (all route through
+# tree-sitter-language; `cargo tree` shows a single tree-sitter core, no dup).
+tree-sitter-rust = "0.24.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-java = "0.23.5"
 git2 = "0.21.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"

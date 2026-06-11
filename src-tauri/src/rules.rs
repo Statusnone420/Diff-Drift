@@ -74,12 +74,38 @@ impl RuleRegistry {
     }
 
     /// First matching rule's id + its finding.
+    ///
+    /// SAFETY GATE: every security rule except `hardcoded-secret` is written
+    /// against JS/TS grammar node kinds — its tree-sitter queries (eval, CORS,
+    /// TLS, regex, try/catch, …) and its kind-string checks
+    /// (`VariableDeclaration`/`ImportDeclaration`) only make sense for the JS/TS
+    /// family. For any other language family we run ONLY the neutral allowlist,
+    /// so a JS query is never compiled against a Rust/Go/Python/Java grammar
+    /// (no structural.rs debug_assert panic, no coincidental cross-grammar
+    /// match, no JS-regex fallback firing on foreign syntax). The core-four
+    /// languages still get full structural drift + review progress; they just
+    /// don't get JS-specific security rules. `hardcoded-secret` is genuinely
+    /// language-neutral (plain AWS/OpenAI/PEM regex over the node's after-text),
+    /// so it runs everywhere.
     pub fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<(&'static str, Finding)> {
+        if ctx.lang.family() != crate::parse::Family::JsTs {
+            return self
+                .rules
+                .iter()
+                .filter(|r| NEUTRAL_RULES.contains(&r.id()))
+                .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)));
+        }
         self.rules
             .iter()
             .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)))
     }
 }
+
+/// Rules that are language-neutral enough to run for every family. Only the
+/// hardcoded-secret check qualifies today: it is pure text regex over the node's
+/// after-content with markers (AWS / OpenAI / PEM) that are identical in any
+/// language, and it carries no JS grammar or kind-string assumptions.
+const NEUTRAL_RULES: &[&str] = &["hardcoded-secret"];
 
 impl Default for RuleRegistry {
     fn default() -> Self {
@@ -1022,6 +1048,7 @@ fn permissive_regex(s: &str) -> Option<String> {
 
 pub fn is_test_path(path: &str) -> bool {
     let p = path.replace('\\', "/").to_lowercase();
+    let file = p.rsplit('/').next().unwrap_or(&p);
     p.contains(".test.")
         || p.contains(".spec.")
         || p.contains("__tests__")
@@ -1033,6 +1060,17 @@ pub fn is_test_path(path: &str) -> bool {
         || p.contains("/test/")
         || p.contains("/tests/")
         || p.contains("/fixtures/")
+        // Go: `foo_test.go`. Rust: `tests/` is handled by the `/test`/`tests`
+        // segment checks above. Python: `test_foo.py` and `foo_test.py`.
+        || file.ends_with("_test.go")
+        || (file.starts_with("test_") && file.ends_with(".py"))
+        || file.ends_with("_test.py")
+        // Java: `FooTest.java` / `FooTests.java`, and the conventional
+        // `src/test/java/...` tree (already matched by `/test/`).
+        || file.ends_with("test.java")
+        || file.ends_with("tests.java")
+        // Python conftest convention.
+        || file == "conftest.py"
 }
 
 #[cfg(test)]
@@ -2120,5 +2158,95 @@ mod tests {
                 &ctx(),
             )
             .is_some());
+    }
+
+    // ---- Cross-language rule safety (core-four languages) ----
+
+    fn lang_ctx(lang: Lang) -> RuleCtx {
+        RuleCtx {
+            deps: HashSet::new(),
+            is_test_file: false,
+            lang,
+        }
+    }
+
+    #[test]
+    fn non_js_families_only_run_the_neutral_allowlist() {
+        let reg = RuleRegistry::new();
+        // An `eval(...)` call is a JS-specific rule. In a non-JS family it must
+        // NOT flag — the eval rule is gated out, and no foreign-grammar query is
+        // ever compiled.
+        for lang in [Lang::Rust, Lang::Go, Lang::Python, Lang::Java] {
+            let f = reg.check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &lang_ctx(lang),
+            );
+            assert!(
+                f.is_none(),
+                "JS-specific eval rule must not fire for {:?}",
+                lang
+            );
+        }
+        // Sanity: the same node DOES flag for the JS/TS family.
+        assert!(reg
+            .check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_cross_language() {
+        let reg = RuleRegistry::new();
+        // A fake AWS key pasted into a Python file flags through the registry —
+        // the secret marker is language-neutral and runs for every family.
+        let py = reg.check(
+            &node(
+                "VariableDeclaration",
+                NodeState::Added,
+                &[],
+                &["KEY = \"AKIA0123456789ABCDEF\""],
+            ),
+            &lang_ctx(Lang::Python),
+        );
+        assert_eq!(py.map(|(id, _)| id), Some("hardcoded-secret"));
+
+        // And in a Rust file (PEM marker).
+        let rs = reg.check(
+            &node(
+                "VariableDeclaration",
+                NodeState::Added,
+                &[],
+                &["const KEY: &str = \"-----BEGIN RSA PRIVATE KEY-----\";"],
+            ),
+            &lang_ctx(Lang::Rust),
+        );
+        assert_eq!(rs.map(|(id, _)| id), Some("hardcoded-secret"));
+    }
+
+    #[test]
+    fn cross_language_nodes_never_panic_or_compile_foreign_queries() {
+        // Drive realistic snippets from each core-four language through the full
+        // registry. The gate means no JS tree-sitter query is ever compiled
+        // against these grammars — in a debug build a foreign-grammar query
+        // would trip structural.rs's debug_assert, so this passing in
+        // `cargo test` (a debug build) proves the gate holds.
+        let reg = RuleRegistry::new();
+        let snippets: &[(Lang, &str)] = &[
+            (Lang::Rust, "if condition { sanitize(x); verify(t); }"),
+            (Lang::Go, "if cond { eval(x); return verify(t) }"),
+            (Lang::Python, "if cond:\n    sanitize(x)\n    return decode(t)"),
+            (Lang::Java, "if (cond) { sanitize(x); return decode(t); }"),
+        ];
+        for (lang, src) in snippets {
+            // Modified state exercises the differential rules too (guard-removed,
+            // verify-to-decode, removed-sanitize) — all of which are gated off.
+            let f = reg.check(
+                &node("FunctionDeclaration", NodeState::Modified, &[src], &[src]),
+                &lang_ctx(*lang),
+            );
+            assert!(f.is_none(), "no rule should fire for {:?}: {src}", lang);
+        }
     }
 }
