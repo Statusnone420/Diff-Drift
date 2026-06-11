@@ -1047,7 +1047,10 @@ fn permissive_regex(s: &str) -> Option<String> {
 }
 
 pub fn is_test_path(path: &str) -> bool {
-    let p = path.replace('\\', "/").to_lowercase();
+    let slashed = path.replace('\\', "/");
+    // Original-case filename for CamelCase test-class detection (`FooTest.cs`).
+    let orig_file = slashed.rsplit('/').next().unwrap_or(&slashed);
+    let p = slashed.to_lowercase();
     let file = p.rsplit('/').next().unwrap_or(&p);
     p.contains(".test.")
         || p.contains(".spec.")
@@ -1065,12 +1068,37 @@ pub fn is_test_path(path: &str) -> bool {
         || file.ends_with("_test.go")
         || (file.starts_with("test_") && file.ends_with(".py"))
         || file.ends_with("_test.py")
-        // Java: `FooTest.java` / `FooTests.java`, and the conventional
-        // `src/test/java/...` tree (already matched by `/test/`).
-        || file.ends_with("test.java")
-        || file.ends_with("tests.java")
+        // CamelCase test-class conventions: `FooTest`/`FooTests` (Java/C#/Kotlin)
+        // and `FooTests` (Swift XCTest). The CamelCase boundary (`...Test`, not
+        // `...test`) keeps `Latest.cs`, `Audit.java`, and `Manifest.kt` — which
+        // merely contain "test" as a lowercase substring — from misreading.
+        || has_test_class_suffix(orig_file, ".java")
+        || has_test_class_suffix(orig_file, ".cs")
+        || has_test_class_suffix(orig_file, ".kt")
+        || has_test_class_suffix(orig_file, ".swift")
         // Python conftest convention.
         || file == "conftest.py"
+}
+
+/// True when `file` is a CamelCase test class for the given extension —
+/// `<Base>Test<ext>` or `<Base>Tests<ext>` where the `T` in `Test`/`Tests` is a
+/// real CamelCase boundary. `file` must be the ORIGINAL (non-lowercased) name:
+/// `ServiceTest.cs` matches, `Latest.cs` (lowercase `t`) does not. The extension
+/// match itself is case-insensitive.
+fn has_test_class_suffix(file: &str, ext: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    let Some(ext_len) = lower.strip_suffix(ext).map(|s| s.len()) else {
+        return false;
+    };
+    let stem = &file[..ext_len]; // original case, extension removed
+    for marker in ["Tests", "Test"] {
+        if let Some(base) = stem.strip_suffix(marker) {
+            if !base.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -2163,6 +2191,29 @@ mod tests {
     }
 
     #[test]
+    fn test_path_detection_includes_stretch_conventions() {
+        for path in [
+            "src/ServiceTest.cs",   // C# xUnit/NUnit
+            "tests/HandlerTests.cs",
+            "app/ProcessorTest.kt", // Kotlin
+            "app/ProcessorTests.kt",
+            "ServiceTests.swift",   // Swift XCTest
+        ] {
+            assert!(
+                is_test_path(path),
+                "`{path}` should be classified as test-like"
+            );
+        }
+        // Non-test sources of each stretch language stay non-test.
+        assert!(!is_test_path("src/Service.cs"));
+        assert!(!is_test_path("app/Processor.kt"));
+        assert!(!is_test_path("Sources/App/main.swift"));
+        // A file merely ending in a substring (not the suffix) must NOT match.
+        assert!(!is_test_path("src/Latest.cs"));
+        assert!(!is_test_path("src/Manifest.kt"));
+    }
+
+    #[test]
     fn registry_dispatches() {
         let reg = RuleRegistry::new();
         let f = reg.check(
@@ -2185,7 +2236,7 @@ mod tests {
             .is_some());
     }
 
-    // ---- Cross-language rule safety (core-four languages) ----
+    // ---- Cross-language rule safety (structural-drift languages) ----
 
     fn lang_ctx(lang: Lang) -> RuleCtx {
         RuleCtx {
@@ -2201,7 +2252,15 @@ mod tests {
         // An `eval(...)` call is a JS-specific rule. In a non-JS family it must
         // NOT flag — the eval rule is gated out, and no foreign-grammar query is
         // ever compiled.
-        for lang in [Lang::Rust, Lang::Go, Lang::Python, Lang::Java] {
+        for lang in [
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
+        ] {
             let f = reg.check(
                 &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
                 &lang_ctx(lang),
@@ -2248,6 +2307,24 @@ mod tests {
             &lang_ctx(Lang::Rust),
         );
         assert_eq!(rs.map(|(id, _)| id), Some("hardcoded-secret"));
+
+        // And in each stretch language (OpenAI marker).
+        for lang in [Lang::CSharp, Lang::Kotlin, Lang::Swift] {
+            let f = reg.check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["let key = \"sk-abcdefghij0123456789\""],
+                ),
+                &lang_ctx(lang),
+            );
+            assert_eq!(
+                f.map(|(id, _)| id),
+                Some("hardcoded-secret"),
+                "secret must flag for {lang:?}"
+            );
+        }
     }
 
     #[test]
@@ -2263,6 +2340,9 @@ mod tests {
             (Lang::Go, "if cond { eval(x); return verify(t) }"),
             (Lang::Python, "if cond:\n    sanitize(x)\n    return decode(t)"),
             (Lang::Java, "if (cond) { sanitize(x); return decode(t); }"),
+            (Lang::CSharp, "if (cond) { sanitize(x); return decode(t); }"),
+            (Lang::Kotlin, "if (cond) { sanitize(x); return decode(t) }"),
+            (Lang::Swift, "if cond { sanitize(x); return decode(t) }"),
         ];
         for (lang, src) in snippets {
             // Modified state exercises the differential rules too (guard-removed,

@@ -1769,4 +1769,69 @@ export default router;
         assert_eq!(res.flags.len(), 1, "the AWS key flags");
         assert_eq!(res.flags[0].r#type, "Hardcoded secret");
     }
+
+    // ---- Stretch languages (C#, Kotlin, Swift) flow through the session ----
+
+    #[test]
+    fn csharp_drift_flows_through_session() {
+        // A guard is neutralised and a sanitize call dropped. No security flag
+        // (those stay JS-only) — just structural drift and the right label.
+        let before = "class Service {\n    bool Process(string input) {\n        if (!Valid(input)) {\n            return false;\n        }\n        Sanitize(input);\n        return true;\n    }\n}\n";
+        let after = "class Service {\n    bool Process(string input) {\n        return true;\n    }\n\n    void Extra() {}\n}\n";
+        let fixture = test_fixture::single_file_drift("Service.cs", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Service.cs", &HashSet::new(), &Baseline::default())
+            .expect("c# file drifts");
+        assert_eq!(res.entry.lang, "C#");
+        assert!(res.flags.is_empty(), "no JS-specific flags for C#");
+        // `Extra` was added as a class member; `Process` body shrank.
+        let names = changed_node_names(&res);
+        assert!(names.iter().any(|n| n == "Extra"), "added member: {names:?}");
+        assert!(res.entry.nodes.iter().any(|n| n.name == "Service"));
+    }
+
+    #[test]
+    fn kotlin_drift_flows_through_session() {
+        let before = "fun process(input: String): Boolean {\n    val clean = sanitize(input)\n    return store(clean)\n}\n";
+        let after = "fun process(input: String): Boolean {\n    return store(input)\n}\n\nfun extra(): Int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("App.kt", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "App.kt", &HashSet::new(), &Baseline::default())
+            .expect("kotlin file drifts");
+        assert_eq!(res.entry.lang, "Kotlin");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn swift_drift_flows_through_session() {
+        let before = "func process(data: String) -> String {\n    let clean = sanitize(data)\n    return store(clean)\n}\n";
+        let after = "func process(data: String) -> String {\n    return store(data)\n}\n\nfunc extra() -> Int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("App.swift", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "App.swift", &HashSet::new(), &Baseline::default())
+            .expect("swift file drifts");
+        assert_eq!(res.entry.lang, "Swift");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_in_a_swift_file_through_session() {
+        // The one cross-language rule fires for the stretch languages too.
+        let before = "func config() -> String {\n    return \"\"\n}\n";
+        let after =
+            "func config() -> String {\n    return \"AKIA0123456789ABCDEF\"\n}\n";
+        let fixture = test_fixture::single_file_drift("Config.swift", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Config.swift", &HashSet::new(), &Baseline::default())
+            .expect("swift file drifts");
+        assert_eq!(res.entry.lang, "Swift");
+        assert_eq!(res.flags.len(), 1, "the AWS key flags");
+        assert_eq!(res.flags[0].r#type, "Hardcoded secret");
+    }
 }
