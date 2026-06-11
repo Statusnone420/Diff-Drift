@@ -13,7 +13,7 @@
 // the script tells you how to install ffmpeg (winget install -e --id Gyan.FFmpeg).
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, copyFileSync, existsSync, statSync, globSync } from "node:fs";
+import { mkdirSync, copyFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
 
@@ -155,14 +155,41 @@ function makeDriver(page) {
   return { caption, card, setCursor, moveAndClick };
 }
 
+/** Bounded recursive search for ffmpeg.exe (no fs.globSync — Node 22 only). */
+function findFfmpegUnder(dir, depth = 0) {
+  if (depth > 4) return null;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const candidate = join(dir, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === "ffmpeg.exe") return candidate;
+    if (entry.isDirectory()) {
+      const hit = findFfmpegUnder(candidate, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 /** Find a real ffmpeg (Playwright's bundled one only encodes WebM). */
 function findFfmpeg() {
+  const winget = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet");
+  let gyanDirs = [];
+  try {
+    gyanDirs = readdirSync(join(winget, "Packages"))
+      .filter((name) => name.startsWith("Gyan.FFmpeg"))
+      .map((name) => join(winget, "Packages", name));
+  } catch {
+    // no winget package dir — fall through to the other candidates
+  }
   const candidates = [
     "ffmpeg",
-    join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links", "ffmpeg.exe"),
-    ...globSync(
-      join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Packages", "Gyan.FFmpeg*", "**", "bin", "ffmpeg.exe"),
-    ),
+    join(winget, "Links", "ffmpeg.exe"),
+    ...gyanDirs.map((dir) => findFfmpegUnder(dir)).filter(Boolean),
   ];
   for (const candidate of candidates) {
     try {
