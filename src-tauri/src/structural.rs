@@ -37,6 +37,9 @@ fn group(lang: Lang) -> u8 {
         Lang::Go => 4,
         Lang::Python => 5,
         Lang::Java => 6,
+        Lang::CSharp => 7,
+        Lang::Kotlin => 8,
+        Lang::Swift => 9,
     }
 }
 
@@ -214,7 +217,7 @@ mod tests {
         assert_ne!(group(Lang::Ts), group(Lang::Js));
         assert_ne!(group(Lang::Tsx), group(Lang::Js));
         assert_eq!(group(Lang::Js), group(Lang::Jsx));
-        // The four new languages each get a group distinct from every other.
+        // The structural-drift languages each get a group distinct from every other.
         for lang in [
             Lang::Ts,
             Lang::Tsx,
@@ -223,6 +226,9 @@ mod tests {
             Lang::Go,
             Lang::Python,
             Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
         ] {
             assert!(
                 seen.insert(group(lang)),
@@ -244,8 +250,16 @@ mod tests {
         const TLS_REJECT: &str =
             r#"(pair key: (property_identifier) @k (#eq? @k "x") value: (false))"#;
         // `pair` and `property_identifier` are JS-grammar node kinds; they do
-        // not exist in the Rust/Go/Python/Java grammars, so compilation fails.
-        for lang in [Lang::Rust, Lang::Go, Lang::Python, Lang::Java] {
+        // not exist in the structural-drift grammars, so compilation fails.
+        for lang in [
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
+        ] {
             assert!(
                 Query::new(&grammar(lang), TLS_REJECT).is_err(),
                 "JS-specific query must not compile against {lang:?}"

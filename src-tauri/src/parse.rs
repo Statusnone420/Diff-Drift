@@ -30,10 +30,13 @@ pub enum Lang {
     Go,
     Python,
     Java,
+    CSharp,
+    Kotlin,
+    Swift,
 }
 
 /// Language family. Security rules are written against JS/TS grammar node kinds,
-/// so they only run for `JsTs`; the core-four languages get structural drift
+/// so they only run for `JsTs`; every other language gets structural drift
 /// (skeletons, function children, before→after diff) plus the genuinely
 /// language-neutral hardcoded-secret check, but no JS-specific security rules.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,6 +46,9 @@ pub enum Family {
     Go,
     Python,
     Java,
+    CSharp,
+    Kotlin,
+    Swift,
 }
 
 impl Lang {
@@ -69,6 +75,12 @@ impl Lang {
             Some(Lang::Python)
         } else if p.ends_with(".java") {
             Some(Lang::Java)
+        } else if p.ends_with(".cs") {
+            Some(Lang::CSharp)
+        } else if p.ends_with(".kt") || p.ends_with(".kts") {
+            Some(Lang::Kotlin)
+        } else if p.ends_with(".swift") {
+            Some(Lang::Swift)
         } else {
             None
         }
@@ -84,6 +96,9 @@ impl Lang {
             Lang::Go => "Go",
             Lang::Python => "Python",
             Lang::Java => "Java",
+            Lang::CSharp => "C#",
+            Lang::Kotlin => "Kotlin",
+            Lang::Swift => "Swift",
         }
     }
 
@@ -95,6 +110,9 @@ impl Lang {
             Lang::Go => Family::Go,
             Lang::Python => Family::Python,
             Lang::Java => Family::Java,
+            Lang::CSharp => Family::CSharp,
+            Lang::Kotlin => Family::Kotlin,
+            Lang::Swift => Family::Swift,
         }
     }
 }
@@ -111,6 +129,9 @@ pub fn grammar(lang: Lang) -> tree_sitter::Language {
         Lang::Go => tree_sitter_go::LANGUAGE.into(),
         Lang::Python => tree_sitter_python::LANGUAGE.into(),
         Lang::Java => tree_sitter_java::LANGUAGE.into(),
+        Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        Lang::Swift => tree_sitter_swift::LANGUAGE.into(),
     }
 }
 
@@ -148,6 +169,18 @@ pub fn parse_file(source: &str, lang: Lang) -> Vec<Parsed> {
         Family::Java => root
             .named_children(&mut cursor)
             .filter_map(|n| java::map_node(n, bytes))
+            .collect(),
+        Family::CSharp => root
+            .named_children(&mut cursor)
+            .filter_map(|n| csharp::map_node(n, bytes))
+            .collect(),
+        Family::Kotlin => root
+            .named_children(&mut cursor)
+            .filter_map(|n| kotlin::map_node(n, bytes))
+            .collect(),
+        Family::Swift => root
+            .named_children(&mut cursor)
+            .filter_map(|n| swift::map_node(n, bytes))
             .collect(),
     }
 }
@@ -845,6 +878,477 @@ mod java {
     }
 }
 
+mod csharp {
+    use super::{node_lines, snippet, text, Node, Parsed};
+
+    pub fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
+        let ts_kind = node.kind();
+        let kind = match ts_kind {
+            "using_directive" => "ImportDeclaration",
+            "namespace_declaration" | "file_scoped_namespace_declaration" => "PackageDeclaration",
+            // class/struct/record/enum all declare a named type.
+            "class_declaration" | "struct_declaration" | "record_declaration"
+            | "record_struct_declaration" | "enum_declaration" => "ClassDeclaration",
+            "interface_declaration" => "InterfaceDeclaration",
+            "method_declaration" | "constructor_declaration" | "destructor_declaration"
+            | "local_function_statement" => "FunctionDeclaration",
+            "field_declaration" | "property_declaration" | "local_declaration_statement" => {
+                "VariableDeclaration"
+            }
+            "if_statement" => "IfStatement",
+            "return_statement" => "ReturnStatement",
+            "expression_statement" => "ExpressionStatement",
+            // Top-level statements are wrapped in a `global_statement`; unwrap to
+            // the inner statement so the skeleton shows the real construct.
+            "global_statement" => {
+                let inner = node.named_child(0)?;
+                return map_node(inner, src);
+            }
+            "comment" => return None,
+            other => other,
+        }
+        .to_string();
+
+        let name = name(node, src, ts_kind);
+        let signature = signature(node, src, ts_kind);
+        let lines = node_lines(node, src);
+        let children = match ts_kind {
+            // Surface the type's members (methods/fields) as one level of children.
+            "class_declaration" | "struct_declaration" | "record_declaration"
+            | "record_struct_declaration" | "enum_declaration" | "interface_declaration" => {
+                container_children(node, src)
+            }
+            // Surface a method's body statements.
+            "method_declaration" | "constructor_declaration" | "destructor_declaration"
+            | "local_function_statement" => method_children(node, src),
+            _ => Vec::new(),
+        };
+        Some(Parsed {
+            kind,
+            name,
+            signature,
+            lines,
+            children,
+        })
+    }
+
+    /// Members live in the `body` `declaration_list`.
+    fn container_children(node: Node, src: &[u8]) -> Vec<Parsed> {
+        let Some(body) = node.child_by_field_name("body") else {
+            return Vec::new();
+        };
+        let mut c = body.walk();
+        body.named_children(&mut c)
+            .filter_map(|n| map_node(n, src))
+            .collect()
+    }
+
+    /// A method body is a `block`.
+    fn method_children(node: Node, src: &[u8]) -> Vec<Parsed> {
+        let Some(body) = node.child_by_field_name("body") else {
+            return Vec::new();
+        };
+        let mut c = body.walk();
+        body.named_children(&mut c)
+            .filter_map(|n| map_node(n, src))
+            .collect()
+    }
+
+    fn name(node: Node, src: &[u8], ts_kind: &str) -> String {
+        match ts_kind {
+            // `using System;` / `using static System.Math;` / `using Foo = X;`
+            // The plain form has no `name` field (that's the alias); use the
+            // qualified path child. The alias form exposes `name`.
+            "using_directive" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_else(|| qualified_or_identifier(node, src)),
+            "namespace_declaration" | "file_scoped_namespace_declaration" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_else(|| "namespace".into()),
+            "class_declaration" | "struct_declaration" | "record_declaration"
+            | "record_struct_declaration" | "enum_declaration" | "interface_declaration"
+            | "method_declaration" | "constructor_declaration" | "local_function_statement" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_default(),
+            "field_declaration" | "property_declaration" | "local_declaration_statement" => {
+                declarator_name(node, src).unwrap_or_else(|| snippet(node, src, 40))
+            }
+            _ => snippet(node, src, 40),
+        }
+    }
+
+    /// The qualified path or bare identifier inside a `using` directive.
+    fn qualified_or_identifier(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| matches!(ch.kind(), "qualified_name" | "identifier"));
+        found
+            .map(|n| text(n, src).to_string())
+            .unwrap_or_else(|| "using".into())
+    }
+
+    /// `field`/`property`/`local` declarations carry a `variable_declaration`
+    /// whose `variable_declarator` exposes the name; a property declares its
+    /// name directly.
+    fn declarator_name(node: Node, src: &[u8]) -> Option<String> {
+        // property_declaration: name field on the node itself.
+        if let Some(n) = node.child_by_field_name("name") {
+            return Some(text(n, src).to_string());
+        }
+        let mut c = node.walk();
+        let vd = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "variable_declaration")?;
+        let mut vc = vd.walk();
+        for decl in vd.named_children(&mut vc) {
+            if decl.kind() == "variable_declarator" {
+                if let Some(n) = decl.child_by_field_name("name") {
+                    return Some(text(n, src).to_string());
+                }
+                // The declarator's first identifier is the name.
+                let mut dc = decl.walk();
+                let id = decl
+                    .named_children(&mut dc)
+                    .find(|c| c.kind() == "identifier");
+                if let Some(id) = id {
+                    return Some(text(id, src).to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn signature(node: Node, src: &[u8], ts_kind: &str) -> Option<String> {
+        if !matches!(
+            ts_kind,
+            "method_declaration" | "constructor_declaration" | "local_function_statement"
+        ) {
+            return None;
+        }
+        let params = node
+            .child_by_field_name("parameters")
+            .map(|n| text(n, src).to_string())
+            .unwrap_or_default();
+        let ret = node
+            .child_by_field_name("returns")
+            .map(|n| format!(": {}", text(n, src)))
+            .unwrap_or_default();
+        let sig = format!("{params}{ret}");
+        if sig.is_empty() {
+            None
+        } else {
+            Some(sig)
+        }
+    }
+}
+
+mod kotlin {
+    use super::{node_lines, snippet, text, Node, Parsed};
+
+    pub fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
+        let ts_kind = node.kind();
+        let kind = match ts_kind {
+            "import" | "import_header" => "ImportDeclaration",
+            "package_header" => "PackageDeclaration",
+            // Kotlin parses `class`, `interface`, and `enum class` all as
+            // `class_declaration`; `object`/`companion object` as object_declaration.
+            "class_declaration" | "object_declaration" => "ClassDeclaration",
+            "function_declaration" => "FunctionDeclaration",
+            "property_declaration" => "VariableDeclaration",
+            "if_expression" => "IfStatement",
+            "return_expression" => "ReturnStatement",
+            "comment" | "line_comment" | "multiline_comment" => return None,
+            other => other,
+        }
+        .to_string();
+
+        let name = name(node, src, ts_kind);
+        let signature = signature(node, src, ts_kind);
+        let lines = node_lines(node, src);
+        let children = match ts_kind {
+            // Surface members from the `class_body`.
+            "class_declaration" | "object_declaration" => class_body_children(node, src),
+            // Surface a function's body statements (function_body → block).
+            "function_declaration" => function_body_children(node, src),
+            _ => Vec::new(),
+        };
+        Some(Parsed {
+            kind,
+            name,
+            signature,
+            lines,
+            children,
+        })
+    }
+
+    fn class_body_children(node: Node, src: &[u8]) -> Vec<Parsed> {
+        let mut c = node.walk();
+        let Some(body) = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "class_body")
+        else {
+            return Vec::new();
+        };
+        let mut bc = body.walk();
+        body.named_children(&mut bc)
+            .filter_map(|n| map_node(n, src))
+            .collect()
+    }
+
+    fn function_body_children(node: Node, src: &[u8]) -> Vec<Parsed> {
+        let mut c = node.walk();
+        let Some(fb) = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "function_body")
+        else {
+            return Vec::new();
+        };
+        // function_body wraps a `block`; descend into it.
+        let mut fc = fb.walk();
+        for inner in fb.named_children(&mut fc) {
+            if inner.kind() == "block" {
+                let mut ic = inner.walk();
+                return inner
+                    .named_children(&mut ic)
+                    .filter_map(|n| map_node(n, src))
+                    .collect();
+            }
+        }
+        // Expression-body function (`fun f() = expr`) has no block.
+        Vec::new()
+    }
+
+    fn name(node: Node, src: &[u8], ts_kind: &str) -> String {
+        match ts_kind {
+            "import" | "import_header" => qualified_identifier(node, src),
+            "package_header" => qualified_identifier(node, src),
+            "function_declaration" | "class_declaration" | "object_declaration" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_else(|| identifier_child(node, src)),
+            // `val x = …` / `const val MAX = …` — the name lives in the
+            // `variable_declaration` child's identifier.
+            "property_declaration" => property_name(node, src),
+            _ => snippet(node, src, 40),
+        }
+    }
+
+    fn property_name(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let vd = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "variable_declaration");
+        if let Some(vd) = vd {
+            let mut vc = vd.walk();
+            let id = vd
+                .named_children(&mut vc)
+                .find(|ch| ch.kind() == "identifier" || ch.kind() == "simple_identifier");
+            if let Some(id) = id {
+                return text(id, src).to_string();
+            }
+        }
+        snippet(node, src, 40)
+    }
+
+    fn qualified_identifier(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| matches!(ch.kind(), "qualified_identifier" | "identifier"));
+        found
+            .map(|n| text(n, src).trim().to_string())
+            .unwrap_or_else(|| snippet(node, src, 40))
+    }
+
+    fn identifier_child(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "identifier");
+        found.map(|n| text(n, src).to_string()).unwrap_or_default()
+    }
+
+    fn signature(node: Node, src: &[u8], ts_kind: &str) -> Option<String> {
+        if ts_kind != "function_declaration" {
+            return None;
+        }
+        let mut c = node.walk();
+        let params = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "function_value_parameters")
+            .map(|n| text(n, src).to_string())
+            .unwrap_or_default();
+        if params.is_empty() {
+            None
+        } else {
+            Some(params)
+        }
+    }
+}
+
+mod swift {
+    use super::{node_lines, snippet, text, Node, Parsed};
+
+    pub fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
+        let ts_kind = node.kind();
+        let kind = match ts_kind {
+            "import_declaration" => "ImportDeclaration",
+            // Swift parses `class`, `struct`, and `enum` all as class_declaration.
+            "class_declaration" => "ClassDeclaration",
+            "protocol_declaration" => "InterfaceDeclaration",
+            "function_declaration" | "protocol_function_declaration" | "init_declaration"
+            | "deinit_declaration" => "FunctionDeclaration",
+            "property_declaration" => "VariableDeclaration",
+            "if_statement" => "IfStatement",
+            "control_transfer_statement" => "ReturnStatement",
+            "comment" | "multiline_comment" => return None,
+            other => other,
+        }
+        .to_string();
+
+        let name = name(node, src, ts_kind);
+        let signature = signature(node, src, ts_kind);
+        let lines = node_lines(node, src);
+        let children = match ts_kind {
+            // Surface members from the `class_body` / `protocol_body` / enum body.
+            "class_declaration" => body_members(node, src, &["class_body", "enum_class_body"]),
+            "protocol_declaration" => body_members(node, src, &["protocol_body"]),
+            // Surface a function's body statements (function_body → statements).
+            "function_declaration" | "init_declaration" | "deinit_declaration" => {
+                function_body_children(node, src)
+            }
+            _ => Vec::new(),
+        };
+        Some(Parsed {
+            kind,
+            name,
+            signature,
+            lines,
+            children,
+        })
+    }
+
+    fn body_members(node: Node, src: &[u8], body_kinds: &[&str]) -> Vec<Parsed> {
+        let mut c = node.walk();
+        let Some(body) = node
+            .named_children(&mut c)
+            .find(|ch| body_kinds.contains(&ch.kind()))
+        else {
+            return Vec::new();
+        };
+        let mut bc = body.walk();
+        body.named_children(&mut bc)
+            .filter_map(|n| map_node(n, src))
+            .collect()
+    }
+
+    fn function_body_children(node: Node, src: &[u8]) -> Vec<Parsed> {
+        let Some(body) = node.child_by_field_name("body") else {
+            return Vec::new();
+        };
+        // `function_body` wraps a `statements` node.
+        let mut bc = body.walk();
+        for inner in body.named_children(&mut bc) {
+            if inner.kind() == "statements" {
+                let mut ic = inner.walk();
+                return inner
+                    .named_children(&mut ic)
+                    .filter_map(|n| map_node(n, src))
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+
+    fn name(node: Node, src: &[u8], ts_kind: &str) -> String {
+        match ts_kind {
+            "import_declaration" => import_path(node, src),
+            "class_declaration" | "protocol_declaration" => type_name(node, src),
+            "function_declaration" | "protocol_function_declaration" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_else(|| simple_identifier(node, src)),
+            "init_declaration" => "init".into(),
+            "deinit_declaration" => "deinit".into(),
+            "property_declaration" => node
+                .child_by_field_name("name")
+                .map(|n| text(n, src).to_string())
+                .unwrap_or_else(|| pattern_name(node, src)),
+            _ => snippet(node, src, 40),
+        }
+    }
+
+    fn import_path(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "identifier");
+        found
+            .map(|n| text(n, src).trim().to_string())
+            .unwrap_or_else(|| snippet(node, src, 40))
+    }
+
+    fn type_name(node: Node, src: &[u8]) -> String {
+        if let Some(n) = node.child_by_field_name("name") {
+            return text(n, src).to_string();
+        }
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "type_identifier");
+        found.map(|n| text(n, src).to_string()).unwrap_or_default()
+    }
+
+    fn simple_identifier(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let found = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "simple_identifier");
+        found.map(|n| text(n, src).to_string()).unwrap_or_default()
+    }
+
+    /// `let x = …` / `var x: T` — the binding's `pattern` holds the name.
+    fn pattern_name(node: Node, src: &[u8]) -> String {
+        let mut c = node.walk();
+        let pat = node
+            .named_children(&mut c)
+            .find(|ch| ch.kind() == "pattern");
+        if let Some(pat) = pat {
+            return text(pat, src).to_string();
+        }
+        snippet(node, src, 40)
+    }
+
+    fn signature(node: Node, src: &[u8], ts_kind: &str) -> Option<String> {
+        if !matches!(
+            ts_kind,
+            "function_declaration" | "protocol_function_declaration"
+        ) {
+            return None;
+        }
+        // Swift parameters are loose `parameter` children between `(` and `)`.
+        let mut c = node.walk();
+        let params: Vec<String> = node
+            .named_children(&mut c)
+            .filter(|ch| ch.kind() == "parameter")
+            .map(|n| text(n, src).to_string())
+            .collect();
+        let ret = node
+            .child_by_field_name("return_type")
+            .map(|n| format!(" -> {}", text(n, src)))
+            .unwrap_or_default();
+        if params.is_empty() && ret.is_empty() {
+            None
+        } else {
+            Some(format!("({}){}", params.join(", "), ret))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,6 +1467,11 @@ export default router;
         assert_eq!(Lang::from_path("a.py"), Some(Lang::Python));
         assert_eq!(Lang::from_path("a.pyi"), Some(Lang::Python));
         assert_eq!(Lang::from_path("Main.java"), Some(Lang::Java));
+        // Stretch structural-drift languages.
+        assert_eq!(Lang::from_path("Service.cs"), Some(Lang::CSharp));
+        assert_eq!(Lang::from_path("Main.kt"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_path("build.kts"), Some(Lang::Kotlin));
+        assert_eq!(Lang::from_path("App.swift"), Some(Lang::Swift));
         assert_eq!(Lang::from_path("a.d.ts"), None);
         assert_eq!(Lang::from_path("package.json"), None);
         assert_eq!(Lang::from_path("README.md"), None);
@@ -979,6 +1488,9 @@ export default router;
             (Lang::Go, "Go", Family::Go),
             (Lang::Python, "Python", Family::Python),
             (Lang::Java, "Java", Family::Java),
+            (Lang::CSharp, "C#", Family::CSharp),
+            (Lang::Kotlin, "Kotlin", Family::Kotlin),
+            (Lang::Swift, "Swift", Family::Swift),
         ] {
             assert_eq!(lang.label(), label);
             assert_eq!(lang.family(), fam);
@@ -1220,9 +1732,236 @@ interface Shape {}
         assert_eq!(process.children[0].name, "trimmed");
     }
 
+    // ---- C# ----
+    const CS_SRC: &str = r#"using System;
+using System.Collections.Generic;
+
+namespace Demo;
+
+class Service {
+    private int retries = 3;
+
+    public bool Process(string input) {
+        string trimmed = input.Trim();
+        if (string.IsNullOrEmpty(trimmed)) {
+            return false;
+        }
+        return Validate(trimmed);
+    }
+}
+
+interface IShape {
+    int Area();
+}
+
+enum Color { Red, Green }
+"#;
+
+    #[test]
+    fn csharp_top_level_skeleton() {
+        let nodes = parse_file(CS_SRC, Lang::CSharp);
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("ImportDeclaration", "System"),
+                ("ImportDeclaration", "System.Collections.Generic"),
+                ("PackageDeclaration", "Demo"),
+                ("ClassDeclaration", "Service"),
+                ("InterfaceDeclaration", "IShape"),
+                ("ClassDeclaration", "Color"),
+            ]
+        );
+    }
+
+    #[test]
+    fn csharp_class_members_and_method_body_surface() {
+        let nodes = parse_file(CS_SRC, Lang::CSharp);
+        let service = &nodes[3];
+        assert_eq!(service.name, "Service");
+        let members: Vec<(&str, &str)> = service
+            .children
+            .iter()
+            .map(|c| (c.kind.as_str(), c.name.as_str()))
+            .collect();
+        assert_eq!(
+            members,
+            vec![
+                ("VariableDeclaration", "retries"),
+                ("FunctionDeclaration", "Process"),
+            ]
+        );
+        let process = &service.children[1];
+        assert_eq!(process.signature.as_deref(), Some("(string input): bool"));
+        let stmt_kinds: Vec<&str> = process.children.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(
+            stmt_kinds,
+            vec!["VariableDeclaration", "IfStatement", "ReturnStatement"]
+        );
+        assert_eq!(process.children[0].name, "trimmed");
+    }
+
+    // ---- Kotlin ----
+    const KT_SRC: &str = r#"package com.example
+
+import java.util.List
+
+const val MAX = 3
+
+fun process(input: String): Boolean {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) {
+        return false
+    }
+    return validate(trimmed)
+}
+
+class Service {
+    fun run(): Int {
+        return 1
+    }
+}
+
+interface Shape {
+    fun area(): Int
+}
+"#;
+
+    #[test]
+    fn kotlin_top_level_skeleton() {
+        let nodes = parse_file(KT_SRC, Lang::Kotlin);
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("PackageDeclaration", "com.example"),
+                ("ImportDeclaration", "java.util.List"),
+                ("VariableDeclaration", "MAX"),
+                ("FunctionDeclaration", "process"),
+                ("ClassDeclaration", "Service"),
+                // Kotlin parses `interface` as a class_declaration; it groups
+                // under ClassDeclaration (honest structural mapping).
+                ("ClassDeclaration", "Shape"),
+            ]
+        );
+        let process = &nodes[3];
+        assert_eq!(process.signature.as_deref(), Some("(input: String)"));
+    }
+
+    #[test]
+    fn kotlin_function_body_children() {
+        let nodes = parse_file(KT_SRC, Lang::Kotlin);
+        let process = &nodes[3];
+        let child_kinds: Vec<&str> = process.children.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(
+            child_kinds,
+            vec!["VariableDeclaration", "IfStatement", "ReturnStatement"]
+        );
+        assert_eq!(process.children[0].name, "trimmed");
+        // Class members surface too.
+        let service = &nodes[4];
+        let members: Vec<(&str, &str)> = service
+            .children
+            .iter()
+            .map(|c| (c.kind.as_str(), c.name.as_str()))
+            .collect();
+        assert_eq!(members, vec![("FunctionDeclaration", "run")]);
+    }
+
+    // ---- Swift ----
+    const SWIFT_SRC: &str = r#"import Foundation
+
+let maxRetries = 3
+
+func process(input: String) -> Bool {
+    let trimmed = input.trimmed()
+    if trimmed.isEmpty {
+        return false
+    }
+    return validate(trimmed)
+}
+
+class Service {
+    var retries = 3
+    func run() -> Int {
+        return 1
+    }
+}
+
+struct Point {
+    var x: Int
+}
+
+protocol Shape {
+    func area() -> Int
+}
+"#;
+
+    #[test]
+    fn swift_top_level_skeleton() {
+        let nodes = parse_file(SWIFT_SRC, Lang::Swift);
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("ImportDeclaration", "Foundation"),
+                ("VariableDeclaration", "maxRetries"),
+                ("FunctionDeclaration", "process"),
+                ("ClassDeclaration", "Service"),
+                // Swift parses `struct` as a class_declaration.
+                ("ClassDeclaration", "Point"),
+                ("InterfaceDeclaration", "Shape"),
+            ]
+        );
+        let process = &nodes[2];
+        assert_eq!(process.signature.as_deref(), Some("(input: String) -> Bool"));
+    }
+
+    #[test]
+    fn swift_function_body_and_class_members_surface() {
+        let nodes = parse_file(SWIFT_SRC, Lang::Swift);
+        let process = &nodes[2];
+        let child_kinds: Vec<&str> = process.children.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(
+            child_kinds,
+            vec!["VariableDeclaration", "IfStatement", "ReturnStatement"]
+        );
+        assert_eq!(process.children[0].name, "trimmed");
+        let service = &nodes[3];
+        let members: Vec<(&str, &str)> = service
+            .children
+            .iter()
+            .map(|c| (c.kind.as_str(), c.name.as_str()))
+            .collect();
+        assert_eq!(
+            members,
+            vec![
+                ("VariableDeclaration", "retries"),
+                ("FunctionDeclaration", "run"),
+            ]
+        );
+    }
+
     #[test]
     fn new_languages_tolerate_empty_and_garbage() {
-        for lang in [Lang::Rust, Lang::Go, Lang::Python, Lang::Java] {
+        for lang in [
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
+        ] {
             assert!(parse_file("", lang).is_empty());
             let _ = parse_file("@@@ ?? not valid {{{ ;;;", lang);
         }

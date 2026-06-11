@@ -53,6 +53,11 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-go = "0.25.0"
 tree-sitter-python = "0.25.0"
 tree-sitter-java = "0.23.5"
+# Stretch grammars (C#, Kotlin, Swift) — same single-core constraint: each routes
+# through tree-sitter-language so `cargo tree` shows one tree-sitter core.
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-swift = "0.7.3"
 git2 = "0.21.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
