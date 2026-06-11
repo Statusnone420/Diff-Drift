@@ -1,6 +1,6 @@
 # Diff Drift Wiki
 
-Diff Drift is a local desktop reviewer for the code drift AI coding agents leave behind. It compares a git working tree against a chosen baseline (`HEAD`, the pinned trust point, a merge-base, or any rev), renders changed TS/TSX/JS/JSX as an AST-level drift view plus package.json dependency drift, and raises heuristic security flags for human review. A read-only `diff-drift check` command exposes the same analysis to scripts and agents.
+Diff Drift is a local desktop reviewer for the code drift AI coding agents leave behind. It compares a git working tree against a chosen baseline (`HEAD`, the pinned trust point, a merge-base, or any rev), renders supported source changes as an AST-level drift view plus package.json dependency drift, and raises heuristic security flags for human review. A read-only `diff-drift check` command exposes the same analysis to scripts and agents.
 
 This wiki is the handbook. The README stays short on purpose.
 
@@ -23,10 +23,10 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.3.1`.
+- Version: `0.3.2`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
-- Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs` files plus `package.json` dependency drift, against a selectable baseline.
+- Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`, `.rs`, `.go`, `.py`/`.pyi`, `.java`, `.cs`, `.kt`/`.kts`, and `.swift` files plus `package.json` dependency drift, against a selectable baseline. Heuristic flags are strongest for JS/TS and package drift.
 - Rule results are review prompts, not vulnerability verdicts.
 
 ## Source Copy

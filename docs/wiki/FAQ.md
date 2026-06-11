@@ -16,7 +16,7 @@ If a rule is consistently noisy in a way the [Rule Reference](Rule-Reference.md)
 
 Three reasons a changed file isn't rendered as nodes:
 
-- **Not a supported language.** Only `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` are parsed (plus `package.json` dependency drift). Other changed files count toward git drift but aren't analyzed.
+- **Not a supported language.** Diff Drift parses `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.rs`, `.go`, `.py`, `.pyi`, `.java`, `.cs`, `.kt`, `.kts`, and `.swift` files (plus `package.json` dependency drift). Other changed files count toward git drift and appear by path as "Other changed files", but they are not rendered as AST or dependency nodes.
 - **Type definitions.** `.d.ts` files are intentionally excluded.
 - **Too large.** Files over 2 MB are skipped before parsing and appear in the file list with the summary "Skipped — file too large to analyze". This is a denial-of-service guard for giant generated bundles; review those by other means.
 

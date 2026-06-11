@@ -6,7 +6,7 @@ This file is for AI agents and contributors working in this repo.
 
 ## Product Goal
 
-Diff Drift is the deterministic verifier in the AI coding loop: a local desktop reviewer for the drift agents leave behind. It compares a git working tree against a selectable baseline (`HEAD`, the trust point pinned by "Mark reviewed", a merge-base, or any rev), renders structural AST changes for TS/TSX/JS/JSX plus package.json dependency drift, supports per-node review with progress, and raises heuristic security flags for human review. A read-only `diff-drift check` CLI exposes the same analysis with severity exit codes for scripts and agent hooks.
+Diff Drift is the deterministic verifier in the AI coding loop: a local desktop reviewer for the drift agents leave behind. It compares a git working tree against a selectable baseline (`HEAD`, the trust point pinned by "Mark reviewed", a merge-base, or any rev), renders structural AST changes for supported source files plus package.json dependency drift, supports per-node review with progress, and raises heuristic security flags for human review. A read-only `diff-drift check` CLI exposes the same analysis with severity exit codes for scripts and agent hooks.
 
 The product test every change must strengthen: *"After an AI agent changes my repo, Diff Drift shows me what changed structurally, what looks risky, and what I need to review before I trust it."*
 
@@ -39,7 +39,7 @@ npm run test:e2e:tauri
 ## Architecture Map
 
 - `src-tauri/src/git.rs`: repo discovery, changed files (vs HEAD or any baseline commit), file contents at any rev.
-- `src-tauri/src/parse.rs`: TS/TSX/JS/JSX parsing (`Lang`).
+- `src-tauri/src/parse.rs`: supported source parsing (`Lang`) for TS/TSX/JS/JSX plus Rust, Go, Python, Java, C#, Kotlin, and Swift.
 - `src-tauri/src/diff.rs`: AST diffing and node IDs.
 - `src-tauri/src/rules.rs`: heuristic rule predicates.
 - `src-tauri/src/heuristics.rs`: rule walker and flag attachment.
@@ -57,7 +57,7 @@ npm run test:e2e:tauri
 
 - Make surgical changes. Do not refactor unrelated code.
 - Keep README short. Put details in `docs/wiki/`.
-- Keep UI wording honest about scope: changed TS/TSX/JS/JSX drift plus package.json dependency drift.
+- Keep UI wording honest about scope: structural drift for supported source languages plus package.json dependency drift; heuristic flags are strongest for JS/TS and package drift.
 - Treat flags as review prompts, not vulnerability verdicts.
 - Add Rust tests for rule, parser, diff, git, watcher, deps-diff, CLI, or report changes.
 - Update Playwright assertions when UI labels change.
@@ -67,7 +67,7 @@ npm run test:e2e:tauri
 
 ## Known Limitations
 
-- Analysis is heuristic and scoped to TS/TSX/JS/JSX drift plus package.json dependency drift.
+- Analysis is heuristic. Structural drift is available for supported source languages plus package.json dependency drift; most security rules are JS/TS and package-focused, with only language-neutral secret detection running across the newer language families.
 - Unsupported changed files can count as git drift but are not parsed as AST nodes.
 - Committed-range baselines treat renames as removed + added (no rename detection yet).
 - macOS is experimental and unsigned.
