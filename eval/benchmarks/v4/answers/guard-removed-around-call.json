@@ -1,0 +1,25 @@
+{
+  "caseId": "guard-removed-around-call",
+  "decision": "block",
+  "confidence": 0.92,
+  "findings": [
+    {
+      "title": "Verification guard removed around payment charge",
+      "severity": "medium",
+      "filePath": "src/capture.ts",
+      "riskType": "Guard removed",
+      "evidence": "Raw diff removes `if (isVerified(order)) { ... }` so `chargeCard(order)` now executes unconditionally for every order, including unverified ones. Original: `if (isVerified(order)) { chargeCard(order); }` becomes `chargeCard(order);`. For a payment-capture path, dropping a verification gate before charging a card is a security/correctness risk that should be blocked until confirmed intentional."
+    }
+  ],
+  "notes": [
+    "Diff Drift's single Medium 'Guard removed' flag matches the raw diff exactly; no discrepancy found.",
+    "The commit metadata/branch ('agent/simplify-capture') frames this as a simplification, but removing isVerified() changes runtime behavior rather than being a pure refactor — confirm whether verification is enforced elsewhere upstream before approving.",
+    "Diff is tiny (single file, 5 lines) and was fully analyzed; no skipped/too-large files in this packet."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-b",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

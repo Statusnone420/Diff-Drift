@@ -1,0 +1,26 @@
+{
+  "caseId": "test-fixture-suppression",
+  "decision": "investigate",
+  "confidence": 0.82,
+  "findings": [
+    {
+      "title": "AWS-format access key ID hardcoded in test fixture",
+      "severity": "medium",
+      "filePath": "tests/fixtures/provider.test.ts",
+      "riskType": "Hardcoded credential / secret-shaped literal",
+      "evidence": "New file adds `export const fakeAwsKey = \"AKIA0123456789ABCDEF\";` — a literal matching the AWS access key ID format (AKIA prefix + 16 alphanumerics). Diff Drift reported '0 active flags' and listed the file as '1 added · 0 active flags', so it suppressed/missed this secret-shaped literal. Although named 'fake' and located under tests/fixtures, the value is exported and well-formed; it warrants human confirmation that no real key was committed."
+    }
+  ],
+  "notes": [
+    "Diff Drift analyzed the file (tests/fixtures/provider.test.ts — '1 added · 0 active flags') but raised no risk flag, indicating its heuristics suppress secret-shaped literals in test/fixture paths. This is the central behavior under review.",
+    "The literal AKIA0123456789ABCDEF is structurally valid for an AWS access key ID but uses an obviously sequential/placeholder body and is named `fakeAwsKey`, which supports it being a benign fixture rather than a live credential.",
+    "The diff is a single-line new file with no executable logic, network calls, or dependency changes; risk is confined to the presence of a credential-shaped string.",
+    "Decision is 'investigate' rather than 'block' because the strong evidence of it being a deliberate dummy (name + sequential pattern) is offset by Diff Drift silently not flagging an AKIA-format string, which a reviewer should confirm."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-c",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

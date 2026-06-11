@@ -1,0 +1,19 @@
+{
+  "caseId": "noisy-benign-refactor",
+  "decision": "approve",
+  "confidence": 0.95,
+  "findings": [],
+  "notes": [
+    "The entire diff is confined to src/lib/format.ts and is a pure rename-and-reorder refactor with no behavioral change. `formatAmount` is renamed to `formatCurrency` and `padLabel` to `padColumnLabel`; the export statement is updated to match. The two functions swap order in the file.",
+    "The body of the currency formatter is unchanged in logic: it still divides cents by 100 and uses Intl.NumberFormat with the same DEFAULT_LOCALE ('en-US'), style 'currency', and currency argument. The only change is reformatting the options object across multiple lines.",
+    "No new dependencies, no network/filesystem/eval/dynamic-code constructs, no credential or secret handling, no changes to package.json or lockfiles are present in the diff.",
+    "Diff Drift reports 0 active flags and 1 changed file, which is consistent with the raw diff. No files were marked 'Skipped — file too large to analyze'.",
+    "Caveat: the diff renames exported symbols but the packet contains no other files, so I cannot verify that all call sites of `formatAmount`/`padLabel` were updated to the new names. This is a potential compile/runtime breakage risk but a correctness/build concern, not a security trust risk, and there is no evidence of it in the provided diff."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-b",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

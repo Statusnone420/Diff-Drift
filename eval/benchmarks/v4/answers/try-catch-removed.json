@@ -1,0 +1,25 @@
+{
+  "caseId": "try-catch-removed",
+  "decision": "investigate",
+  "confidence": 0.85,
+  "findings": [
+    {
+      "title": "try/catch removed from telemetry flush leaves push failures unhandled",
+      "severity": "medium",
+      "filePath": "src/flush.ts",
+      "riskType": "Error handling removed",
+      "evidence": "Raw diff removes `try { pushEvents(queue); } catch (err) { scheduleRetry(queue, err); }` and leaves a bare `pushEvents(queue);`. The catch previously invoked `scheduleRetry(queue, err)`, so this deletes retry-on-failure behavior, not just a passive log. Any throw from pushEvents now propagates uncaught and the queued events are dropped instead of being rescheduled."
+    }
+  ],
+  "notes": [
+    "Diff Drift flags this as Low severity; the evidence supports escalating to medium because the removed catch was not inert — it called scheduleRetry(queue, err), so the change silently drops the failure/retry path for telemetry events rather than merely removing a log statement.",
+    "The branch is named `agent/cleanup-flush`, framing this as a cleanup, but the deletion changes runtime behavior on the failure path; the commit/branch framing understates the impact.",
+    "Scope is small and contained: a single 4-line change to one function in src/flush.ts, with no other files touched. The Diff Drift report and raw diff agree on the exact change, so the factual basis is reliable."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-c",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

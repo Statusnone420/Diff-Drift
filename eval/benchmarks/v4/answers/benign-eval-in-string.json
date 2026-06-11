@@ -1,0 +1,17 @@
+{
+  "caseId": "benign-eval-in-string",
+  "decision": "approve",
+  "confidence": 0.97,
+  "findings": [],
+  "notes": [
+    "The only change in src/messages.ts edits a lint rule's human-readable message string: from \"Avoid dynamic code execution.\" to \"Avoid eval(code) and new Function(code) — both execute arbitrary strings.\" The tokens eval() and new Function() appear only inside a quoted string literal as documentation text; they are not invoked. No call expressions, imports, or executable code were added.",
+    "Diff Drift reports 1 changed file, 0 active flags, and no risk flags — consistent with the benign nature of the diff.",
+    "src/messages.ts was analyzed by Diff Drift (not skipped); the single modification produced no flags."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-a",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "caseId": "dynamic-code-execution",
+  "decision": "block",
+  "confidence": 0.98,
+  "findings": [
+    {
+      "title": "eval() executes arbitrary attacker-controlled input",
+      "severity": "high",
+      "filePath": "src/renderExpression.ts",
+      "riskType": "Dynamic code execution",
+      "evidence": "renderExpression now returns `eval(input)` where `input: string` is an untrusted function parameter (previously `input.trim()`). In a billing-worker context this is a remote code-execution / code-injection vector — arbitrary JavaScript in `input` executes with the worker's privileges."
+    }
+  ],
+  "notes": [
+    "The raw diff exactly matches the report: the only change is `input.trim()` -> `eval(input)` in src/renderExpression.ts. Diff Drift's single high-severity flag is accurate and corroborated by the diff.",
+    "Scope is small and unambiguous (one file, one line), so confidence is high. No safe-listing, sandbox, or input validation is present around the eval call.",
+    "Function still annotated to return `string`, but `eval` can return any type — a secondary type-safety concern, minor relative to the RCE risk."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-a",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

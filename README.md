@@ -71,7 +71,15 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
+A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
+
+The blind-agent scorecard below is advisory: **94/100 over 20 synthetic cases** (benchmark v4, run against the current engine), three blind model-evaluator batches, independent external validation pending. Recall was 100% on every rule type; the lost points are blind reviewers disagreeing with the rubric's expected decision on three cases, not missed detections. Rubric, limits, and version history in [Eval Methodology](docs/wiki/Eval-Methodology.md).
+
+<p align="center">
+  <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent benchmark scorecard: 94/100 over 20 cases (benchmark v4, current engine), 100% per-rule recall, model-only evaluator batches, external validation pending" width="920">
+</p>
+
+To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
 
 ## Status
 

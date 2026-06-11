@@ -1,0 +1,25 @@
+{
+  "caseId": "regex-anchors-removed",
+  "decision": "block",
+  "confidence": 0.95,
+  "findings": [
+    {
+      "title": "Webhook signature regex lost start/end anchors, allowing partial matches to pass validation",
+      "severity": "high",
+      "filePath": "src/verifySignature.ts",
+      "riskType": "Loose regex pattern / authentication bypass",
+      "evidence": "Pattern changed from /^sha256=[a-f0-9]{64}$/ to /sha256=[a-f0-9]{64}/ (raw diff line 6-7). signaturePattern.test(header) in hasValidShape() now matches any header that merely contains a sha256= hex substring anywhere, so attacker-controlled prefixes/suffixes (e.g. extra chars, extra hex digits, or junk wrapped around a forged token) pass the shape check that gates signature verification."
+    }
+  ],
+  "notes": [
+    "The Diff Drift report correctly identifies the single high-severity flag and matches the raw diff exactly; only one file (src/verifySignature.ts) changed.",
+    "No file was marked 'Skipped — file too large to analyze' in this packet.",
+    "The function is named hasValidShape, suggesting it is a shape/format precheck; even so, removing anchors weakens an authentication-related guard and should be restored to /^sha256=[a-f0-9]{64}$/ before trust."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-c",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

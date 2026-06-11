@@ -1,0 +1,33 @@
+{
+  "caseId": "package-dependency-script-drift",
+  "decision": "investigate",
+  "confidence": 0.85,
+  "findings": [
+    {
+      "title": "Dependency 'ghost-payments-sdk' added but absent from lockfile (possible hallucinated package)",
+      "severity": "high",
+      "filePath": "package.json",
+      "riskType": "Dependency not in lockfile",
+      "evidence": "raw diff adds \"ghost-payments-sdk\": \"^1.0.0\" to dependencies. Report flags it as not present in the lockfile. The name is suspicious for a payment SDK on a checkout-service and could be a hallucinated/typosquatted package, which would cause arbitrary install-time code or a dependency-confusion vector. Existence and provenance must be confirmed before trust."
+    },
+    {
+      "title": "New postinstall script executes scripts/bootstrap.js during install",
+      "severity": "medium",
+      "filePath": "package.json",
+      "riskType": "npm script changed",
+      "evidence": "raw diff adds \"postinstall\": \"node scripts/bootstrap.js\". postinstall runs automatically on every npm install with no opt-in. The referenced scripts/bootstrap.js is not included in this diff, so its behavior is unreviewable; combined with the unverified new dependency this warrants investigation before merge."
+    }
+  ],
+  "notes": [
+    "Only one file (package.json) changed; the Diff Drift report and raw diff are consistent with each other (2 additions, 2 flags).",
+    "No lockfile (package-lock.json / yarn.lock / pnpm-lock.yaml) appears in the diff, so the 'not in lockfile' claim cannot be independently verified from the packet — but the absence of any lockfile update for a newly added dependency is itself a reason to investigate.",
+    "scripts/bootstrap.js is referenced by the new postinstall script but its contents are not part of this diff, so the actual install-time behavior could not be reviewed.",
+    "Decision is 'investigate' rather than 'block' because nothing in the reviewable diff is provably malicious; the risk is unverified provenance (package existence, lockfile, bootstrap script contents) that a reviewer should confirm before trusting the change."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-b",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

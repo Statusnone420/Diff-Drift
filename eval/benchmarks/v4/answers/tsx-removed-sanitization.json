@@ -1,0 +1,26 @@
+{
+  "caseId": "tsx-removed-sanitization",
+  "decision": "block",
+  "confidence": 0.9,
+  "findings": [
+    {
+      "title": "HTML sanitization removed from rendered comment body",
+      "severity": "high",
+      "filePath": "src/components/CommentBody.tsx",
+      "riskType": "Removed sanitization",
+      "evidence": "Diff removes `const safe = sanitizeHtml(raw);` and changes the render from `{safe}` to `{raw}`: user-controlled comment input is now rendered without sanitization. This is a stored/reflected XSS vector for community-forum comments."
+    }
+  ],
+  "notes": [
+    "Diff Drift flagged this as Low severity; the evidence (untrusted comment `raw` rendered after deleting the only sanitization call) supports escalation to high — removed input sanitization on attacker-controlled forum content is a concrete injection risk.",
+    "Note: in idiomatic React, `{raw}` as a text child is auto-escaped by JSX and would NOT execute HTML/scripts; true XSS would require dangerouslySetInnerHTML. The original code's use of `sanitizeHtml` before rendering strongly implies the intent was to render HTML (and possibly that a sibling/consumer uses the value as markup), so removing it still represents a deliberate loss of a security control worth blocking on. Without the surrounding code, exact exploitability can't be confirmed from the packet alone.",
+    "Avatar.tsx change is indentation-only (whitespace on the return line); report correctly classifies it as formatting-only with 0 active flags — benign.",
+    "Neither packet file shows where `sanitizeHtml` is imported from or whether `raw` originates from untrusted input, but the component name (CommentBody) and project (community-forum) make untrusted user content the strongly likely source."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-c",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}

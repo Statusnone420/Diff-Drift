@@ -47,9 +47,12 @@ against a memoized parse) would recover most of it without touching detection �
 ## Blind-agent scorecard
 
 The deterministic `eval:engine` gate covers all 20 cases through the real binary (20/20). The
-advisory blind-agent scorecard (`eval:score-agent`) is **not** re-run here: a faithful rescore
-needs fresh *blind* model answers, and generating them inside the change that adds the cases
-would defeat the blindness — left pending, same posture as the v1→v3 history.
+advisory blind-agent scorecard (`eval:score-agent`) was re-run blind against this engine as
+**benchmark v4**: all 20 packets regenerated from the engine-v2 binary, fresh model answers
+produced from packet-only context, the rubric and prompt frozen and byte-identical across the run.
+It scored **94/100** with 100% per-rule recall — the lost points are reviewer-vs-rubric decision
+disagreements on three cases, not missed detections. Per-case gap analysis in
+[Eval Methodology](wiki/Eval-Methodology.md#benchmark-versions).
 
 ## Known limits (out of lane by design)
 

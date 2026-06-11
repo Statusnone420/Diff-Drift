@@ -1,0 +1,25 @@
+{
+  "caseId": "disabled-tls-verification",
+  "decision": "block",
+  "confidence": 0.97,
+  "findings": [
+    {
+      "title": "HTTPS agent disables certificate validation",
+      "severity": "high",
+      "filePath": "src/httpClient.ts",
+      "riskType": "Disabled TLS verification",
+      "evidence": "raw-git-diff.patch adds `rejectUnauthorized: false` to the exported `agentOptions` object in src/httpClient.ts (lines 6-9). This disables certificate validation for outbound HTTPS, exposing all traffic through this agent to man-in-the-middle attacks. The branch name `agent/fix-staging-webhooks` suggests a staging convenience hack, but the change is unconditional and ships to all environments with no guard."
+    }
+  ],
+  "notes": [
+    "The Diff Drift report accurately matches the raw diff: a single one-line addition to agentOptions. No discrepancy or unflagged change found across the packet.",
+    "Only one file changed and it was fully analyzed; nothing was skipped as too large.",
+    "`rejectUnauthorized` belongs on the TLS connection/agent options; placing it on this exported `agentOptions` object is meaningful only if the object is passed to an https.Agent or request — the surrounding usage is not shown in the packet but the security intent (disabling validation) is unambiguous."
+  ],
+  "evaluator": {
+    "id": "claude-opus-4-8-v4-batch-a",
+    "kind": "model",
+    "external": false,
+    "note": "Benchmark v4 blind run against the engine-v2 binary; packet-only context."
+  }
+}
