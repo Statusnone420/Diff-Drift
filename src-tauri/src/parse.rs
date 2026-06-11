@@ -59,17 +59,23 @@ impl Lang {
     }
 }
 
+/// The tree-sitter grammar for a language. The TSX grammar is selected for
+/// `.tsx` (JSX is a parse ERROR under plain TypeScript); the JavaScript grammar
+/// handles JSX natively for `.js/.jsx/.mjs/.cjs`.
+pub fn grammar(lang: Lang) -> tree_sitter::Language {
+    match lang {
+        Lang::Ts => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        Lang::Js | Lang::Jsx => tree_sitter_javascript::LANGUAGE.into(),
+    }
+}
+
 /// Parse a source string into the top-level `Parsed` nodes. The TSX grammar is
 /// selected for `.tsx` (JSX is a parse ERROR under plain TypeScript); the
 /// JavaScript grammar handles JSX natively for `.js/.jsx/.mjs/.cjs`.
 pub fn parse_file(source: &str, lang: Lang) -> Vec<Parsed> {
     let mut parser = Parser::new();
-    let language = match lang {
-        Lang::Ts => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-        Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX,
-        Lang::Js | Lang::Jsx => tree_sitter_javascript::LANGUAGE,
-    };
-    if parser.set_language(&language.into()).is_err() {
+    if parser.set_language(&grammar(lang)).is_err() {
         return Vec::new();
     }
     let Some(tree) = parser.parse(source, None) else {

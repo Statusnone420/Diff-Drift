@@ -2,6 +2,18 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- Engine v2 — structural rule matching over tree-sitter queries. `eval`, `new Function`, `rejectUnauthorized: false`, broadened CORS (incl. `origin: ['*']`), and constant-falsy guards match real syntax, so patterns in strings/comments don't flag and reformatting can't evade. Closes the `if (0)` guard bypass.
+- Differential rules a snapshot scanner can't express: a regex that lost its anchors or length bound (not just a widening to `/.*/`), a call that lost its `if` guard, a `try/catch` removed from surviving calls. Crypto-downgrade and removed-sanitization compare real callee names, so a comment can't mask or fake a removal.
+- Five engine eval cases for the new behaviors; engine eval now 20/20. Adversarially hardened over three red-team rounds — receipts and known limits in `docs/engine-v2-scorecard.md`.
+
+### Fixed
+
+- Quieted the drift-listener `console.error` path in the renderer.
+
 ## [0.3.0] — 2026-06-10
 
 ### Added

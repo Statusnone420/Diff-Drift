@@ -169,8 +169,8 @@ export default function App() {
       .then((fn) => {
         unlisten = fn;
       })
-      .catch((e) => {
-        console.error("Drift listener failed to attach:", e);
+      .catch(() => {
+        // Live updates degrade to manual refresh; the session itself still works.
       });
     return () => {
       cancelled = true;

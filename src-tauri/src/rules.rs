@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::model::{AstNode, NodeState, Severity};
+use crate::parse::Lang;
 
 /// Per-file context a rule may consult.
 pub struct RuleCtx {
@@ -16,6 +17,8 @@ pub struct RuleCtx {
     pub deps: HashSet<String>,
     /// Whether this file looks like a test/fixture (suppresses noisy rules).
     pub is_test_file: bool,
+    /// The file's language, for structural (tree-sitter query) matching.
+    pub lang: Lang,
 }
 
 pub struct Finding {
@@ -62,6 +65,10 @@ impl RuleRegistry {
                 Box::new(RemovedSanitize),
                 Box::new(PermissiveLogging),
                 Box::new(UnvettedPackage),
+                // Differential rules (before-vs-after comparisons) sit last so
+                // they never shadow a higher-confidence single-state flag.
+                Box::new(GuardRemoved),
+                Box::new(ErrorHandlingRemoved),
             ],
         }
     }
@@ -132,19 +139,36 @@ impl Rule for HardcodedSecret {
     }
 }
 
-/// CWE-95 — code injection via eval.
+/// CWE-95 — code injection via eval. Structural: matches a real call to `eval`
+/// (bare or via member like `window.eval`), never the word inside a string or
+/// comment. Falls back to the text pattern when the snippet can't be parsed.
 struct EvalCall;
+
+const EVAL_CALL_QUERY: &str = r#"
+(call_expression function: (identifier) @callee (#eq? @callee "eval"))
+(call_expression
+  function: (member_expression property: (property_identifier) @prop (#eq? @prop "eval")))
+"#;
+
 impl Rule for EvalCall {
     fn id(&self) -> &'static str {
         "eval-call"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\beval\s*\(").unwrap());
         let after = joined(&node.after);
-        if RE.is_match(&after) && !RE.is_match(&joined(&node.before)) {
+        // Cheap pre-filter: no `eval` text means no parse needed.
+        if !after.contains("eval") {
+            return None;
+        }
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, EVAL_CALL_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -155,18 +179,32 @@ impl Rule for EvalCall {
     }
 }
 
-/// CWE-95 — code injection via the Function constructor.
+/// CWE-95 — code injection via the Function constructor. Structural: a real
+/// `new Function(…)` expression, not the words in a string or comment.
 struct FnConstructor;
+
+const FN_CONSTRUCTOR_QUERY: &str = r#"
+(new_expression constructor: (identifier) @ctor (#eq? @ctor "Function"))
+"#;
+
 impl Rule for FnConstructor {
     fn id(&self) -> &'static str {
         "fn-constructor"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"new\s+Function\s*\(").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let after = joined(&node.after);
+        if !after.contains("Function") {
+            return None;
+        }
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, FN_CONSTRUCTOR_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
@@ -207,8 +245,17 @@ impl Rule for ChildProcess {
     }
 }
 
-/// CWE-295 — disabled TLS certificate validation.
+/// CWE-295 — disabled TLS certificate validation. Structural: an object
+/// property `rejectUnauthorized` (identifier or quoted) whose value is the
+/// `false` literal — reformatting and quoting can't evade, strings can't
+/// false-fire.
 struct TlsRejectFalse;
+
+const TLS_REJECT_QUERY: &str = r#"
+(pair key: (property_identifier) @key (#eq? @key "rejectUnauthorized") value: (false))
+(pair key: (string (string_fragment) @skey (#eq? @skey "rejectUnauthorized")) value: (false))
+"#;
+
 impl Rule for TlsRejectFalse {
     fn id(&self) -> &'static str {
         "tls-reject-false"
@@ -219,7 +266,15 @@ impl Rule for TlsRejectFalse {
         }
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"rejectUnauthorized\s*:\s*false").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let after = joined(&node.after);
+        if !after.contains("rejectUnauthorized") {
+            return None;
+        }
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, TLS_REJECT_QUERY)
+                .unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Disabled TLS verification",
@@ -253,8 +308,23 @@ impl Rule for EnvTlsReject {
     }
 }
 
-/// CWE-942 — overly permissive CORS.
+/// CWE-942 — overly permissive CORS. Structural: an `origin` property whose
+/// value is the `true` literal or the `"*"` string.
 struct BroadenedCors;
+
+const CORS_QUERY: &str = r#"
+(pair key: (property_identifier) @key (#eq? @key "origin") value: (true))
+(pair key: (property_identifier) @key (#eq? @key "origin")
+  value: (string (string_fragment) @v (#eq? @v "*")))
+(pair key: (property_identifier) @key (#eq? @key "origin")
+  value: (array (string (string_fragment) @av (#eq? @av "*"))))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin")) value: (true))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin"))
+  value: (string (string_fragment) @sv (#eq? @sv "*")))
+(pair key: (string (string_fragment) @skey (#eq? @skey "origin"))
+  value: (array (string (string_fragment) @asv (#eq? @asv "*"))))
+"#;
+
 impl Rule for BroadenedCors {
     fn id(&self) -> &'static str {
         "broadened-cors"
@@ -267,10 +337,14 @@ impl Rule for BroadenedCors {
             LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
         static TRUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
         let after = joined(&node.after);
-        let before = joined(&node.before);
-        let now = WILDCARD.is_match(&after) || TRUE.is_match(&after);
-        let was = WILDCARD.is_match(&before) || TRUE.is_match(&before);
-        if now && !was {
+        if !after.contains("origin") {
+            return None;
+        }
+        let hit = |src: &str| {
+            crate::structural::query_hit(src, ctx.lang, CORS_QUERY)
+                .unwrap_or_else(|| WILDCARD.is_match(src) || TRUE.is_match(src))
+        };
+        if hit(&after) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::High,
                 "Broadened CORS",
@@ -350,18 +424,137 @@ impl Rule for SameSiteWeakened {
     }
 }
 
-/// Validation regex widened to a catch-all.
+/// Validation regex loosened. Differential: for Modified nodes the before and
+/// after regex literals are extracted structurally and compared pairwise —
+/// widening to a catch-all, dropping anchors, or unbounding a quantifier all
+/// flag, with the description naming exactly what weakened. Added nodes keep
+/// the catch-all check (no before to compare).
 struct LooseRegex;
+
+const REGEX_LITERAL_QUERY: &str = "(regex) @re";
+
+fn regex_literals(src: &str, lang: Lang) -> Option<Vec<String>> {
+    crate::structural::capture_texts(src, lang, REGEX_LITERAL_QUERY, "re")
+}
+
+/// The pattern body of a regex literal: `/pat/flags` → `pat`.
+fn regex_pattern(lit: &str) -> &str {
+    let body = lit.strip_prefix('/').unwrap_or(lit);
+    match body.rfind('/') {
+        Some(i) => &body[..i],
+        None => body,
+    }
+}
+
+fn is_catch_all_pattern(pat: &str) -> bool {
+    matches!(
+        pat,
+        ".*" | ".+"
+            | "^.*$" | "^.+$"
+            | "[\\s\\S]*" | "[\\s\\S]+"
+            | "^[\\s\\S]*$" | "^[\\s\\S]+$"
+            | "[^]*" | "[^]+"
+            | "^[^]*$" | "^[^]+$"
+    )
+}
+
+fn has_anchors(pat: &str) -> bool {
+    pat.starts_with('^') || (pat.ends_with('$') && !pat.ends_with("\\$"))
+}
+
+/// A quantifier with an upper limit (`{n}` or `{n,m}`). `{n,}` and `{0,}` are
+/// unbounded — losing the upper bound is a weakening, so they don't count.
+fn has_bounded_quantifier(pat: &str) -> bool {
+    static BOUND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+(,\d+)?\}").unwrap());
+    BOUND.is_match(pat)
+}
+
+/// An unbounded quantifier: `*`, `+`, or `{n,}` with no upper limit.
+fn has_unbounded_quantifier(pat: &str) -> bool {
+    static OPEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\d+,\}").unwrap());
+    pat.contains('*') || pat.contains('+') || OPEN.is_match(pat)
+}
+
+/// What weakened between two versions of the same regex literal, if anything.
+fn regex_weakening(before: &str, after: &str) -> Option<String> {
+    let (b, a) = (regex_pattern(before), regex_pattern(after));
+    if b == a {
+        return None;
+    }
+    if is_catch_all_pattern(a) && !is_catch_all_pattern(b) {
+        return Some(format!(
+            "widened to {after} — any string now passes validation"
+        ));
+    }
+    if has_anchors(b) && !has_anchors(a) {
+        return Some(format!(
+            "lost its anchors (was {before}, now {after}) — partial matches now pass"
+        ));
+    }
+    if has_bounded_quantifier(b) && !has_bounded_quantifier(a) && has_unbounded_quantifier(a) {
+        return Some(format!(
+            "lost its length bound (was {before}, now {after}) — unbounded input now passes"
+        ));
+    }
+    None
+}
+
 impl Rule for LooseRegex {
     fn id(&self) -> &'static str {
         "loose-regex"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) || node.kind != "VariableDeclaration" {
             return None;
         }
         let after = joined(&node.after);
+        // Cheap pre-filter: a widened/weakened regex must appear in the after
+        // version, which requires a `/` delimiter.
+        if !after.contains('/') {
+            return None;
+        }
         let before = joined(&node.before);
+        // Differential path: compare only the literals that actually changed.
+        // A literal present in both versions (even at a moved position) is
+        // unchanged, so set difference — not positional pairing — avoids
+        // misreading a reorder as a weakening.
+        if node.state == NodeState::Modified {
+            if let (Some(bl), Some(al)) = (
+                regex_literals(&before, ctx.lang),
+                regex_literals(&after, ctx.lang),
+            ) {
+                let added: Vec<&String> = al.iter().filter(|a| !bl.contains(a)).collect();
+                let removed: Vec<&String> = bl.iter().filter(|b| !al.contains(b)).collect();
+                // A newly introduced catch-all is a widening — but only if the
+                // node wasn't already catch-all (catch-all → catch-all is no
+                // new weakening).
+                let before_had_catch_all =
+                    bl.iter().any(|b| is_catch_all_pattern(regex_pattern(b)));
+                if !before_had_catch_all {
+                    for a in &added {
+                        if is_catch_all_pattern(regex_pattern(a)) {
+                            return finding(
+                                Severity::High,
+                                "Loose regex pattern",
+                                format!("Validation regex was widened to {a} — any string now passes validation."),
+                            );
+                        }
+                    }
+                }
+                // Exactly one literal edited: compare that single pair.
+                if removed.len() == 1 && added.len() == 1 {
+                    if let Some(weakened) = regex_weakening(removed[0], added[0]) {
+                        return finding(
+                            Severity::High,
+                            "Loose regex pattern",
+                            format!("Validation regex {weakened}."),
+                        );
+                    }
+                }
+                return None;
+            }
+        }
+        // Added nodes (and structural-parse fallback): catch-all in after, none before.
         if let Some(rx) = permissive_regex(&after) {
             if before.is_empty() || permissive_regex(&before).is_none() {
                 return finding(
@@ -378,22 +571,76 @@ impl Rule for LooseRegex {
 }
 
 /// CWE-347 — signature verification replaced by a non-verifying decode/parse.
+/// Structural: compares the actual callee names (bare or member calls) between
+/// before and after, so `verify` in a string or comment can't confuse it.
 struct VerifyToDecode;
+
+/// Every call's callee name: `verify(…)` and `jwt.verify(…)` both capture `verify`.
+const CALLEE_QUERY: &str = r#"
+(call_expression function: (identifier) @callee)
+(call_expression function: (member_expression property: (property_identifier) @callee))
+"#;
+
+fn callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
+    crate::structural::capture_texts(src, lang, CALLEE_QUERY, "callee")
+}
+
+fn callee_names(src: &str, lang: Lang) -> Option<HashSet<String>> {
+    callee_list(src, lang).map(|names| names.into_iter().collect())
+}
+
+fn count_of(names: &[String], callee: &str) -> usize {
+    names.iter().filter(|n| *n == callee).count()
+}
+
 impl Rule for VerifyToDecode {
     fn id(&self) -> &'static str {
         "verify-to-decode"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if node.state != NodeState::Modified {
             return None;
         }
-        static VERIFY: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\b(verify|sign)\s*\(").unwrap());
-        static DECODE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\b(decode|parse)\s*\(").unwrap());
-        let after = joined(&node.after);
         let before = joined(&node.before);
-        if VERIFY.is_match(&before) && DECODE.is_match(&after) && !VERIFY.is_match(&after) {
+        // Cheap pre-filter: the downgrade requires a verify/sign call in the
+        // before version — skip the structural parse otherwise.
+        if !before.contains("verify") && !before.contains("sign") {
+            return None;
+        }
+        let after = joined(&node.after);
+        let fired = match (callee_names(&before, ctx.lang), callee_names(&after, ctx.lang)) {
+            (Some(b), Some(a)) => {
+                // `verify*` covers async/library variants (`verifyAsync`); for
+                // signing, only the exact crypto names — `signIn`/`signOut`/
+                // `signal` start with "sign" but aren't signature operations.
+                let verifies = |s: &HashSet<String>| {
+                    s.iter().any(|n| {
+                        n.starts_with("verify") || n == "sign" || n == "signAsync" || n == "signSync"
+                    })
+                };
+                // `decode*` (decodeJwt, decodeAsync) counts; bare `parse` counts
+                // only as an exact name, never the generic `parseInt`/`parseFloat`.
+                let decodes = |s: &HashSet<String>| {
+                    s.iter()
+                        .any(|n| n.starts_with("decode") || n == "parse" || n == "parseJwt" || n == "parseToken")
+                };
+                // Only a downgrade if the non-verifying decode/parse is NEW —
+                // code that already decoded before isn't regressing here.
+                verifies(&b) && !verifies(&a) && decodes(&a) && !decodes(&b)
+            }
+            _ => {
+                static VERIFY: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\b(verify|sign)\w*\s*\(").unwrap());
+                // `decode*` or exactly `parse(` — never `parseInt(`/`parseFloat(`.
+                static DECODE: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r"\b(decode\w*|parse)\s*\(").unwrap());
+                VERIFY.is_match(&before)
+                    && !VERIFY.is_match(&after)
+                    && DECODE.is_match(&after)
+                    && !DECODE.is_match(&before)
+            }
+        };
+        if fired {
             return finding(
                 Severity::Medium,
                 "Crypto downgrade",
@@ -404,42 +651,89 @@ impl Rule for VerifyToDecode {
     }
 }
 
-/// A guard clause neutralised to a constant `if (false)`.
+/// A guard clause neutralised to a constant-falsy condition. Structural:
+/// `if (false)`, `if (0)`, `if (null)`, and `if (undefined)` all match —
+/// closing the literal-`false`-only gap of the old text pattern.
 struct RemovedIfGuard;
+
+// The condition is captured with a wildcard and the falsy check happens in
+// Rust: `undefined` is a dedicated node kind in the TS grammar but a plain
+// identifier in the JS grammar, so naming node kinds here would not compile
+// across both.
+const IF_CONDITION_QUERY: &str = r#"
+(if_statement condition: (parenthesized_expression (_) @cond))
+"#;
+
+fn has_const_falsy_guard(src: &str, lang: Lang) -> Option<bool> {
+    let conds = crate::structural::capture_texts(src, lang, IF_CONDITION_QUERY, "cond")?;
+    Some(
+        conds
+            .iter()
+            .any(|c| matches!(c.trim(), "false" | "0" | "null" | "undefined")),
+    )
+}
+
 impl Rule for RemovedIfGuard {
     fn id(&self) -> &'static str {
         "removed-if-guard"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
-        if node.state != NodeState::Modified || node.kind != "IfStatement" {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        // Any Modified node qualifies: exported functions aren't split into
+        // body-level child nodes, so the neutralised `if` may sit anywhere in
+        // the node's subtree. Structural matching keeps this precise.
+        if node.state != NodeState::Modified {
             return None;
         }
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"if\s*\(\s*false\s*\)").unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let hit = |src: &str| {
+            has_const_falsy_guard(src, ctx.lang).unwrap_or_else(|| RE.is_match(src))
+        };
+        if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
                 Severity::Low,
                 "Disabled guard",
-                "A guard condition was replaced with `if (false)` — the check no longer runs.",
+                "A guard condition was replaced with a constant-falsy value — the check no longer runs.",
             );
         }
         None
     }
 }
 
-/// A sanitization / validation call removed outright.
+/// A sanitization / validation call removed outright. Structural: compares the
+/// actual callee names, so the words in strings or comments neither flag nor
+/// mask. Catches wrapper-stripping too (`save(sanitize(x))` → `save(x)`).
 struct RemovedSanitize;
+
+fn has_sanitizer_callee(names: &HashSet<String>) -> bool {
+    names.iter().any(|n| {
+        n.rsplit('.').next().is_some_and(|last| {
+            last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
+        })
+    })
+}
+
 impl Rule for RemovedSanitize {
     fn id(&self) -> &'static str {
         "removed-sanitize"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         static RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"\b(sanitize|escape|validate)\w*\s*\(").unwrap());
+        let before = joined(&node.before);
+        // Cheap pre-filter: the call must have existed in the before version.
+        if !before.contains("sanitize") && !before.contains("escape") && !before.contains("validate")
+        {
+            return None;
+        }
+        let after = joined(&node.after);
+        let had = |src: &str| {
+            callee_names(src, ctx.lang)
+                .map(|n| has_sanitizer_callee(&n))
+                .unwrap_or_else(|| RE.is_match(src))
+        };
         let fired = match node.state {
-            NodeState::Removed => RE.is_match(&joined(&node.before)),
-            NodeState::Modified => {
-                RE.is_match(&joined(&node.before)) && !RE.is_match(&joined(&node.after))
-            }
+            NodeState::Removed => had(&before),
+            NodeState::Modified => had(&before) && !had(&after),
             _ => false,
         };
         if fired {
@@ -450,6 +744,147 @@ impl Rule for RemovedSanitize {
             );
         }
         None
+    }
+}
+
+/// Differential: a call that ran behind an `if` guard before the change now
+/// runs unconditionally. Only a diff-native engine can express this — snapshot
+/// scanners see nothing wrong with the after state.
+struct GuardRemoved;
+
+const IF_CONSEQUENCE_QUERY: &str = "(if_statement consequence: (_) @cons)";
+
+/// Callee names inside `if` consequences, with multiplicity. Nested guards can
+/// count a call more than once (outer and inner consequence both capture it),
+/// so callers compare with `>=` — erring toward "still guarded", never toward
+/// a false flag.
+fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
+    let consequences =
+        crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")?;
+    let mut guarded = Vec::new();
+    for cons in &consequences {
+        if let Some(names) = callee_list(cons, lang) {
+            guarded.extend(names);
+        }
+    }
+    Some(guarded)
+}
+
+/// An `if` consequence that is purely an early exit (`return`/`throw`/`break`/
+/// `continue`), i.e. a guard clause. Hoisting a wrapping `if` into an inverted
+/// guard clause is the most common guard refactor and must not read as a
+/// removed guard.
+fn is_guard_clause(consequence: &str) -> bool {
+    let body = consequence.trim().trim_start_matches('{').trim();
+    ["return", "throw", "break", "continue"].iter().any(|kw| {
+        // Whole keyword, not an identifier prefix (`returnStatus`, `throwError`).
+        body.strip_prefix(kw).is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+        })
+    })
+}
+
+fn guard_clause_count(src: &str, lang: Lang) -> usize {
+    crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")
+        .map(|cs| cs.iter().filter(|c| is_guard_clause(c)).count())
+        .unwrap_or(0)
+}
+
+impl Rule for GuardRemoved {
+    fn id(&self) -> &'static str {
+        "guard-removed"
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if node.state != NodeState::Modified {
+            return None;
+        }
+        let before = joined(&node.before);
+        // Cheap pre-filter: no `if` before means nothing could have been guarded.
+        if !before.contains("if") {
+            return None;
+        }
+        let guarded_before = guarded_callee_list(&before, ctx.lang)?;
+        if guarded_before.is_empty() {
+            return None;
+        }
+        let after = joined(&node.after);
+        // If the change introduced an early-exit guard clause (`if (!ok) return`),
+        // the protection was very likely converted, not removed. Suppress —
+        // the dominant false positive for this rule.
+        if guard_clause_count(&after, ctx.lang) > guard_clause_count(&before, ctx.lang) {
+            return None;
+        }
+        let all_before = callee_list(&before, ctx.lang)?;
+        let guarded_after = guarded_callee_list(&after, ctx.lang)?;
+        let all_after = callee_list(&after, ctx.lang)?;
+        // Every before call site was guarded; at least one after call site isn't.
+        let escaped = guarded_before.iter().find(|c| {
+            count_of(&guarded_before, c) >= count_of(&all_before, c)
+                && count_of(&all_after, c) > count_of(&guarded_after, c)
+        })?;
+        finding(
+            Severity::Medium,
+            "Guard removed",
+            format!(
+                "`{escaped}(…)` ran behind a guard before this change and now runs unconditionally — confirm the check wasn't load-bearing."
+            ),
+        )
+    }
+}
+
+/// Differential: a `try { … }` that wrapped calls before the change is gone
+/// while the calls remain.
+struct ErrorHandlingRemoved;
+
+const TRY_QUERY: &str = "(try_statement) @try";
+
+impl Rule for ErrorHandlingRemoved {
+    fn id(&self) -> &'static str {
+        "removed-try-catch"
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if node.state != NodeState::Modified {
+            return None;
+        }
+        let before = joined(&node.before);
+        if !before.contains("try") {
+            return None;
+        }
+        let after = joined(&node.after);
+        let tries_before =
+            crate::structural::capture_texts(&before, ctx.lang, TRY_QUERY, "try")?;
+        if tries_before.is_empty() {
+            return None;
+        }
+        let tries_after = crate::structural::capture_texts(&after, ctx.lang, TRY_QUERY, "try")?;
+        if !tries_after.is_empty() {
+            return None;
+        }
+        // try/catch refactored to a promise `.catch(…)` chain still handles
+        // errors — not a removal.
+        if let Some(after_callees) = callee_names(&after, ctx.lang) {
+            if after_callees.contains("catch") {
+                return None;
+            }
+        }
+        // The calls that were inside the try must still exist after.
+        let mut wrapped = HashSet::new();
+        for t in &tries_before {
+            if let Some(names) = callee_names(t, ctx.lang) {
+                wrapped.extend(names);
+            }
+        }
+        let all_after = callee_names(&after, ctx.lang)?;
+        let survivor = wrapped.iter().find(|c| all_after.contains(*c))?;
+        finding(
+            Severity::Low,
+            "Error handling removed",
+            format!(
+                "The try/catch around `{survivor}(…)` was removed — failures here are now unhandled."
+            ),
+        )
     }
 }
 
@@ -625,12 +1060,14 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         }
     }
     fn test_ctx() -> RuleCtx {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            lang: Lang::Ts,
         }
     }
 
@@ -733,6 +1170,551 @@ mod tests {
                 &ctx()
             )
             .is_some());
+    }
+
+    #[test]
+    fn eval_structural_catches_text_evasions() {
+        // Forms the old text pattern missed: optional chaining, member calls.
+        for src in ["eval?.(payload);", "window.eval(payload);", "globalThis.eval(payload);"] {
+            assert!(
+                EvalCall
+                    .check(
+                        &node("ExpressionStatement", NodeState::Added, &[], &[src]),
+                        &ctx()
+                    )
+                    .is_some(),
+                "structural match should catch: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_ports_catch_text_evasions() {
+        // Quoted object keys — the old `key\s*:` patterns never matched these.
+        assert!(TlsRejectFalse
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["request({ \"rejectUnauthorized\": false });"]
+                ),
+                &ctx()
+            )
+            .is_some());
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ \"origin\": \"*\" }));"]
+                ),
+                &ctx()
+            )
+            .is_some());
+        // Constant-falsy guards beyond the literal `false`.
+        for cond in ["0", "null", "undefined"] {
+            let after = format!("if ({cond}) {{ audit(); }}");
+            assert!(
+                RemovedIfGuard
+                    .check(
+                        &node(
+                            "IfStatement",
+                            NodeState::Modified,
+                            &["if (isAdmin(user)) { audit(); }"],
+                            &[&after]
+                        ),
+                        &ctx()
+                    )
+                    .is_some(),
+                "constant-falsy guard `if ({cond})` must flag"
+            );
+        }
+        // `verify` surviving only inside a comment must not mask the downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "ReturnStatement",
+                    NodeState::Modified,
+                    &["return jwt.verify(token, key);"],
+                    &["// verify(token) was slow\nreturn jwt.decode(token);"]
+                ),
+                &ctx()
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn structural_ports_ignore_strings_and_comments() {
+        assert!(FnConstructor
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const tip = \"avoid new Function(code)\";"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        assert!(TlsRejectFalse
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const note = 'never set rejectUnauthorized: false in prod';"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["// do NOT use origin: \"*\" here\nconfigureCors(allowlist);"]
+                ),
+                &ctx()
+            )
+            .is_none());
+        // A live condition whose BODY merely mentions `if (false)` in a string.
+        assert!(RemovedIfGuard
+            .check(
+                &node(
+                    "IfStatement",
+                    NodeState::Modified,
+                    &["if (cond) { run(); }"],
+                    &["if (cond) { log(\"if (false) would disable this\"); run(); }"]
+                ),
+                &ctx()
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn loosened_regex_differential_names_what_weakened() {
+        // Anchors dropped — the after pattern is NOT a catch-all, so only the
+        // differential comparison can see the weakening.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const idPattern = /^[a-z0-9]{8}$/;"],
+                    &["const idPattern = /[a-z0-9]{8}/;"]
+                ),
+                &ctx(),
+            )
+            .expect("anchor removal must flag");
+        assert!(f.desc.contains("anchors"), "desc names the weakening: {}", f.desc);
+
+        // Length bound dropped.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const token = /^[A-Z]{4,16}$/;"],
+                    &["const token = /^[A-Z]+$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("unbounded quantifier must flag");
+        assert!(f.desc.contains("length bound"), "desc: {}", f.desc);
+
+        // Catch-all still flags (the demo money shot).
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const pattern = /^[A-Za-z0-9_\\-]{32,}$/;"],
+                    &["const pattern = /.*/;"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn loosened_regex_differential_stays_quiet_on_tightening_or_unrelated_change() {
+        // Tightened pattern — no flag.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /[a-z]+/;"],
+                    &["const p = /^[a-z]{3,8}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Equivalent rewrite with same anchors/bounds — no flag.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[a-z]{3}$/;"],
+                    &["const p = /^[a-z0-9]{3}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn guard_removed_differential() {
+        // chargeCard ran behind a verification guard; now unconditional.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // Guard still present — quiet.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (isVerified(order) && !order.flagged) {\n    chargeCard(order);\n  }\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Callee already had an unguarded call site before — quiet.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f() {\n  log(1);\n  if (x) {\n    log(2);\n  }\n}"],
+                    &["function f() {\n  log(1);\n  log(2);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn error_handling_removed_differential() {
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {\n    retryLater(e);\n  }\n}"],
+                    &["function sync() {\n  pushEvents(queue);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // try still present — quiet.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {}\n}"],
+                    &["function sync() {\n  try {\n    pushEvents(queue, opts);\n  } catch (e) {}\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+        // Call removed along with the try — nothing left unprotected, quiet.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function sync() {\n  try {\n    pushEvents(queue);\n  } catch (e) {}\n}"],
+                    &["function sync() {\n  return;\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn removed_sanitize_structural_is_not_masked_by_comments() {
+        // `sanitize` surviving only in a comment must not mask the removal.
+        assert!(RemovedSanitize
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["render(sanitizeHtml(body));"],
+                    &["// sanitizeHtml(body) was redundant\nrender(body);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+        // Wrapper-stripping: the sanitize call disappears from inside another call.
+        assert!(RemovedSanitize
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Modified,
+                    &["save(escapeSql(input));"],
+                    &["save(input);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    // ---- Red-team round 1: confirmed findings become regression tests ----
+
+    #[test]
+    fn guard_removed_ignores_early_return_refactor() {
+        // THE most common guard refactor: hoist the guard into an early return.
+        // The call is still protected; this must NOT flag.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (!isVerified(order)) return;\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn guard_removed_ignores_throw_guard_clause() {
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (!isVerified(order)) { throw new Error('denied'); }\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn verify_to_decode_requires_decode_to_be_new() {
+        // decode was already present before; removing a verify call for
+        // unrelated reasons must not read as a crypto downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(t) {\n  const meta = decode(t);\n  return verify(t, key);\n}"],
+                    &["function f(t) {\n  const meta = decode(t);\n  return meta;\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn verify_to_decode_catches_async_name_variants() {
+        // verifyAsync → decodeJwt: prefix/suffix variants a real refactor emits.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "ReturnStatement",
+                    NodeState::Modified,
+                    &["return jwt.verifyAsync(token, key);"],
+                    &["return jwt.decodeJwt(token);"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn try_catch_to_promise_catch_is_not_flagged() {
+        // try/catch refactored to a .catch() chain still handles errors.
+        assert!(ErrorHandlingRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["async function f() {\n  try {\n    await push(q);\n  } catch (e) {\n    log(e);\n  }\n}"],
+                    &["async function f() {\n  await push(q).catch((e) => log(e));\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn cors_array_wildcard_is_caught() {
+        assert!(BroadenedCors
+            .check(
+                &node(
+                    "ExpressionStatement",
+                    NodeState::Added,
+                    &[],
+                    &["app.use(cors({ origin: [\"*\"] }));"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn loose_regex_unbounded_quantifier_is_caught() {
+        // {0,} and {n,} are unbounded — losing the upper bound is a weakening.
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[A-Z]{4,16}$/;"],
+                    &["const p = /^[A-Z]{4,}$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("losing the upper bound must flag");
+        assert!(f.desc.contains("length bound"), "desc: {}", f.desc);
+    }
+
+    #[test]
+    fn loose_regex_skips_comparison_when_literal_counts_differ() {
+        // A new regex inserted before an existing one shifts positions; pairing
+        // by position would misread. With unequal counts we must not invent a
+        // weakening on the tightened/unchanged survivor.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const zip = /^[0-9]{5}$/;"],
+                    &["const dbg = /x/; const zip = /^[0-9]{5}$/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn loose_regex_anchored_catch_all_is_caught() {
+        let f = LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const p = /^[a-z]{2,20}$/;"],
+                    &["const p = /^[\\s\\S]*$/;"]
+                ),
+                &ctx(),
+            )
+            .expect("anchored catch-all must flag");
+        assert!(!f.desc.is_empty());
+    }
+
+    // ---- Red-team round 2: fixes must not over-suppress ----
+
+    #[test]
+    fn guard_removed_word_boundary_does_not_oversuppress() {
+        // `return_status = …` is an assignment, not a guard clause — a real
+        // unconditional call must still flag.
+        assert!(GuardRemoved
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function pay(order) {\n  if (isVerified(order)) {\n    chargeCard(order);\n  }\n}"],
+                    &["function pay(order) {\n  if (loggingEnabled) {\n    returnStatus = 'ok';\n  }\n  chargeCard(order);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn verify_to_decode_ignores_generic_parsers() {
+        // Removing a verify and adding an unrelated parseInt is not a crypto
+        // downgrade.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(token) {\n  return jwt.verify(token, key);\n}"],
+                    &["function f(token) {\n  return parseInt(token.slice(0, 3));\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    // ---- Final review: residual false-positive fixes ----
+
+    #[test]
+    fn verify_to_decode_ignores_signin_signout() {
+        // `signOut` / `signIn` start with "sign" but aren't signature ops;
+        // a login-flow refactor that drops one and adds a decode must not flag.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(t) {\n  signOut(session);\n}"],
+                    &["function f(t) {\n  return decode(t);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn loose_regex_ignores_reordered_literals() {
+        // Pure reorder: the same two literals, positions swapped, nothing
+        // changed. Positional pairing would have compared the unchanged catch-all
+        // against the strict pattern and false-flagged; set difference sees both
+        // literals in each version and stays silent.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const a = /.*/; const b = /^[0-9]{3}$/;"],
+                    &["const b = /^[0-9]{3}$/; const a = /.*/;"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn eval_structural_ignores_strings_and_comments() {
+        // Forms the old text pattern wrongly flagged.
+        for src in [
+            "const msg = \"calls eval(x) at runtime\";",
+            "// eval(input) was removed in the refactor",
+            "log(`avoid eval(${name})`);",
+        ] {
+            assert!(
+                EvalCall
+                    .check(
+                        &node("ExpressionStatement", NodeState::Added, &[], &[src]),
+                        &ctx()
+                    )
+                    .is_none(),
+                "no real call, must not flag: {src}"
+            );
+        }
     }
 
     #[test]
@@ -970,6 +1952,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps,
             is_test_file: false,
+            lang: Lang::Ts,
         };
 
         let mut import = node(
@@ -1008,6 +1991,7 @@ mod tests {
         let no_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         };
         let mut import = node(
             "ImportDeclaration",
@@ -1037,6 +2021,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            lang: Lang::Ts,
         };
         let mut import = node(
             "ImportDeclaration",

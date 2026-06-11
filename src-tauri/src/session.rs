@@ -314,6 +314,7 @@ fn drift_result(
     let ctx = RuleCtx {
         deps: deps.clone(),
         is_test_file: is_test_path(rel),
+        lang,
     };
     let mut flags = Vec::new();
     scan_file(

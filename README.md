@@ -32,7 +32,7 @@ An AI agent just changed your repo. A normal diff shows you every hunk it touche
 
 Diff Drift is that second pass. It compares your working tree against a baseline you pick — `HEAD`, the **trust point** pinned by your last review, or the merge-base with `main` — and shows the drift as changed AST nodes for TypeScript, TSX, JavaScript, and JSX, plus `package.json` dependency drift. You review node by node, dismiss flags that don't matter in your codebase, and mark the drift reviewed. That pins a trust point: when the agent commits and keeps working, the next session reopens only what changed again.
 
-Heuristic flags point you at security-shaped drift — a loosened validation regex, removed sanitization, disabled TLS checks, undeclared imports, dependencies the lockfile can't vouch for. An exported Markdown or JSON report gives you evidence for the PR, and the same engine runs headless with severity exit codes for CI and agent hooks.
+Flags point you at security-shaped drift — a loosened validation regex, removed sanitization, disabled TLS checks, undeclared imports, dependencies the lockfile can't vouch for. Most rules match structurally against the parsed AST rather than by text, so a pattern inside a string or comment doesn't trigger a flag and reformatting doesn't evade one. Some are differential: they compare a node against your trusted baseline and flag what got *weaker* — a regex that lost its anchors, a call that lost its guard — which a snapshot scanner can't see. An exported Markdown or JSON report gives you evidence for the PR, and the same engine runs headless with severity exit codes for CI and agent hooks.
 
 ## Try it
 
@@ -71,7 +71,7 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 15 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
+A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
 
 ## Status
 

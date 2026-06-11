@@ -812,6 +812,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "streaming-iterator",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
