@@ -514,30 +514,36 @@ impl Rule for LooseRegex {
             return None;
         }
         let before = joined(&node.before);
-        // Differential path: compare each regex literal against its counterpart.
+        // Differential path: compare only the literals that actually changed.
+        // A literal present in both versions (even at a moved position) is
+        // unchanged, so set difference — not positional pairing — avoids
+        // misreading a reorder as a weakening.
         if node.state == NodeState::Modified {
             if let (Some(bl), Some(al)) = (
                 regex_literals(&before, ctx.lang),
                 regex_literals(&after, ctx.lang),
             ) {
-                // Pair by position only when the count is unchanged. An
-                // inserted or removed literal shifts every position, so a
-                // mismatched count would misread an unrelated pair as a
-                // weakening — fall through to the catch-all check instead.
-                if !bl.is_empty() && bl.len() != al.len() {
-                    if let Some(rx) = permissive_regex(&after) {
-                        if permissive_regex(&before).is_none() {
+                let added: Vec<&String> = al.iter().filter(|a| !bl.contains(a)).collect();
+                let removed: Vec<&String> = bl.iter().filter(|b| !al.contains(b)).collect();
+                // A newly introduced catch-all is a widening — but only if the
+                // node wasn't already catch-all (catch-all → catch-all is no
+                // new weakening).
+                let before_had_catch_all =
+                    bl.iter().any(|b| is_catch_all_pattern(regex_pattern(b)));
+                if !before_had_catch_all {
+                    for a in &added {
+                        if is_catch_all_pattern(regex_pattern(a)) {
                             return finding(
                                 Severity::High,
                                 "Loose regex pattern",
-                                format!("Validation regex was widened to {rx} — any string now passes validation."),
+                                format!("Validation regex was widened to {a} — any string now passes validation."),
                             );
                         }
                     }
-                    return None;
                 }
-                for (b, a) in bl.iter().zip(al.iter()) {
-                    if let Some(weakened) = regex_weakening(b, a) {
+                // Exactly one literal edited: compare that single pair.
+                if removed.len() == 1 && added.len() == 1 {
+                    if let Some(weakened) = regex_weakening(removed[0], added[0]) {
                         return finding(
                             Severity::High,
                             "Loose regex pattern",
@@ -545,11 +551,10 @@ impl Rule for LooseRegex {
                         );
                     }
                 }
-                // No paired weakening — fall through to the catch-all check,
-                // which covers literals that only exist in the after version.
+                return None;
             }
         }
-        // Added nodes (and fallback): catch-all in after, none before.
+        // Added nodes (and structural-parse fallback): catch-all in after, none before.
         if let Some(rx) = permissive_regex(&after) {
             if before.is_empty() || permissive_regex(&before).is_none() {
                 return finding(
@@ -605,14 +610,14 @@ impl Rule for VerifyToDecode {
         let after = joined(&node.after);
         let fired = match (callee_names(&before, ctx.lang), callee_names(&after, ctx.lang)) {
             (Some(b), Some(a)) => {
-                // Prefix match so async/library variants (`verifyAsync`,
-                // `decodeJwt`) count, without matching unrelated words like
-                // `assign` or `design` that a bare substring would.
-                let starts_any = |s: &HashSet<String>, prefixes: &[&str]| {
-                    s.iter()
-                        .any(|n| prefixes.iter().any(|p| n.starts_with(p)))
+                // `verify*` covers async/library variants (`verifyAsync`); for
+                // signing, only the exact crypto names — `signIn`/`signOut`/
+                // `signal` start with "sign" but aren't signature operations.
+                let verifies = |s: &HashSet<String>| {
+                    s.iter().any(|n| {
+                        n.starts_with("verify") || n == "sign" || n == "signAsync" || n == "signSync"
+                    })
                 };
-                let verifies = |s: &HashSet<String>| starts_any(s, &["verify", "sign"]);
                 // `decode*` (decodeJwt, decodeAsync) counts; bare `parse` counts
                 // only as an exact name, never the generic `parseInt`/`parseFloat`.
                 let decodes = |s: &HashSet<String>| {
@@ -1648,6 +1653,44 @@ mod tests {
                     NodeState::Modified,
                     &["function f(token) {\n  return jwt.verify(token, key);\n}"],
                     &["function f(token) {\n  return parseInt(token.slice(0, 3));\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    // ---- Final review: residual false-positive fixes ----
+
+    #[test]
+    fn verify_to_decode_ignores_signin_signout() {
+        // `signOut` / `signIn` start with "sign" but aren't signature ops;
+        // a login-flow refactor that drops one and adds a decode must not flag.
+        assert!(VerifyToDecode
+            .check(
+                &node(
+                    "FunctionDeclaration",
+                    NodeState::Modified,
+                    &["function f(t) {\n  signOut(session);\n}"],
+                    &["function f(t) {\n  return decode(t);\n}"]
+                ),
+                &ctx(),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn loose_regex_ignores_reordered_literals() {
+        // Pure reorder: the same two literals, positions swapped, nothing
+        // changed. Positional pairing would have compared the unchanged catch-all
+        // against the strict pattern and false-flagged; set difference sees both
+        // literals in each version and stays silent.
+        assert!(LooseRegex
+            .check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Modified,
+                    &["const a = /.*/; const b = /^[0-9]{3}$/;"],
+                    &["const b = /^[0-9]{3}$/; const a = /.*/;"]
                 ),
                 &ctx(),
             )

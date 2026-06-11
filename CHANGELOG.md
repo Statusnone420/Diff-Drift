@@ -6,10 +6,9 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 
 ### Added
 
-- Engine v2 — structural rule matching over tree-sitter queries. `eval`, `new Function`, `rejectUnauthorized: false`, broadened CORS, and constant-falsy guards now match real syntax instead of text, so a pattern inside a string or comment never flags and reformatting can't evade one. Closes the documented `if (0)` guard bypass and catches the `origin: ['*']` array form.
-- Differential rule family — before-vs-after comparisons a snapshot scanner can't express: a validation regex that lost its anchors or length bound (not just a widening to `/.*/`), a call that lost its `if` guard, and a `try/catch` removed from surviving calls. Crypto-downgrade and removed-sanitization rules upgraded to compare real callee names (async variants count; `verify`/`sanitize` surviving only in a comment no longer masks a removal).
-- Five engine eval cases for the new behaviors (`if (0)` evasion, benign eval-in-string, regex anchors removed, guard removed, try/catch removed); engine eval is now 20/20.
-- `docs/engine-v2-scorecard.md` — the phase-by-phase measurement battery and a record of three adversarial red-team rounds, with the surfaced out-of-lane evasions documented as known limits.
+- Engine v2 — structural rule matching over tree-sitter queries. `eval`, `new Function`, `rejectUnauthorized: false`, broadened CORS (incl. `origin: ['*']`), and constant-falsy guards match real syntax, so patterns in strings/comments don't flag and reformatting can't evade. Closes the `if (0)` guard bypass.
+- Differential rules a snapshot scanner can't express: a regex that lost its anchors or length bound (not just a widening to `/.*/`), a call that lost its `if` guard, a `try/catch` removed from surviving calls. Crypto-downgrade and removed-sanitization compare real callee names, so a comment can't mask or fake a removal.
+- Five engine eval cases for the new behaviors; engine eval now 20/20. Adversarially hardened over three red-team rounds — receipts and known limits in `docs/engine-v2-scorecard.md`.
 
 ### Fixed
 

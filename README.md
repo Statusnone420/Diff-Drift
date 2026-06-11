@@ -71,7 +71,7 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 15 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
+A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`). An advisory blind-agent scorecard exists too, but it's synthetic and self-run — read it with the limits attached: [Eval Methodology](docs/wiki/Eval-Methodology.md). To predict your own triage burden, run `npm run eval:fp-replay` on your repos; that's the number that matters for you.
 
 ## Status
 
