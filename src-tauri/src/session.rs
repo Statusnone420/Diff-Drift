@@ -382,6 +382,14 @@ pub fn assemble(
     meta: &Meta,
     state: &RepoState,
 ) -> SessionData {
+    // A live update racing a revert can briefly hit this during debug runs, but
+    // a stable non-empty result cache with zero git-changed files means a watcher
+    // path admitted entries that git itself does not consider drift.
+    debug_assert!(
+        results.is_empty() || meta.changed_files > 0,
+        "analyzed results exist with zero git-changed files; ghost entries?"
+    );
+
     let mut files: Vec<FileEntry> = results.values().map(|r| r.entry.clone()).collect();
     let mut flags: Vec<Flag> = results.values().flat_map(|r| r.flags.clone()).collect();
 

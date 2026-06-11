@@ -2,6 +2,13 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.3.1] — 2026-06-11
+
+### Fixed
+
+- The live watcher now respects `.gitignore`, so ignored build output no longer appears as drift after filesystem events. Tracked files inside ignored directories still count when they differ from the selected baseline.
+- Switching baselines now prunes stale per-node review hashes, keeping `repo-state.json` from accumulating dead reviewed-node entries.
+
 ## [0.3.0] — 2026-06-10
 
 ### Added

@@ -86,6 +86,15 @@ pub fn changed_files(root: &Path) -> Vec<String> {
     files
 }
 
+/// True when `rel` is ignored by git and absent from the selected baseline tree.
+/// Tracked files inside ignored directories still matter: git can report drift
+/// for them, so the watcher must not drop them just because an ignore pattern
+/// also matches the path.
+pub fn is_ignored_untracked(repo: &Repository, baseline_rev: &str, rel: &str) -> bool {
+    repo.is_path_ignored(Path::new(rel)).unwrap_or(false)
+        && blob_oid_at_in(repo, baseline_rev, rel).is_none()
+}
+
 /// File contents at HEAD (the "before"). `None` if the path is new / not in HEAD.
 #[allow(dead_code)]
 pub fn head_content(root: &Path, rel: &str) -> Option<String> {
@@ -355,6 +364,29 @@ mod tests {
         assert!(changed_files_vs(&root, "not-a-rev").is_empty());
         assert!(resolve_rev(&root, "not-a-rev").is_none());
         assert_eq!(resolve_rev(&root, "HEAD"), head_sha(&root));
+    }
+
+    #[test]
+    fn ignored_untracked_respects_tracked_files_in_ignored_dirs() {
+        let fixture = test_fixture::payments_api();
+        let root = repo_root(&fixture.root).unwrap();
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/lib.ts"), "export const tracked = true;\n").unwrap();
+        test_fixture::commit_all(&root, "track vendor file");
+
+        std::fs::write(root.join(".gitignore"), "vendor/\n").unwrap();
+        test_fixture::commit_all(&root, "ignore vendor");
+        std::fs::write(root.join("vendor/new.ts"), "export const ignored = true;\n").unwrap();
+
+        let repo = open(&root).unwrap();
+        assert!(
+            !is_ignored_untracked(&repo, "HEAD", "vendor/lib.ts"),
+            "tracked files inside ignored directories are still baseline-visible drift"
+        );
+        assert!(
+            is_ignored_untracked(&repo, "HEAD", "vendor/new.ts"),
+            "ignored files absent from the baseline tree are git-invisible"
+        );
     }
 
     #[test]
