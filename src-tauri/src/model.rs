@@ -107,8 +107,9 @@ pub struct Session {
 /// Version of this data contract. Bump when the shape of `SessionData` changes
 /// in a way consumers (JSON export, headless check) could misread. v0.1 shipped
 /// without the field (implicitly 1); v3 added `session.skippedFiles` and
-/// `files[].skipped` for the oversized-file guard.
-pub const SCHEMA_VERSION: u32 = 3;
+/// `files[].skipped` for the oversized-file guard; v4 added `otherFiles` (the
+/// list of changed paths that are not analyzed as AST or dependency drift).
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -117,4 +118,8 @@ pub struct SessionData {
     pub session: Session,
     pub flags: Vec<Flag>,
     pub files: Vec<FileEntry>,
+    /// Repo-relative paths of changed files that are not analyzed as AST or
+    /// dependency drift (not a supported source language, not package.json),
+    /// sorted alphabetically. Empty when every changed file was analyzed.
+    pub other_files: Vec<String>,
 }

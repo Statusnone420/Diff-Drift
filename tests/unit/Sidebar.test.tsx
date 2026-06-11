@@ -17,11 +17,12 @@ const file: FileEntry = {
 };
 
 describe("Sidebar counts", () => {
-  it("explains changed files outside the analyzed list", () => {
+  it("shows analyzed files section label", () => {
     render(
       <Sidebar
-        session={makeSession({ changedFiles: 3 })}
+        session={makeSession({ changedFiles: 1 })}
         files={[file]}
+        otherFiles={[]}
         selectedId={file.id}
         onSelect={vi.fn()}
         watchingSince={null}
@@ -30,7 +31,28 @@ describe("Sidebar counts", () => {
     );
 
     expect(screen.getByText("Analyzed files")).toBeInTheDocument();
-    expect(screen.getByText(/2 other changed files not shown here/)).toBeInTheDocument();
-    expect(screen.getByText(/unsupported type or no analyzable package\/script drift/)).toBeInTheDocument();
+    expect(screen.queryByTestId("other-file-list")).not.toBeInTheDocument();
+  });
+
+  it("lists other changed files by path when present", () => {
+    render(
+      <Sidebar
+        session={makeSession({ changedFiles: 3 })}
+        files={[file]}
+        otherFiles={["README.md", "docs/CHANGELOG.md"]}
+        selectedId={file.id}
+        onSelect={vi.fn()}
+        watchingSince={null}
+        justUpdated={false}
+      />,
+    );
+
+    expect(screen.getByText("Analyzed files")).toBeInTheDocument();
+    expect(screen.getByText("Other changed files")).toBeInTheDocument();
+    expect(screen.getByTestId("other-file-list")).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
+    expect(screen.getByText("CHANGELOG.md")).toBeInTheDocument();
+    // directory portion rendered separately
+    expect(screen.getByText("docs/")).toBeInTheDocument();
   });
 });

@@ -41,7 +41,11 @@ A changed file is any path git reports as different from the baseline, including
 
 ## Analyzed File
 
-An analyzed file is a changed `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, or `.cjs` file that Diff Drift parsed and rendered as AST drift — plus `package.json`, which is rendered as a dependency diff when its dependency or script sections changed.
+An analyzed file is a changed source file Diff Drift parsed and rendered as structural (AST) drift — `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.rs`, `.go`, `.py`, `.pyi`, `.java`, `.cs`, `.kt`, `.kts`, or `.swift` — plus `package.json`, which is rendered as a dependency diff when its dependency or script sections changed. Core language structural drift plus package.json dependency/script drift; heuristic flags are strongest for JS/TS and package drift.
+
+## Other Changed File
+
+A changed path that is not an analyzed file — unsupported file type (Markdown, TOML, YAML, images, etc.) or `package.json` with no dependency or script drift. These paths are listed by name in the sidebar so they are visible without being analyzed. Review them outside Diff Drift.
 
 ## Node
 

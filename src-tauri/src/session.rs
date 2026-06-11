@@ -33,6 +33,10 @@ pub struct Meta {
     pub changed_files: u32,
     pub baseline_spec: String,
     pub baseline_label: String,
+    /// Repo-relative paths of changed files that are NOT analyzed as AST or
+    /// dependency drift — i.e. neither `is_analyzable` nor `package.json`.
+    /// Sorted alphabetically.
+    pub other_files: Vec<String>,
 }
 
 /// The resolved "before" side of the drift. `sha: None` means plain HEAD (the
@@ -471,6 +475,7 @@ pub fn assemble(
         session,
         flags,
         files,
+        other_files: meta.other_files.clone(),
     }
 }
 
@@ -638,13 +643,21 @@ pub fn read_deps(root: &Path) -> HashSet<String> {
 }
 
 pub fn meta(root: &Path, baseline: &Baseline) -> Meta {
+    let all_changed = changed_paths(root, baseline);
+    let changed_files = all_changed.len() as u32;
+    let mut other_files: Vec<String> = all_changed
+        .into_iter()
+        .filter(|p| !git::is_analyzable(p) && p != "package.json")
+        .collect();
+    other_files.sort_unstable();
     Meta {
         project: repo_name(root),
         branch: git::current_branch(root),
         repo_path: root.display().to_string(),
-        changed_files: changed_paths(root, baseline).len() as u32,
+        changed_files,
         baseline_spec: baseline.spec.clone(),
         baseline_label: baseline.label.clone(),
+        other_files,
     }
 }
 
@@ -1185,6 +1198,7 @@ mod tests {
             changed_files: 3,
             baseline_spec: "head".into(),
             baseline_label: "HEAD".into(),
+            other_files: vec![],
         };
         let data = assemble(&HashMap::new(), &meta, &RepoState::default());
         assert_eq!(data.session.changed_files, 3);
@@ -1205,6 +1219,7 @@ mod tests {
             changed_files: 0,
             baseline_spec: "head".into(),
             baseline_label: "HEAD".into(),
+            other_files: vec![],
         };
 
         let data = assemble(&results, &meta, &RepoState::default());
@@ -1833,5 +1848,56 @@ export default router;
         assert_eq!(res.entry.lang, "Swift");
         assert_eq!(res.flags.len(), 1, "the AWS key flags");
         assert_eq!(res.flags[0].r#type, "Hardcoded secret");
+    }
+
+    #[test]
+    fn other_files_lists_non_analyzable_changed_paths() {
+        // .md and .toml files are not parsed as AST or dependency drift —
+        // they must appear in `other_files` and NOT in `files`.
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("git repo");
+
+        // Add two non-analyzable files to the worktree (new untracked files
+        // count as changed — present in worktree, absent in HEAD).
+        std::fs::write(root.join("README.md"), "# payments-api\n").unwrap();
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(root.join("config/settings.toml"), "[server]\nport = 8080\n").unwrap();
+
+        let data = assemble(
+            &analyze_all(&root, &Baseline::default()),
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        // Both non-analyzable files appear in other_files, sorted.
+        assert!(
+            data.other_files.contains(&"README.md".to_string()),
+            "README.md in other_files: {:?}",
+            data.other_files
+        );
+        assert!(
+            data.other_files.contains(&"config/settings.toml".to_string()),
+            "config/settings.toml in other_files: {:?}",
+            data.other_files
+        );
+        // They do NOT appear in the analyzed files list.
+        assert!(
+            !data.files.iter().any(|f| f.name == "README.md"),
+            "README.md must not be in analyzed files"
+        );
+        assert!(
+            !data.files.iter().any(|f| f.name == "settings.toml"),
+            "settings.toml must not be in analyzed files"
+        );
+        // The analyzed .ts files are NOT in other_files.
+        assert!(
+            !data.other_files.iter().any(|p| p.ends_with(".ts")),
+            "TypeScript files must not appear in other_files: {:?}",
+            data.other_files
+        );
+        // other_files is sorted alphabetically.
+        let mut sorted = data.other_files.clone();
+        sorted.sort();
+        assert_eq!(data.other_files, sorted, "other_files must be sorted");
     }
 }

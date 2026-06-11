@@ -549,6 +549,30 @@
   line-height: 1.45;
 }
 
+.other-file-list {
+  padding: 0 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.other-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-faint);
+  cursor: default;
+}
+.other-file-row .file-name {
+  color: var(--text-faint);
+}
+.other-file-row .file-dir {
+  color: var(--text-faint);
+  opacity: 0.75;
+}
+
 .file-list {
   padding: 0 8px 16px;
   display: flex;
