@@ -195,6 +195,39 @@ pub fn large_repo(n: usize) -> FixtureRepo {
     FixtureRepo { root }
 }
 
+/// Build a one-file repo: commit `before` at `rel` on HEAD, then write `after`
+/// into the working tree (uncommitted). Lets session-layer tests drive a single
+/// file's before→after drift through `analyze_file` for any language, hermetic
+/// and small — never a multi-MB first read.
+pub fn single_file_drift(rel: &str, before: &str, after: &str) -> FixtureRepo {
+    let root = std::env::temp_dir().join(format!(
+        "drift-fixture-1-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    force_remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("create fixture dir");
+    write_files(&root, &[(rel, before)]);
+
+    let repo = git2::Repository::init(&root).expect("git init");
+    let mut index = repo.index().expect("index");
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .expect("git add -A");
+    index.write().expect("index write");
+    let tree_id = index.write_tree().expect("write tree");
+    {
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        let sig = git2::Signature::now("Drift Demo", "demo@drift.local").expect("signature");
+        repo.commit(Some("HEAD"), &sig, &sig, "baseline single file", &tree, &[])
+            .expect("commit");
+    }
+    drop(repo);
+
+    write_files(&root, &[(rel, after)]); // uncommitted "agent" edit
+    FixtureRepo { root }
+}
+
 /// Commit ONE file's content from memory (blob + treebuilder, no workdir
 /// read). libgit2's file-streaming blob path is pathologically slow on
 /// Windows for multi-MB files, so oversized-guard tests commit this way.

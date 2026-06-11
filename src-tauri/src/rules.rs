@@ -2138,6 +2138,31 @@ mod tests {
     }
 
     #[test]
+    fn test_path_detection_includes_core_four_conventions() {
+        for path in [
+            "pkg/server_test.go",          // Go
+            "tests/integration_test.go",
+            "app/test_handler.py",         // Python `test_*`
+            "app/handler_test.py",         // Python `*_test`
+            "conftest.py",
+            "src/test/java/com/FooTest.java", // Java (segment + suffix)
+            "ServiceTests.java",
+        ] {
+            assert!(
+                is_test_path(path),
+                "`{path}` should be classified as test-like"
+            );
+        }
+        // Non-test sources of each language stay non-test.
+        assert!(!is_test_path("src/lib.rs"));
+        assert!(!is_test_path("cmd/server.go"));
+        assert!(!is_test_path("app/handler.py"));
+        assert!(!is_test_path("src/main/java/com/Service.java"));
+        // `Audit.java` ends in "it.java" only as a substring — must NOT match.
+        assert!(!is_test_path("src/Audit.java"));
+    }
+
+    #[test]
     fn registry_dispatches() {
         let reg = RuleRegistry::new();
         let f = reg.check(

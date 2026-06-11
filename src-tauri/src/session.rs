@@ -1656,4 +1656,117 @@ export default router;
         );
         assert!(data.session.approved_at.is_none());
     }
+
+    // ---- Core-four languages flow through the session layer like TS ----
+
+    /// Names of every changed node (any non-Unchanged state) a drift produced,
+    /// recursing into body children — a body-only edit (the common case) shows
+    /// as changed children under an Unchanged parent card, exactly as JS does.
+    fn changed_node_names(res: &FileResult) -> Vec<String> {
+        fn walk(nodes: &[crate::model::AstNode], out: &mut Vec<String>) {
+            for n in nodes {
+                if n.state != crate::model::NodeState::Unchanged {
+                    out.push(n.name.clone());
+                }
+                if let Some(children) = &n.children {
+                    walk(children, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&res.entry.nodes, &mut out);
+        out
+    }
+
+    #[test]
+    fn rust_drift_flows_through_session() {
+        // A guard is neutralised and a validate call dropped. We don't expect any
+        // security flag (those are JS-only) — just sensible structural drift and
+        // the correct language label.
+        let before = "fn process(input: &str) -> bool {\n    if !valid(input) {\n        return false;\n    }\n    sanitize(input);\n    true\n}\n";
+        let after = "fn process(input: &str) -> bool {\n    true\n}\n";
+        let fixture = test_fixture::single_file_drift("src/lib.rs", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "src/lib.rs", &HashSet::new(), &Baseline::default())
+            .expect("rust file drifts");
+        assert_eq!(res.entry.lang, "Rust");
+        assert!(res.flags.is_empty(), "no JS-specific flags for Rust");
+        // The `process` body shrank — its body statements (the guard, the
+        // sanitize call) show as removed children. Drift must be non-empty.
+        let names = changed_node_names(&res);
+        assert!(
+            !names.is_empty(),
+            "the body edit must produce changed nodes: {names:?}"
+        );
+        // The function node itself is present in the skeleton.
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn go_drift_flows_through_session() {
+        let before = "package main\n\nfunc Handle(req string) string {\n    return process(req)\n}\n";
+        let after = "package main\n\nfunc Handle(req string) string {\n    return req\n}\n\nfunc Extra() int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("main.go", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "main.go", &HashSet::new(), &Baseline::default())
+            .expect("go file drifts");
+        assert_eq!(res.entry.lang, "Go");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        // `Handle` body changed; `Extra` was added.
+        assert!(names.iter().any(|n| n == "Extra"), "Extra added: {names:?}");
+    }
+
+    #[test]
+    fn python_drift_flows_through_session() {
+        let before = "def process(data):\n    clean = sanitize(data)\n    return store(clean)\n";
+        let after = "def process(data):\n    return store(data)\n";
+        let fixture = test_fixture::single_file_drift("app.py", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "app.py", &HashSet::new(), &Baseline::default())
+            .expect("python file drifts");
+        assert_eq!(res.entry.lang, "Python");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(
+            !names.is_empty(),
+            "the body edit must produce changed nodes: {names:?}"
+        );
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn java_drift_flows_through_session() {
+        let before = "class Service {\n    String handle(String in) {\n        return process(in);\n    }\n}\n";
+        let after = "class Service {\n    String handle(String in) {\n        return in;\n    }\n\n    void extra() {}\n}\n";
+        let fixture = test_fixture::single_file_drift("Service.java", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Service.java", &HashSet::new(), &Baseline::default())
+            .expect("java file drifts");
+        assert_eq!(res.entry.lang, "Java");
+        assert!(res.flags.is_empty());
+        // A member (`extra`) was added and `handle`'s body changed — both show
+        // as changed children under the Service class card.
+        let names = changed_node_names(&res);
+        assert!(
+            names.iter().any(|n| n == "extra"),
+            "added member surfaces: {names:?}"
+        );
+        assert!(res.entry.nodes.iter().any(|n| n.name == "Service"));
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_in_a_python_file_through_session() {
+        // The one rule that runs cross-language: a fake AWS key added to a .py
+        // file must surface a flag through the full session pipeline.
+        let before = "def config():\n    return {}\n";
+        let after = "def config():\n    return {\"key\": \"AKIA0123456789ABCDEF\"}\n";
+        let fixture = test_fixture::single_file_drift("settings.py", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "settings.py", &HashSet::new(), &Baseline::default())
+            .expect("python file drifts");
+        assert_eq!(res.entry.lang, "Python");
+        assert_eq!(res.flags.len(), 1, "the AWS key flags");
+        assert_eq!(res.flags[0].r#type, "Hardcoded secret");
+    }
 }
