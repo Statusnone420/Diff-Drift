@@ -13,7 +13,7 @@ body:
       label: How were you installing?
       options:
         - Windows installer from Releases
-        - CLI (diff-drift.exe on PATH)
+        - CLI (diff-drift-cli.exe on PATH)
         - Building from source
         - Other
     validations:

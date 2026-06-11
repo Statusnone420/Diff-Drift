@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.3.1" src="https://img.shields.io/badge/version-0.3.1-e7a83e?style=for-the-badge">
+  <img alt="Version 0.3.2" src="https://img.shields.io/badge/version-0.3.2-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -38,13 +38,22 @@ Flags point you at security-shaped drift — a loosened validation regex, remove
 
 **Desktop:** download the Windows installer from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) and check it against `SHA256SUMS.txt`. Releases are currently unsigned, so SmartScreen will warn on first run — details and reproducible builds in [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md).
 
-**CLI:** the same installed `diff-drift.exe` works headless. Add `%LOCALAPPDATA%\Diff Drift` to `PATH`, then:
+**CLI:** `diff-drift-cli.exe` runs the same check headless — installed next to the app, or downloaded bare from [Releases](https://github.com/Statusnone420/Diff-Drift/releases) (verify against `SHA256SUMS.txt`). It is a console binary, so every shell — PowerShell included — sees its exit code. Add it to `PATH`, then:
 
 ```bash
-diff-drift check . --baseline merge-base --md > diff-drift-report.md
+diff-drift-cli check . --baseline merge-base --md > diff-drift-report.md
 ```
 
 The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3` high, `64` usage error), so it drops straight into CI or a pre-commit hook. Copy-paste recipes: [CI and hook recipes](docs/wiki/User-Guide.md#ci-and-hook-recipes).
+
+**GitHub Action:** gate a PR on drift without compiling anything (Windows runner; `fetch-depth: 0` so the merge-base resolves):
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- uses: Statusnone420/Diff-Drift@v0.3.2
+  with: { baseline: merge-base, fail-on: medium }
+```
 
 **From source:** [Node.js](https://nodejs.org/) 20.19+/22.12+, [Rust](https://rustup.rs/) stable, [C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), then `npm install && npm run tauri dev`. Browser-only UI work: `npm run dev`.
 
@@ -84,7 +93,7 @@ To predict your own triage burden, run `npm run eval:fp-replay` on your repos; t
 ## Status
 
 - Supported platform: Windows 11. macOS: experimental and unsigned.
-- Current version: `0.3.1` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+- Current version: `0.3.2` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Docs
 

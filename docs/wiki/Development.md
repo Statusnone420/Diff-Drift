@@ -125,7 +125,7 @@ npm run test:visual
 
 ## Headless Check
 
-The debug binary also serves the CLI: `cargo run -- check <path> --json` (or run the built `diff-drift.exe check …`). It is read-only by design; see the User Guide for flags and exit codes.
+The CLI has a dedicated console bin: `cargo run --bin diff-drift-cli -- check <path> --json` (or run the built `diff-drift-cli.exe check …`). The app binary serves the same subcommand (`cargo run -- check …`), but its release build is windows-subsystem, so PowerShell/cmd don't wait for it — anything scripted should use `diff-drift-cli`. The check is read-only by design; see the User Guide for flags and exit codes.
 
 ## Fixtures
 

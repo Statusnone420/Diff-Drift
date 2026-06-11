@@ -1,0 +1,112 @@
+name: "Diff Drift"
+description: >-
+  Run diff-drift check on a pull request or branch: an AST-level drift report
+  for TS/TSX/JS/JSX plus package.json dependency drift, with severity exit
+  codes. Flags are review prompts, not vulnerability verdicts. Requires a
+  Windows runner and a checkout with full history (fetch-depth: 0).
+author: "Statusnone420"
+
+branding:
+  icon: "git-commit"
+  color: "gray-dark"
+
+inputs:
+  path:
+    description: "Repository path to analyze (relative to the workspace)."
+    required: false
+    default: "."
+  baseline:
+    description: >-
+      Baseline to compare against: merge-base, head, trust-point, or any git
+      rev (branch, tag, SHA). merge-base needs origin/main or origin/master,
+      which actions/checkout only provides with fetch-depth: 0.
+    required: false
+    default: "merge-base"
+  fail-on:
+    description: >-
+      Lowest active-flag severity that fails the step: none, low, medium, or
+      high. Usage errors (exit 64) always fail.
+    required: false
+    default: "medium"
+  version:
+    description: "Diff Drift release tag to download the CLI from."
+    required: false
+    default: "v0.3.2"
+
+outputs:
+  exit-code:
+    description: "Exit code from diff-drift check (0 none, 1 low, 2 medium, 3 high, 64 usage error)."
+    value: ${{ steps.run.outputs.exit-code }}
+  report-path:
+    description: "Path to the Markdown drift report."
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Require a Windows runner
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        echo "::error::Diff Drift currently ships a Windows CLI only. Use runs-on: windows-latest for this job, or build from source (see docs/wiki/User-Guide.md)."
+        exit 1
+
+    - name: Download and verify diff-drift CLI
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DIFF_DRIFT_VERSION: ${{ inputs.version }}
+      run: |
+        $dir = Join-Path $env:RUNNER_TEMP "diff-drift-cli"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        gh release download $env:DIFF_DRIFT_VERSION --repo Statusnone420/Diff-Drift `
+          --pattern diff-drift-cli.exe --pattern SHA256SUMS.txt --dir $dir --clobber
+        if ($LASTEXITCODE -ne 0) { Write-Error "Could not download diff-drift-cli.exe from release $env:DIFF_DRIFT_VERSION" }
+        $expected = (Get-Content (Join-Path $dir "SHA256SUMS.txt") |
+          Where-Object { $_ -match '\sdiff-drift-cli\.exe$' }) -split '\s+' | Select-Object -First 1
+        if (-not $expected) { Write-Error "SHA256SUMS.txt in release $env:DIFF_DRIFT_VERSION has no entry for diff-drift-cli.exe" }
+        $actual = (Get-FileHash (Join-Path $dir "diff-drift-cli.exe") -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $expected) { Write-Error "diff-drift-cli.exe checksum mismatch: expected $expected, got $actual" }
+        "Verified diff-drift-cli.exe ($actual)"
+        Add-Content $env:GITHUB_PATH $dir
+
+    # diff-drift-cli.exe is a console binary, so PowerShell waits for it and
+    # $LASTEXITCODE is the real severity exit code.
+    - name: Run diff-drift check
+      id: run
+      shell: pwsh
+      env:
+        DIFF_DRIFT_PATH: ${{ inputs.path }}
+        DIFF_DRIFT_BASELINE: ${{ inputs.baseline }}
+      run: |
+        $report = "diff-drift-report.md"
+        diff-drift-cli.exe check $env:DIFF_DRIFT_PATH --baseline $env:DIFF_DRIFT_BASELINE --md > $report 2>&1
+        $code = $LASTEXITCODE
+        Get-Content $report | Add-Content $env:GITHUB_STEP_SUMMARY
+        "exit-code=$code" | Add-Content $env:GITHUB_OUTPUT
+        "report-path=$report" | Add-Content $env:GITHUB_OUTPUT
+        "diff-drift check exited $code (0 none, 1 low, 2 medium, 3 high, 64 usage error)"
+        # The exit code is judged against fail-on in the next step; this step
+        # only fails on its own errors.
+        exit 0
+
+    - name: Apply fail-on threshold
+      shell: pwsh
+      env:
+        DIFF_DRIFT_EXIT: ${{ steps.run.outputs.exit-code }}
+        DIFF_DRIFT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        $code = [int]$env:DIFF_DRIFT_EXIT
+        if ($code -eq 64) { Write-Error "diff-drift check usage error (exit 64) - check path and baseline inputs" }
+        $threshold = switch ($env:DIFF_DRIFT_FAIL_ON) {
+          "none"   { 99 }
+          "low"    { 1 }
+          "medium" { 2 }
+          "high"   { 3 }
+          default  { Write-Error "Unknown fail-on value '$($env:DIFF_DRIFT_FAIL_ON)' - use none, low, medium, or high" }
+        }
+        if ($code -ge $threshold) {
+          Write-Error "Active flags at or above fail-on=$($env:DIFF_DRIFT_FAIL_ON) (exit $code). See the job summary for the drift report."
+        }
+        "Drift below fail-on=$($env:DIFF_DRIFT_FAIL_ON) (exit $code)"
+        exit 0

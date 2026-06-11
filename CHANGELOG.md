@@ -2,6 +2,23 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.3.2] — 2026-06-11
+
+### Added
+
+- A dedicated console CLI, `diff-drift-cli.exe`: the same read-only `check` as the app binary, built as a console program so PowerShell, cmd, and sh all wait for it and see its severity exit code. The installers place it next to the app, and it is a release asset covered by `SHA256SUMS.txt`, so CI jobs and scripts can use the headless check without installing the app.
+- A GitHub Action (`uses: Statusnone420/Diff-Drift@v0.3.2`): downloads the release CLI, verifies its checksum, runs `diff-drift check`, writes the Markdown report to the job summary, and fails the job at a configurable severity threshold (`fail-on: none|low|medium|high`). Windows runners only; needs `fetch-depth: 0` for the merge-base baseline. A smoke workflow (`action-smoke.yml`) exercises the action in CI.
+- Demo video capture (`npm run demo:video`): drives the demo storyboard through the browser UI at watchable pacing with a title and closing card and produces an MP4 (needs a system ffmpeg; without one it keeps the WebM). The video is a release asset, not a repo file.
+
+### Changed
+
+- The GitHub Actions recipe in the User Guide uses the published action instead of building the CLI from source; the source build remains documented as an alternative.
+
+### Fixed
+
+- `diff-drift.exe check` from PowerShell or cmd never set `$LASTEXITCODE`/`%ERRORLEVEL%`: the release app binary is GUI-subsystem (no console window for the app), and those shells start GUI programs without waiting. Scripts should use the new console `diff-drift-cli.exe` instead, which every shell waits for; the User Guide recipes and the GitHub Action now do.
+- `check` no longer panics with "The pipe is being closed (os error 232)" when its stdout reader goes away mid-print (for example `diff-drift-cli check | head`). The report write is abandoned quietly; the exit code still carries the result.
+
 ## [0.3.1] — 2026-06-11
 
 ### Fixed
