@@ -2,6 +2,13 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.4.1] — 2026-06-11
+
+### Fixed
+
+- The "Undeclared import" rule no longer flags Node built-ins it failed to recognize — `module`, `http2`, `inspector`, `perf_hooks`, and others. `import { createRequire } from "module"` was reported as an undeclared package, which contradicted the rule's documented handling of Node built-ins; the import still shows as drift, only the false flag is gone.
+- Exported reports now cap each flag's diff body. A flag on a large node — for example a whole refactored test module flagged for a one-line secret — rendered the entire body before and after, inflating one real export to about 4,800 lines. Each side now shows up to 20 lines with the remainder summarized; the same renderer backs `diff-drift check --md`.
+
 ## [0.4.0] — 2026-06-11
 
 ### Added

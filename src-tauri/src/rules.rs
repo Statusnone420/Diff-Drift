@@ -1000,30 +1000,39 @@ fn is_node_builtin(module: &str) -> bool {
             | "child_process"
             | "cluster"
             | "console"
+            | "constants"
             | "crypto"
             | "dgram"
+            | "diagnostics_channel"
             | "dns"
+            | "domain"
             | "events"
             | "fs"
             | "http"
+            | "http2"
             | "https"
+            | "inspector"
             | "module"
             | "net"
             | "os"
             | "path"
             | "perf_hooks"
             | "process"
+            | "punycode"
             | "querystring"
             | "readline"
+            | "repl"
             | "stream"
             | "string_decoder"
             | "timers"
             | "tls"
+            | "trace_events"
             | "tty"
             | "url"
             | "util"
             | "v8"
             | "vm"
+            | "wasi"
             | "worker_threads"
             | "zlib"
     )
@@ -2128,6 +2137,12 @@ mod tests {
             "perf_hooks",
             "querystring",
             "v8",
+            "http2",
+            "node:http2",
+            "inspector",
+            "domain",
+            "trace_events",
+            "wasi",
         ] {
             import.name = module.into();
             assert!(

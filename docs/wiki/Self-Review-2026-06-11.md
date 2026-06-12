@@ -34,7 +34,7 @@ The goal was not to find bugs in the repo — it was to ask whether the tool pro
 
 ## Findings (both fixed this session)
 
-1. **`module` was missing from the Undeclared-import built-in allowlist.** `import { createRequire } from 'module'` was flagged as an undeclared npm package (twice), which contradicts the rule's own documented behavior — [Rule Reference](Rule-Reference.md) states it ignores Node built-ins. Fixed in `is_node_builtin` (`rules.rs`) by adding `module`, `querystring`, `perf_hooks`, `v8`, `cluster`, and `dgram`, with the regression test extended. The import node still appears in the drift; only the incorrect risk badge is gone.
+1. **`module` was missing from the Undeclared-import built-in allowlist.** `import { createRequire } from 'module'` was flagged as an undeclared npm package (twice), which contradicts the rule's own documented behavior — [Rule Reference](Rule-Reference.md) states it ignores Node built-ins. Fixed in `is_node_builtin` (`rules.rs`) by completing the Node built-in allowlist — `module`, `http2`, `inspector`, `perf_hooks`, and others were missing — with the regression test extended. The import node still appears in the drift; only the incorrect risk badge is gone.
 
 2. **The export report had no cap on per-node diff bodies.** Two flags landed inside large, refactored test modules, and the report rendered each module's entire body (before and after) as diff context around a one-line secret match. Those two flags produced roughly 4,600 of the export's 4,859 lines. Fixed in `report.rs`: each side of a flag's diff is now capped (20 lines) with the remainder summarized, and a test covers it. The same renderer backs `diff-drift check --md`, so the CLI benefits too.
 

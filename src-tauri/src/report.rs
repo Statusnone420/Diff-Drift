@@ -109,10 +109,8 @@ fn push_diff_side(out: &mut String, lines: &[String], marker: char) {
     }
     let hidden = lines.len() - shown;
     if hidden > 0 {
-        out.push_str(&format!(
-            "{marker} … {hidden} more line{} (truncated)\n",
-            plural(hidden as u32)
-        ));
+        let suffix = if hidden == 1 { "" } else { "s" };
+        out.push_str(&format!("{marker} … {hidden} more line{suffix} (truncated)\n"));
     }
 }
 
