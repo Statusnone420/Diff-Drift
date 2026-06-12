@@ -16,10 +16,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
     let skipped_note = if s.skipped_files > 0 {
-        format!(
-            " · {} skipped (too large to analyze)",
-            s.skipped_files
-        )
+        format!(" · {} skipped (too large to analyze)", s.skipped_files)
     } else {
         String::new()
     };
@@ -179,7 +176,7 @@ mod tests {
         let results = analyze_all(&root, &Baseline::default());
         let mut state = state.clone();
         if state.approved_fingerprint.as_deref() == Some("CURRENT") {
-            state.approved_fingerprint = Some(fingerprint(&results));
+            state.approved_fingerprint = Some(fingerprint(&results, &[]));
         }
         assemble(&results, &meta(&root, &Baseline::default()), &state)
     }
@@ -261,7 +258,7 @@ mod tests {
         let hash = flag_node_hash(&results, &base.flags[0]).expect("flagged node exists");
         state.dismissed.insert(base.flags[0].id.clone(), hash);
         state.approved_at = Some("12:30".into());
-        state.approved_fingerprint = Some(fingerprint(&results));
+        state.approved_fingerprint = Some(fingerprint(&results, &[]));
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
         let md = render_markdown(&data, "now");
         assert!(md.contains("- **Review:** reviewed at 12:30"));
@@ -285,7 +282,10 @@ mod tests {
         );
 
         let md = render_markdown(&data, "2026-06-10 09:00");
-        assert!(md.contains("## Other changed files"), "section present: {md}");
+        assert!(
+            md.contains("## Other changed files"),
+            "section present: {md}"
+        );
         assert!(
             md.contains("These paths changed but were not analyzed"),
             "intro line: {md}"
@@ -306,7 +306,10 @@ mod tests {
         let json = render_json(&fixture_data(&RepoState::default()));
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(v["schemaVersion"], crate::model::SCHEMA_VERSION);
-        assert!(v["otherFiles"].is_array(), "otherFiles present in JSON export");
+        assert!(
+            v["otherFiles"].is_array(),
+            "otherFiles present in JSON export"
+        );
         assert_eq!(v["session"]["riskCount"], 6);
         assert_eq!(v["flags"].as_array().unwrap().len(), 6);
         assert_eq!(v["session"]["approved"], false);

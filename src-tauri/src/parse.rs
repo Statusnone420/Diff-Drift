@@ -14,8 +14,19 @@ pub struct Parsed {
 
 impl Parsed {
     /// Stable-ish key for matching a node across the before/after versions.
-    pub fn key(&self) -> (String, String) {
-        (self.kind.clone(), self.name.clone())
+    /// Signatures are included only when the diff layer needs to disambiguate
+    /// duplicate siblings such as Java overloads; otherwise signature-only
+    /// edits still render as one modified node.
+    pub fn key(&self, include_signature: bool) -> (String, String, String) {
+        (
+            self.kind.clone(),
+            self.name.clone(),
+            if include_signature {
+                self.signature.clone().unwrap_or_default()
+            } else {
+                String::new()
+            },
+        )
     }
 }
 
@@ -207,13 +218,12 @@ fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
     let name = node_name(node, src, ts_kind);
     let signature = node_signature(node, src, ts_kind);
     let lines = node_lines(node, src);
-    let children = if ts_kind == "function_declaration"
-        || ts_kind == "generator_function_declaration"
-    {
-        function_body_children(node, src)
-    } else {
-        Vec::new()
-    };
+    let children =
+        if ts_kind == "function_declaration" || ts_kind == "generator_function_declaration" {
+            function_body_children(node, src)
+        } else {
+            Vec::new()
+        };
 
     Some(Parsed {
         kind,
@@ -247,8 +257,9 @@ fn node_name(node: Node, src: &[u8], ts_kind: &str) -> String {
             .child_by_field_name("name")
             .map(|n| text(n, src).to_string())
             .unwrap_or_else(|| "function".into()),
-        "lexical_declaration" | "variable_declaration" => declarator_name(node, src)
-            .unwrap_or_else(|| "declaration".into()),
+        "lexical_declaration" | "variable_declaration" => {
+            declarator_name(node, src).unwrap_or_else(|| "declaration".into())
+        }
         "if_statement" => "if".into(),
         "return_statement" => "return".into(),
         "expression_statement" => snippet(node, src, 48),
@@ -404,9 +415,7 @@ where
 }
 
 mod rust {
-    use super::{
-        body_children, first_child_of_kinds, node_lines, snippet, text, Node, Parsed,
-    };
+    use super::{body_children, first_child_of_kinds, node_lines, snippet, text, Node, Parsed};
 
     /// Map a Rust node into a `Parsed`, or `None` to skip (comments, attributes).
     pub fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
@@ -653,11 +662,14 @@ mod python {
     use super::{body_children, node_lines, snippet, text, Node, Parsed};
 
     pub fn map_node(node: Node, src: &[u8]) -> Option<Parsed> {
-        // A decorated def/class wraps the real definition — unwrap to it so the
-        // skeleton shows the function/class, not a `Decorator` shell.
+        // A decorated def/class wraps the real definition. Keep the definition's
+        // kind/name/signature, but preserve the wrapper's lines so decorator-only
+        // drift is visible.
         if node.kind() == "decorated_definition" {
             if let Some(def) = node.child_by_field_name("definition") {
-                return map_node(def, src);
+                let mut parsed = map_node(def, src)?;
+                parsed.lines = node_lines(node, src);
+                return Some(parsed);
             }
         }
         let ts_kind = node.kind();
@@ -716,8 +728,9 @@ mod python {
                 .child_by_field_name("name")
                 .map(|n| text(n, src).to_string())
                 .unwrap_or_default(),
-            "expression_statement" => assignment_target(node, src)
-                .unwrap_or_else(|| snippet(node, src, 48)),
+            "expression_statement" => {
+                assignment_target(node, src).unwrap_or_else(|| snippet(node, src, 48))
+            }
             _ => snippet(node, src, 40),
         }
     }
@@ -790,8 +803,11 @@ mod java {
         let lines = node_lines(node, src);
         let children = match ts_kind {
             // Surface the type's members (methods/fields) as one level of children.
-            "class_declaration" | "interface_declaration" | "enum_declaration"
-            | "record_declaration" | "annotation_type_declaration" => container_children(node, src),
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration" => container_children(node, src),
             // Surface a method's body statements.
             "method_declaration" | "constructor_declaration" => method_children(node, src),
             _ => Vec::new(),
@@ -828,14 +844,19 @@ mod java {
     fn name(node: Node, src: &[u8], ts_kind: &str) -> String {
         match ts_kind {
             "import_declaration" | "package_declaration" => first_scoped_or_identifier(node, src),
-            "class_declaration" | "interface_declaration" | "enum_declaration"
-            | "record_declaration" | "annotation_type_declaration" | "method_declaration"
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration"
+            | "method_declaration"
             | "constructor_declaration" => node
                 .child_by_field_name("name")
                 .map(|n| text(n, src).to_string())
                 .unwrap_or_default(),
-            "field_declaration" | "local_variable_declaration" => declarator_name(node, src)
-                .unwrap_or_else(|| snippet(node, src, 40)),
+            "field_declaration" | "local_variable_declaration" => {
+                declarator_name(node, src).unwrap_or_else(|| snippet(node, src, 40))
+            }
             _ => snippet(node, src, 40),
         }
     }
@@ -887,10 +908,15 @@ mod csharp {
             "using_directive" => "ImportDeclaration",
             "namespace_declaration" | "file_scoped_namespace_declaration" => "PackageDeclaration",
             // class/struct/record/enum all declare a named type.
-            "class_declaration" | "struct_declaration" | "record_declaration"
-            | "record_struct_declaration" | "enum_declaration" => "ClassDeclaration",
+            "class_declaration"
+            | "struct_declaration"
+            | "record_declaration"
+            | "record_struct_declaration"
+            | "enum_declaration" => "ClassDeclaration",
             "interface_declaration" => "InterfaceDeclaration",
-            "method_declaration" | "constructor_declaration" | "destructor_declaration"
+            "method_declaration"
+            | "constructor_declaration"
+            | "destructor_declaration"
             | "local_function_statement" => "FunctionDeclaration",
             "field_declaration" | "property_declaration" | "local_declaration_statement" => {
                 "VariableDeclaration"
@@ -914,12 +940,16 @@ mod csharp {
         let lines = node_lines(node, src);
         let children = match ts_kind {
             // Surface the type's members (methods/fields) as one level of children.
-            "class_declaration" | "struct_declaration" | "record_declaration"
-            | "record_struct_declaration" | "enum_declaration" | "interface_declaration" => {
-                container_children(node, src)
-            }
+            "class_declaration"
+            | "struct_declaration"
+            | "record_declaration"
+            | "record_struct_declaration"
+            | "enum_declaration"
+            | "interface_declaration" => container_children(node, src),
             // Surface a method's body statements.
-            "method_declaration" | "constructor_declaration" | "destructor_declaration"
+            "method_declaration"
+            | "constructor_declaration"
+            | "destructor_declaration"
             | "local_function_statement" => method_children(node, src),
             _ => Vec::new(),
         };
@@ -967,9 +997,15 @@ mod csharp {
                 .child_by_field_name("name")
                 .map(|n| text(n, src).to_string())
                 .unwrap_or_else(|| "namespace".into()),
-            "class_declaration" | "struct_declaration" | "record_declaration"
-            | "record_struct_declaration" | "enum_declaration" | "interface_declaration"
-            | "method_declaration" | "constructor_declaration" | "local_function_statement" => node
+            "class_declaration"
+            | "struct_declaration"
+            | "record_declaration"
+            | "record_struct_declaration"
+            | "enum_declaration"
+            | "interface_declaration"
+            | "method_declaration"
+            | "constructor_declaration"
+            | "local_function_statement" => node
                 .child_by_field_name("name")
                 .map(|n| text(n, src).to_string())
                 .unwrap_or_default(),
@@ -1200,7 +1236,9 @@ mod swift {
             // Swift parses `class`, `struct`, and `enum` all as class_declaration.
             "class_declaration" => "ClassDeclaration",
             "protocol_declaration" => "InterfaceDeclaration",
-            "function_declaration" | "protocol_function_declaration" | "init_declaration"
+            "function_declaration"
+            | "protocol_function_declaration"
+            | "init_declaration"
             | "deinit_declaration" => "FunctionDeclaration",
             "property_declaration" => "VariableDeclaration",
             "if_statement" => "IfStatement",
@@ -1420,21 +1458,34 @@ export default router;
         // holds with the TSX grammar.
         let src = "function Badge({ label }: { label: string }) {\n  return <span className=\"badge\">{label}</span>;\n}\n\nconst App = () => <Badge label=\"hi\" />;\n";
         let nodes = parse_file(src, Lang::Tsx);
-        let kinds: Vec<(&str, &str)> = nodes.iter().map(|n| (n.kind.as_str(), n.name.as_str())).collect();
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
         assert_eq!(
             kinds,
-            vec![("FunctionDeclaration", "Badge"), ("VariableDeclaration", "App")],
+            vec![
+                ("FunctionDeclaration", "Badge"),
+                ("VariableDeclaration", "App")
+            ],
             "JSX parses to clean top-level nodes"
         );
         let child_kinds: Vec<&str> = nodes[0].children.iter().map(|c| c.kind.as_str()).collect();
-        assert_eq!(child_kinds, vec!["ReturnStatement"], "JSX body parses cleanly");
+        assert_eq!(
+            child_kinds,
+            vec!["ReturnStatement"],
+            "JSX body parses cleanly"
+        );
     }
 
     #[test]
     fn javascript_and_jsx_parse_with_the_js_grammar() {
         let src = "const config = { redact: [] };\n\nfunction handler(req, res) {\n  return res.json({ ok: true });\n}\n\nmodule.exports = handler;\n";
         let nodes = parse_file(src, Lang::Js);
-        let kinds: Vec<(&str, &str)> = nodes.iter().map(|n| (n.kind.as_str(), n.name.as_str())).collect();
+        let kinds: Vec<(&str, &str)> = nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
         assert_eq!(
             kinds,
             vec![
@@ -1446,7 +1497,8 @@ export default router;
         assert_eq!(nodes[1].signature.as_deref(), Some("(req, res)"));
 
         // JSX is native syntax in the JS grammar.
-        let jsx = "function Badge({ label }) {\n  return <span className=\"badge\">{label}</span>;\n}\n";
+        let jsx =
+            "function Badge({ label }) {\n  return <span className=\"badge\">{label}</span>;\n}\n";
         let nodes = parse_file(jsx, Lang::Jsx);
         assert_eq!(nodes[0].kind, "FunctionDeclaration");
         assert_eq!(nodes[0].name, "Badge");
@@ -1923,7 +1975,10 @@ protocol Shape {
             ]
         );
         let process = &nodes[2];
-        assert_eq!(process.signature.as_deref(), Some("(input: String) -> Bool"));
+        assert_eq!(
+            process.signature.as_deref(),
+            Some("(input: String) -> Bool")
+        );
     }
 
     #[test]
