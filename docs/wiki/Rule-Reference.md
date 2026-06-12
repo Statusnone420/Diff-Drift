@@ -75,7 +75,7 @@ Dependency drift ships for six manifest ecosystems: npm (`package.json`), Cargo 
 
 These are the honest edges of the current cut. Each line is something a user might see and the reason it works that way. Flags are review prompts, so the conservative choice is to keep a rule grounded and let a reviewer judge rather than narrow it into silence.
 
-1. A pure rename can read as removed code. On a single-node diff there is no rename detection, so renaming `cfg` to `tlsCfg`, `validateEmail` to `isValidEmail`, or `to_string` to `to_owned` next to a marker can surface a differential flag.
+1. A pure rename can read as removed code. On a single-node diff there is no rename detection, so renaming `cfg` to `tlsCfg`, `validateEmail` to `isValidEmail`, or `to_string` to `to_owned` next to a marker can surface a differential flag. The same applies to a signature change on an overloaded function: overloads are told apart by signature, so changing one (for example adding an annotation) reads as a removed and an added function rather than a modified one.
 2. Kotlin guard-removed is silent on `?.let`, `takeIf?.also`, and `when`-branch guard idioms. It reads the consequences of an `if` block; these null-safe forms fall outside what it matches.
 3. Rust error-handling-removed treats `?` becoming `.expect("msg")` as removed handling, because for error propagation it is.
 4. verify→decode is intentionally broad: any verify-prefixed call renamed to a decode-prefixed call flags, including cross-domain pairs.
