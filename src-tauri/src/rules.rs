@@ -998,17 +998,22 @@ fn is_node_builtin(module: &str) -> bool {
             | "async_hooks"
             | "buffer"
             | "child_process"
+            | "cluster"
             | "console"
             | "crypto"
+            | "dgram"
             | "dns"
             | "events"
             | "fs"
             | "http"
             | "https"
+            | "module"
             | "net"
             | "os"
             | "path"
+            | "perf_hooks"
             | "process"
+            | "querystring"
             | "readline"
             | "stream"
             | "string_decoder"
@@ -1017,6 +1022,7 @@ fn is_node_builtin(module: &str) -> bool {
             | "tty"
             | "url"
             | "util"
+            | "v8"
             | "vm"
             | "worker_threads"
             | "zlib"
@@ -2112,6 +2118,16 @@ mod tests {
             "net",
             "os",
             "util",
+            // Regression: the v0.4.0 self-review dogfood flagged
+            // `import { createRequire } from 'module'` as an undeclared package
+            // because these stdlib modules were missing from the allowlist.
+            "module",
+            "node:module",
+            "cluster",
+            "dgram",
+            "perf_hooks",
+            "querystring",
+            "v8",
         ] {
             import.name = module.into();
             assert!(
