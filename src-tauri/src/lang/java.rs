@@ -107,6 +107,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file,
+            is_build_script: false,
             lang: Lang::Java,
         }
     }
@@ -305,6 +306,54 @@ mod tests {
         assert_eq!(fired(&node, true), None);
     }
 
+    #[test]
+    fn child_process_ignores_marker_in_comment_or_string() {
+        // FIX 1: `Runtime.getRuntime().exec(` named only in a comment/string is
+        // not a call.
+        let comment = modified(
+            "FunctionDeclaration",
+            "void run(String cmd) { handle(cmd); }",
+            "void run(String cmd) {\n    // never Runtime.getRuntime().exec(cmd) on user input\n    handle(cmd);\n}",
+        );
+        assert_eq!(fired(&comment, false), None, "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            "void run(String cmd) { handle(cmd); }",
+            "void run(String cmd) {\n    log(\"wraps Runtime.getRuntime().exec internally\");\n}",
+        );
+        assert_eq!(fired(&string, false), None, "marker in string");
+    }
+
+    #[test]
+    fn eval_call_ignores_marker_in_comment_or_string() {
+        // FIX 1: the ScriptEngine eval idiom named only in a comment/string must
+        // not fire.
+        let comment = modified(
+            "FunctionDeclaration",
+            "Object run(String s) { return compute(s); }",
+            "Object run(String s) {\n    // avoid new ScriptEngineManager().getEngineByName(\"js\")\n    return compute(s);\n}",
+        );
+        assert_eq!(fired(&comment, false), None, "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            "Object run(String s) { return compute(s); }",
+            "Object run(String s) {\n    throw new IllegalStateException(\"getEngineByName(\\\"js\\\") is banned\");\n}",
+        );
+        assert_eq!(fired(&string, false), None, "marker in string");
+    }
+
+    #[test]
+    fn eval_call_suppressed_in_test_file() {
+        // FIX 5: a ScriptEngine eval inside a test harness is scaffolding.
+        let node = modified(
+            "FunctionDeclaration",
+            "int n = compute(input);",
+            "ScriptEngine engine = new ScriptEngineManager().getEngineByName(\"js\");\nObject n = engine.eval(input);",
+        );
+        assert_eq!(fired(&node, true), None);
+        assert_eq!(fired(&node, false), Some("eval-call"));
+    }
+
     // ---------- tls-disable ----------
 
     #[test]
@@ -334,6 +383,35 @@ mod tests {
             "ExpressionStatement",
             "conn.setHostnameVerifier(old);",
             "conn.setHostnameVerifier(new DefaultHostnameVerifier());",
+        );
+        assert_eq!(fired(&node, false), None);
+    }
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: the all-trusting verifier named only in a comment/string must
+        // not fire.
+        let comment = modified(
+            "FunctionDeclaration",
+            "void cfg(HttpsURLConnection c) { c.setHostnameVerifier(v); }",
+            "void cfg(HttpsURLConnection c) {\n    // never use NoopHostnameVerifier in prod\n    c.setHostnameVerifier(v);\n}",
+        );
+        assert_eq!(fired(&comment, false), None, "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            "void cfg() { log(\"tls\"); }",
+            "void cfg() {\n    log(\"NoopHostnameVerifier is forbidden\");\n}",
+        );
+        assert_eq!(fired(&string, false), None, "marker in string");
+    }
+
+    #[test]
+    fn broadened_cors_ignores_marker_in_comment() {
+        // FIX 1: a wildcard @CrossOrigin named only in a comment must not fire.
+        let node = modified(
+            "FunctionDeclaration",
+            "@CrossOrigin(origins = \"https://app.example.com\")\npublic List<Order> list() { return repo.all(); }",
+            "// TODO: never widen to @CrossOrigin(origins = \"*\")\n@CrossOrigin(origins = \"https://app.example.com\")\npublic List<Order> list() { return repo.all(); }",
         );
         assert_eq!(fired(&node, false), None);
     }
@@ -444,6 +522,17 @@ mod tests {
             "ExpressionStatement",
             "ResponseCookie c = ResponseCookie.from(\"sid\", v).sameSite(\"Lax\").build();",
             "ResponseCookie c = ResponseCookie.from(\"sid\", v).sameSite(\"Lax\").secure(true).build();",
+        );
+        assert_eq!(fired(&node, false), None);
+    }
+
+    #[test]
+    fn samesite_weakened_ignores_marker_in_comment() {
+        // FIX 1: the SameSite downgrade named only in a comment must not fire.
+        let node = modified(
+            "ExpressionStatement",
+            "ResponseCookie c = ResponseCookie.from(\"sid\", v).sameSite(\"Strict\").build(); // ok",
+            "ResponseCookie c = ResponseCookie.from(\"sid\", v).sameSite(\"Strict\").build(); // not sameSite(\"None\")",
         );
         assert_eq!(fired(&node, false), None);
     }

@@ -70,6 +70,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Go,
         }
     }
@@ -78,6 +79,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Go,
         }
     }
@@ -286,6 +288,31 @@ mod tests {
         assert_eq!(fired(&n, &test_ctx()), None);
     }
 
+    #[test]
+    fn child_process_ignores_marker_in_comment_or_string() {
+        // FIX 1: an `exec.Command(` named only in a comment/string is not a call.
+        let comment = node(
+            "ExpressionStatement",
+            &["out := run(args)"],
+            &["// never exec.Command(\"sh\", \"-c\", args) on user input", "out := run(args)"],
+        );
+        assert_eq!(fired(&comment, &ctx()), None, "marker in comment");
+        let string = node(
+            "VariableDeclaration",
+            &["doc := \"helper\""],
+            &["doc := \"wraps exec.Command(name) for tests\""],
+        );
+        assert_eq!(fired(&string, &ctx()), None, "marker in string");
+        // The os/exec import string is a module specifier — still detected (the
+        // import path is intentionally not blanked).
+        let import = node(
+            "ImportDeclaration",
+            &["import \"fmt\""],
+            &["import \"os/exec\""],
+        );
+        assert_eq!(fired(&import, &ctx()), Some("child-process"), "real import still fires");
+    }
+
     // ---------------- tls-disable ----------------
 
     #[test]
@@ -296,6 +323,24 @@ mod tests {
             &["cfg := &tls.Config{InsecureSkipVerify: true}"],
         );
         assert_eq!(fired(&n, &ctx()), Some("tls-reject-false"));
+    }
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: `InsecureSkipVerify: true` named only in a comment or an error
+        // string must not fire.
+        let comment = node(
+            "VariableDeclaration",
+            &["cfg := &tls.Config{}"],
+            &["// setting InsecureSkipVerify: true would be insecure", "cfg := &tls.Config{}"],
+        );
+        assert_eq!(fired(&comment, &ctx()), None, "marker in comment");
+        let string = node(
+            "ExpressionStatement",
+            &["log.Print(\"tls ok\")"],
+            &["log.Fatal(\"refusing InsecureSkipVerify: true\")"],
+        );
+        assert_eq!(fired(&string, &ctx()), None, "marker in string");
     }
 
     #[test]
@@ -348,6 +393,19 @@ mod tests {
     }
 
     // ---------------- cors-permissive ----------------
+
+    #[test]
+    fn cors_permissive_ignores_marker_in_comment() {
+        // FIX 1: a permissive-origin marker named only in a comment must not
+        // fire. (`AllowAllOrigins: true` is a code field, so the comment-only
+        // mention is the false positive to suppress.)
+        let n = node(
+            "VariableDeclaration",
+            &["cfg := cors.Config{AllowAllOrigins: false}"],
+            &["// never set cors.Config{AllowAllOrigins: true}", "cfg := cors.Config{AllowAllOrigins: false}"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
 
     #[test]
     fn cors_permissive_fires_on_allow_all_origins() {
@@ -418,6 +476,31 @@ mod tests {
             "VariableDeclaration",
             &["c := http.Cookie{Name: \"sid\", HttpOnly: true}"],
             &["c := http.Cookie{Name: \"session\", HttpOnly: true}"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
+    #[test]
+    fn cookie_httponly_ignores_non_cookie_struct() {
+        // FIX 2: an `HttpOnly: true` field removed from a non-cookie struct must
+        // not read as a weakened cookie — cookie context is required.
+        let n = node(
+            "VariableDeclaration",
+            &["cfg := SessionConfig{HttpOnly: true}"],
+            &["cfg := SessionConfig{}"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
+    #[test]
+    fn cookie_samesite_ignores_marker_in_comment() {
+        // FIX 1: the SameSite downgrade named only in a comment must not fire.
+        let n = node(
+            "VariableDeclaration",
+            &["c := http.Cookie{SameSite: http.SameSiteStrictMode}"],
+            &[
+                "c := http.Cookie{SameSite: http.SameSiteStrictMode} // not SameSiteNoneMode",
+            ],
         );
         assert_eq!(fired(&n, &ctx()), None);
     }

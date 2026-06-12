@@ -99,6 +99,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Swift,
         }
     }
@@ -107,6 +108,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Swift,
         }
     }
@@ -246,6 +248,30 @@ mod tests {
         assert_eq!(fired(&n, &ctx()), Some("removed-sanitize"));
     }
 
+    #[test]
+    fn removed_sanitize_ignores_validator_definition_churn() {
+        // FIX 3 (Alamofire cluster): the matched node is the DEFINITION of a
+        // method literally named `validate` whose signature gains `@Sendable`.
+        // Its body's internal `validate(...)` self-call is restructured away, but
+        // this is the validator's own definition churning — NOT a caller dropping
+        // sanitization. Must stay silent. (Without the guard the lost internal
+        // `validate(...)` callee reads as a removed sanitizer and flags.)
+        let n = node(
+            "FunctionDeclaration",
+            NodeState::Modified,
+            "func validate(_ rule: Rule) -> Self {\n    return validate(rule, options: defaults)\n}",
+            "@Sendable func validate(_ rule: Rule) -> Self {\n    return Self(rule)\n}",
+        );
+        // `node.name` carries the declared method name; mirror what the parser
+        // surfaces for a Swift function declaration.
+        let mut n = n;
+        n.name = "validate".into();
+        assert!(
+            fired(&n, &ctx()).is_none(),
+            "a validator definition churning must not read as removed sanitization"
+        );
+    }
+
     // ---------------- verify-to-decode ----------------
 
     #[test]
@@ -344,6 +370,26 @@ mod tests {
         assert!(fired(&n, &ctx()).is_none());
     }
 
+    #[test]
+    fn subprocess_ignores_marker_in_comment_or_string() {
+        // FIX 1: the `Process()` shell-out idiom named only in a comment/string
+        // must not fire.
+        let comment = node(
+            "FunctionDeclaration",
+            NodeState::Added,
+            "",
+            "// never launch Process() with launchPath = \"/bin/sh\" on user input\nhandle(cmd)",
+        );
+        assert!(fired(&comment, &ctx()).is_none(), "marker in comment");
+        let string = node(
+            "FunctionDeclaration",
+            NodeState::Added,
+            "",
+            "log(\"helper wraps Process() and /bin/sh\")",
+        );
+        assert!(fired(&string, &ctx()).is_none(), "marker in string");
+    }
+
     // ---------------- tls-disable ----------------
 
     #[test]
@@ -378,6 +424,26 @@ mod tests {
             "completionHandler(.performDefaultHandling, nil)\nlog(challenge)",
         );
         assert!(fired(&n, &ctx()).is_none());
+    }
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: `DisabledTrustEvaluator` named only in a comment/string must not
+        // fire — Alamofire docs/log lines reference it without using it.
+        let comment = node(
+            "VariableDeclaration",
+            NodeState::Modified,
+            "let evaluators = [\"api.example.com\": PinnedCertificatesTrustEvaluator()]",
+            "// do NOT swap in DisabledTrustEvaluator() here\nlet evaluators = [\"api.example.com\": PinnedCertificatesTrustEvaluator()]",
+        );
+        assert!(fired(&comment, &ctx()).is_none(), "marker in comment");
+        let string = node(
+            "FunctionDeclaration",
+            NodeState::Modified,
+            "configure()",
+            "fatalError(\"DisabledTrustEvaluator is banned in release builds\")",
+        );
+        assert!(fired(&string, &ctx()).is_none(), "marker in string");
     }
 
     #[test]
@@ -448,6 +514,18 @@ mod tests {
             NodeState::Modified,
             "let cors = CORSMiddleware.Configuration(allowedOrigin: .custom(\"https://app.example.com\"))",
             "let cors = CORSMiddleware.Configuration(allowedOrigin: .custom(\"https://www.example.com\"))",
+        );
+        assert!(fired(&n, &ctx()).is_none());
+    }
+
+    #[test]
+    fn cors_permissive_ignores_marker_in_comment() {
+        // FIX 1: `allowedOrigin: .all` named only in a comment must not fire.
+        let n = node(
+            "VariableDeclaration",
+            NodeState::Modified,
+            "let cors = CORSMiddleware.Configuration(allowedOrigin: .custom(\"https://app.example.com\"))",
+            "// never set allowedOrigin: .all in production\nlet cors = CORSMiddleware.Configuration(allowedOrigin: .custom(\"https://app.example.com\"))",
         );
         assert!(fired(&n, &ctx()).is_none());
     }

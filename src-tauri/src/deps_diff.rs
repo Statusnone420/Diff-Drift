@@ -264,12 +264,18 @@ fn cargo_dep_spec(value: &toml::Value) -> String {
     match value {
         toml::Value::String(s) => s.clone(),
         toml::Value::Table(t) => {
-            if let Some(v) = t.get("version").and_then(|v| v.as_str()) {
+            // A path/workspace dep resolves inside this repo or workspace — no
+            // registry lookup, so no slopsquatting vector. Render those markers
+            // first (and unconditionally, even alongside a `version` key) so the
+            // rule can recognize and downgrade them.
+            if let Some(p) = t.get("path").and_then(|v| v.as_str()) {
+                format!("path: {p}")
+            } else if t.get("workspace").and_then(|v| v.as_bool()) == Some(true) {
+                "workspace".to_string()
+            } else if let Some(v) = t.get("version").and_then(|v| v.as_str()) {
                 v.to_string()
             } else if let Some(g) = t.get("git").and_then(|v| v.as_str()) {
                 format!("git: {g}")
-            } else if let Some(p) = t.get("path").and_then(|v| v.as_str()) {
-                format!("path: {p}")
             } else {
                 "(table)".to_string()
             }
@@ -384,6 +390,7 @@ pub fn analyze_cargo_toml(
     build_result("cargo_toml", "Cargo.toml", "TOML", nodes, pending, |rule| match rule {
         "dep-not-in-lockfile" => (Severity::High, "Dependency not in lockfile"),
         "dep-added" => (Severity::Medium, "New dependency"),
+        "dep-added-local" => (Severity::Low, "Local dependency added"),
         "dep-changed" => (Severity::Low, "Dependency version changed"),
         "cargo-build-script" => (Severity::Medium, "Build script changed"),
         _ => (Severity::Low, "Dependency"),
@@ -409,6 +416,22 @@ fn cargo_go_rule(
     sec: &str,
     lockfile: Option<&VouchedNames>,
 ) -> Option<(&'static str, String)> {
+    // A Cargo path/workspace dependency resolves within this repo or workspace
+    // — no registry fetch, so the slopsquatting/hallucination accusation does
+    // not apply. Downgrade an add to Low regardless of lockfile state.
+    if state == NodeState::Added && (new.starts_with("path: ") || new == "workspace") {
+        let where_ = if new == "workspace" {
+            "inherited from the workspace".to_string()
+        } else {
+            format!("resolved from {new}")
+        };
+        return Some((
+            "dep-added-local",
+            format!(
+                "Local dependency \u{201c}{name}\u{201d} ({where_}) — a workspace-local crate, not a registry package."
+            ),
+        ));
+    }
     match state {
         NodeState::Added => match lockfile {
             Some(lock) if !lock.contains(name) => Some((
@@ -436,33 +459,49 @@ fn cargo_go_rule(
 
 /// Module paths and versions from a `require` directive in `go.mod`, both the
 /// block form (`require (\n  path v1.2.3\n)`) and single-line `require path ver`.
-fn go_mod_requires(text: &str) -> Entries {
+/// `indirect` collects the module paths carrying a `// indirect` marker —
+/// transitive entries `go mod tidy` writes into the graph, distinct from a
+/// dependency the developer chose directly.
+fn go_mod_requires(text: &str) -> (Entries, BTreeSet<String>) {
     let mut entries = Entries::new();
+    let mut indirect = BTreeSet::new();
     let mut in_block = false;
     for raw in text.lines() {
-        let line = raw.split("//").next().unwrap_or("").trim();
-        if line.is_empty() {
+        let (code, comment) = match raw.split_once("//") {
+            Some((c, rest)) => (c.trim(), rest.trim()),
+            None => (raw.trim(), ""),
+        };
+        let is_indirect = comment == "indirect" || comment.starts_with("indirect");
+        if code.is_empty() {
             continue;
         }
         if in_block {
-            if line == ")" {
+            if code == ")" {
                 in_block = false;
                 continue;
             }
-            insert_go_require(&mut entries, line);
-        } else if line == "require (" {
+            insert_go_require(&mut entries, &mut indirect, code, is_indirect);
+        } else if code == "require (" {
             in_block = true;
-        } else if let Some(rest) = line.strip_prefix("require ") {
-            insert_go_require(&mut entries, rest.trim());
+        } else if let Some(rest) = code.strip_prefix("require ") {
+            insert_go_require(&mut entries, &mut indirect, rest.trim(), is_indirect);
         }
     }
-    entries
+    (entries, indirect)
 }
 
-fn insert_go_require(entries: &mut Entries, line: &str) {
+fn insert_go_require(
+    entries: &mut Entries,
+    indirect: &mut BTreeSet<String>,
+    line: &str,
+    is_indirect: bool,
+) {
     let mut parts = line.split_whitespace();
     if let (Some(path), Some(ver)) = (parts.next(), parts.next()) {
         entries.insert(path.to_string(), ver.to_string());
+        if is_indirect {
+            indirect.insert(path.to_string());
+        }
     }
 }
 
@@ -473,8 +512,8 @@ pub fn analyze_go_mod(
     after: Option<&str>,
     lockfile: Option<&VouchedNames>,
 ) -> Option<FileResult> {
-    let before_reqs = before.map(go_mod_requires).unwrap_or_default();
-    let after_reqs = after.map(go_mod_requires).unwrap_or_default();
+    let (before_reqs, _) = before.map(go_mod_requires).unwrap_or_default();
+    let (after_reqs, after_indirect) = after.map(go_mod_requires).unwrap_or_default();
 
     let mut nodes: Vec<AstNode> = Vec::new();
     let pending = diff_entries(
@@ -483,12 +522,27 @@ pub fn analyze_go_mod(
         "require",
         "Module",
         &mut nodes,
-        |state, name, old, new| cargo_go_rule(state, name, old, new, "require", lockfile),
+        |state, name, old, new| {
+            // `// indirect` requires are transitive entries the module graph
+            // pulls in (and go.sum vouches for) — `go mod tidy` adds them in
+            // bulk. They aren't a developer-chosen direct dependency, so an
+            // added indirect require is Low, not the Medium "you chose this".
+            if state == NodeState::Added && after_indirect.contains(name) {
+                return Some((
+                    "dep-added-indirect",
+                    format!(
+                        "Indirect dependency \u{201c}{name}\u{201d} ({new}) added by the module graph — a transitive requirement, not a direct choice."
+                    ),
+                ));
+            }
+            cargo_go_rule(state, name, old, new, "require", lockfile)
+        },
     );
 
     build_result("go_mod", "go.mod", "Go", nodes, pending, |rule| match rule {
         "dep-not-in-lockfile" => (Severity::High, "Dependency not in lockfile"),
         "dep-added" => (Severity::Medium, "New dependency"),
+        "dep-added-indirect" => (Severity::Low, "Indirect dependency added"),
         "dep-changed" => (Severity::Low, "Dependency version changed"),
         _ => (Severity::Low, "New dependency"),
     })
@@ -502,9 +556,12 @@ fn requirement_entry(line: &str) -> Option<(String, String)> {
     if line.is_empty() || line.starts_with('-') {
         return None;
     }
-    // Environment markers / extras: keep up to the first marker for the spec but
-    // derive the name from the leading package token.
-    let spec = line.to_string();
+    // PEP 508 environment markers (`; python_version < "3.12"`) gate *where* a
+    // package installs, not which package or version. A marker-only edit leaves
+    // the name + version constraint identical, so drop everything from the
+    // first `;` before forming the comparison spec — otherwise a marker bump
+    // (e.g. `< "3.12"` → `< "3.13"`) falsely reads as a version change.
+    let spec = line.split(';').next().unwrap_or(line).trim().to_string();
     let end = line
         .find(['=', '<', '>', '~', '!', ' ', '[', ';', '@'])
         .unwrap_or(line.len());
@@ -870,6 +927,21 @@ pub fn analyze_csproj(
     })
 }
 
+/// npm lifecycle scripts that run automatically during `npm install` (directly
+/// or via a `pre`/`post` pairing). A change to one of these executes without an
+/// explicit invocation — the supply-chain surface worth the sterner wording.
+fn is_npm_lifecycle_script(name: &str) -> bool {
+    const INSTALL_LIFECYCLE: [&str; 6] = [
+        "preinstall",
+        "install",
+        "postinstall",
+        "prepare",
+        "prepublish",
+        "prepublishOnly",
+    ];
+    INSTALL_LIFECYCLE.contains(&name)
+}
+
 fn section(json: &serde_json::Value, key: &str) -> Entries {
     json.get(key)
         .and_then(|v| v.as_object())
@@ -933,13 +1005,23 @@ pub fn analyze_package_json(
         "Script",
         &mut nodes,
         |state, name, _old, _new| match state {
-            NodeState::Added | NodeState::Modified => Some((
-                "script-changed",
-                format!(
-                    "npm script \u{201c}{name}\u{201d} was {} — scripts run arbitrary shell commands during install and dev.",
-                    if state == NodeState::Added { "added" } else { "changed" }
-                ),
-            )),
+            NodeState::Added | NodeState::Modified => {
+                let verb = if state == NodeState::Added { "added" } else { "changed" };
+                // Lifecycle hooks (preinstall/install/postinstall/prepare…) run
+                // automatically on `npm install` — that's the supply-chain risk
+                // worth the stern wording. An ordinary script (build/test/lint)
+                // only runs when explicitly invoked, so keep it proportionate.
+                let desc = if is_npm_lifecycle_script(name) {
+                    format!(
+                        "npm install-lifecycle script \u{201c}{name}\u{201d} was {verb} — it runs automatically on install; confirm the command is intended."
+                    )
+                } else {
+                    format!(
+                        "npm script \u{201c}{name}\u{201d} was {verb} — review the shell command it runs."
+                    )
+                };
+                Some(("script-changed", desc))
+            }
             _ => None,
         },
     ));
@@ -1142,6 +1224,35 @@ mod tests {
     }
 
     #[test]
+    fn npm_ordinary_script_edit_is_proportionate_but_lifecycle_stays_stern() {
+        // Appending a flag to a build script (`tsc` → `tsc --verbose`) does not
+        // "run arbitrary shell commands during install" — it runs only when
+        // invoked. The wording should be proportionate (no install claim) while
+        // still flagging the change for review.
+        let before = r#"{ "scripts": { "build": "tsc" } }"#;
+        let after = r#"{ "scripts": { "build": "tsc --verbose" } }"#;
+        let res = analyze_package_json(Some(before), Some(after), None).unwrap();
+        let f = &res.flags[0];
+        assert_eq!(f.r#type, "npm script changed");
+        assert!(matches!(f.severity, Severity::Medium), "still surfaced for review");
+        assert!(
+            !f.desc.contains("install"),
+            "an ordinary build script does not run on install — drop the install claim"
+        );
+        assert!(f.desc.contains("review"), "still prompts review of the command");
+
+        // A genuine install-lifecycle hook keeps the stern, install-aware wording.
+        let after_hook = r#"{ "scripts": { "build": "tsc", "postinstall": "curl x | sh" } }"#;
+        let res2 = analyze_package_json(Some(before), Some(after_hook), None).unwrap();
+        let hook = res2.flags.iter().find(|f| f.desc.contains("postinstall")).unwrap();
+        assert!(matches!(hook.severity, Severity::Medium));
+        assert!(
+            hook.desc.contains("install"),
+            "install-lifecycle hooks run automatically — keep the install warning"
+        );
+    }
+
+    #[test]
     fn no_lockfile_downgrades_to_new_dependency() {
         let after = r#"{ "dependencies": { "totally-real-pkg": "^1.0.0" } }"#;
         let res = analyze_package_json(None, Some(after), None).unwrap();
@@ -1325,6 +1436,39 @@ mod tests {
         assert!(!names.contains("pad"), "exact match, no suffix collision");
     }
 
+    #[test]
+    fn cargo_path_dependency_is_low_not_lockfile_accusation() {
+        // A sibling-crate `path = "../x"` dep resolves inside the workspace —
+        // no registry lookup, so no slopsquatting vector. It must NOT get the
+        // High "not in lockfile" accusation nor the Medium "verify it's vetted"
+        // framing, even when the lockfile doesn't list it by name.
+        let before = "[dependencies]\nserde = \"1\"\n";
+        let after = "[dependencies]\nserde = \"1\"\nshared-utils = { path = \"../shared-utils\" }\n";
+        let lock = vouched(&["serde"]); // sibling crate not (yet) in the lock set
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock)).unwrap();
+        let local = res.flags.iter().find(|f| f.desc.contains("shared-utils")).unwrap();
+        assert!(matches!(local.severity, Severity::Low), "path dep is Low, not High/Medium");
+        assert_eq!(local.r#type, "Local dependency added");
+        assert!(
+            !local.desc.contains("Hallucinated") && !local.desc.contains("lockfile"),
+            "no slopsquatting accusation for an in-repo path dep"
+        );
+        assert!(local.desc.contains("../shared-utils"), "names the resolved path");
+
+        // A `workspace = true` inherited dep is likewise Low.
+        let after_ws = "[dependencies]\nserde = \"1\"\nshared-utils = { workspace = true }\n";
+        let res_ws = analyze_cargo_toml(Some(before), Some(after_ws), Some(&lock)).unwrap();
+        let ws = res_ws.flags.iter().find(|f| f.desc.contains("shared-utils")).unwrap();
+        assert!(matches!(ws.severity, Severity::Low));
+        assert!(ws.desc.contains("workspace"), "workspace inheritance is named");
+
+        // Sanity: a genuine registry add that isn't vouched still fires High.
+        let after_reg = "[dependencies]\nserde = \"1\"\nghost-crate = \"0.1\"\n";
+        let res_reg = analyze_cargo_toml(Some(before), Some(after_reg), Some(&lock)).unwrap();
+        let ghost = res_reg.flags.iter().find(|f| f.desc.contains("ghost-crate")).unwrap();
+        assert!(matches!(ghost.severity, Severity::High), "registry add still accused");
+    }
+
     // --- Go ----------------------------------------------------------------
 
     #[test]
@@ -1356,6 +1500,53 @@ mod tests {
             analyze_go_mod(Some(before), Some(after), Some(&vouched(&["github.com/a/b"]))).is_none(),
             "go-version and comment churn is not dependency drift"
         );
+    }
+
+    #[test]
+    fn go_added_indirect_requires_are_low_not_medium() {
+        // `go mod tidy` routinely writes a batch of `// indirect` transitive
+        // requires, all vouched by go.sum. They aren't a direct developer
+        // choice, so they must downgrade to Low — not fire Medium "New
+        // dependency" en masse.
+        let before = "module m\n\ngo 1.22\n\nrequire (\n\tgithub.com/real/direct v1.0.0\n)\n";
+        let after = "module m\n\ngo 1.22\n\nrequire (\n\tgithub.com/real/direct v1.0.0\n)\n\nrequire (\n\tgithub.com/transitive/a v1.1.0 // indirect\n\tgithub.com/transitive/b v2.2.0 // indirect\n\tgithub.com/transitive/c v3.3.0 // indirect\n)\n";
+        // go.sum vouches for every added indirect entry.
+        let lock = vouched(&[
+            "github.com/real/direct",
+            "github.com/transitive/a",
+            "github.com/transitive/b",
+            "github.com/transitive/c",
+        ]);
+        let res = analyze_go_mod(Some(before), Some(after), Some(&lock)).unwrap();
+        let indirect: Vec<_> = res
+            .flags
+            .iter()
+            .filter(|f| f.desc.contains("github.com/transitive/"))
+            .collect();
+        assert_eq!(indirect.len(), 3, "all three indirect adds produce a flag node");
+        assert!(
+            indirect.iter().all(|f| matches!(f.severity, Severity::Low)),
+            "indirect adds are Low, not Medium"
+        );
+        assert!(
+            indirect.iter().all(|f| f.r#type == "Indirect dependency added"),
+            "indirect adds carry the module-graph label, not 'New dependency'"
+        );
+        assert!(
+            indirect.iter().all(|f| f.desc.contains("module graph")),
+            "wording attributes the add to the module graph, not a direct choice"
+        );
+        // A real direct dependency still gets the Medium treatment.
+        let after_direct = "module m\n\ngo 1.22\n\nrequire (\n\tgithub.com/real/direct v1.0.0\n\tgithub.com/real/chosen v1.0.0\n)\n";
+        let res2 = analyze_go_mod(
+            Some(before),
+            Some(after_direct),
+            Some(&vouched(&["github.com/real/direct", "github.com/real/chosen"])),
+        )
+        .unwrap();
+        let chosen = res2.flags.iter().find(|f| f.desc.contains("github.com/real/chosen")).unwrap();
+        assert!(matches!(chosen.severity, Severity::Medium), "direct add stays Medium");
+        assert_eq!(chosen.r#type, "New dependency");
     }
 
     #[test]
@@ -1396,6 +1587,28 @@ mod tests {
         let res = analyze_requirements_txt(Some(before), Some(after)).unwrap();
         assert_eq!(res.flags[0].r#type, "Dependency version changed");
         assert!(res.flags[0].desc.contains("django==4.0 → django==4.2"));
+    }
+
+    #[test]
+    fn requirements_marker_only_change_is_not_a_version_change() {
+        // Only the PEP 508 environment marker moves; the package and its version
+        // constraint are identical. Reporting "version changed" would be
+        // factually wrong, so this must produce no flag at all.
+        let before = "importlib-metadata==6.0 ; python_version < \"3.12\"\n";
+        let after = "importlib-metadata==6.0 ; python_version < \"3.13\"\n";
+        assert!(
+            analyze_requirements_txt(Some(before), Some(after)).is_none(),
+            "a marker-only edit leaves the version unchanged — no version-change flag"
+        );
+
+        // But a real version bump alongside a marker is still caught, and the
+        // reported spec excludes the marker noise.
+        let bumped = "importlib-metadata==6.1 ; python_version < \"3.12\"\n";
+        let res = analyze_requirements_txt(Some(before), Some(bumped)).unwrap();
+        assert_eq!(res.flags[0].r#type, "Dependency version changed");
+        assert!(res.flags[0].desc.contains("==6.0 → "));
+        assert!(res.flags[0].desc.contains("==6.1"));
+        assert!(!res.flags[0].desc.contains("python_version"), "marker is not part of the spec");
     }
 
     // --- pyproject.toml ----------------------------------------------------

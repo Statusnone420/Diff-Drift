@@ -123,6 +123,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file,
+            is_build_script: false,
             lang: Lang::Kotlin,
         }
     }
@@ -383,6 +384,32 @@ mod tests {
         assert_eq!(check_id(&node, false), None);
     }
 
+    #[test]
+    fn eval_call_ignores_marker_in_comment_or_string() {
+        // FIX 1: `getEngineByName(` named only in a comment/string must not fire.
+        let comment = modified(
+            "FunctionDeclaration",
+            &["fun run(code: String) {", "    println(code)", "}"],
+            &[
+                "fun run(code: String) {",
+                "    // never ScriptEngineManager().getEngineByName(\"kotlin\")",
+                "    println(code)",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&comment, false), None, "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            &["fun run(code: String) {", "    println(code)", "}"],
+            &[
+                "fun run(code: String) {",
+                "    error(\"getEngineByName is forbidden\")",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&string, false), None, "marker in string");
+    }
+
     // ---------------- subprocess (child-process) ----------------
 
     #[test]
@@ -425,6 +452,26 @@ mod tests {
         assert_eq!(check_id(&node, false), None);
     }
 
+    #[test]
+    fn subprocess_ignores_marker_in_comment_or_string() {
+        // FIX 1: `ProcessBuilder(` named only in a comment/string must not fire.
+        let comment = added(
+            "FunctionDeclaration",
+            &[
+                "fun run(cmd: String) {",
+                "    // never ProcessBuilder(\"sh\", \"-c\", cmd).start()",
+                "    handle(cmd)",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&comment, false), None, "marker in comment");
+        let string = added(
+            "FunctionDeclaration",
+            &["fun run(cmd: String) {", "    log(\"wraps ProcessBuilder internally\")", "}"],
+        );
+        assert_eq!(check_id(&string, false), None, "marker in string");
+    }
+
     // ---------------- tls-disable ----------------
 
     #[test]
@@ -462,6 +509,74 @@ mod tests {
         assert_eq!(check_id(&node, false), None);
     }
 
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: the trust-all idiom named only in a comment/string must not fire.
+        let comment = added(
+            "FunctionDeclaration",
+            &[
+                "fun cfg() {",
+                "    // never install an object : X509TrustManager that trusts all",
+                "    secureSetup()",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&comment, false), None, "marker in comment");
+        let string = added(
+            "FunctionDeclaration",
+            &["fun cfg() {", "    log(\"object : X509TrustManager is banned\")", "}"],
+        );
+        assert_eq!(check_id(&string, false), None, "marker in string");
+    }
+
+    #[test]
+    fn cookie_secure_ignores_ktor_ssl_connector() {
+        // FIX 2: Ktor's `sslConnector { … secure = true }` is a TLS connector
+        // config, NOT a cookie. Removing `secure = true` there must not read as a
+        // weakened cookie flag — the cookie rules require cookie context.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "fun Application.module() {",
+                "    sslConnector(keyStore, \"alias\", { pwd }, { pwd }) {",
+                "        secure = true",
+                "        port = 8443",
+                "    }",
+                "}",
+            ],
+            &[
+                "fun Application.module() {",
+                "    sslConnector(keyStore, \"alias\", { pwd }, { pwd }) {",
+                "        port = 8443",
+                "    }",
+                "}",
+            ],
+        );
+        assert_eq!(
+            check_id(&node, false),
+            None,
+            "secure = true on a Ktor sslConnector is not a cookie flag"
+        );
+        // Sanity: removing secure from an actual Cookie still flags.
+        let cookie = modified(
+            "FunctionDeclaration",
+            &[
+                "fun build(): Cookie {",
+                "    val c = Cookie(\"sid\", token)",
+                "    c.setSecure(true)",
+                "    return c",
+                "}",
+            ],
+            &[
+                "fun build(): Cookie {",
+                "    val c = Cookie(\"sid\", token)",
+                "    return c",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&cookie, false), Some("cookie-secure-removed"));
+    }
+
     // ---------------- loose-regex ----------------
 
     #[test]
@@ -485,6 +600,30 @@ mod tests {
     }
 
     // ---------------- cors-permissive ----------------
+
+    #[test]
+    fn cors_permissive_ignores_marker_in_comment() {
+        // FIX 1: `anyHost()` named only in a comment must not fire.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "fun Application.configure() {",
+                "    install(CORS) {",
+                "        allowHost(\"app.example.com\")",
+                "    }",
+                "}",
+            ],
+            &[
+                "fun Application.configure() {",
+                "    install(CORS) {",
+                "        // do not switch to anyHost() in production",
+                "        allowHost(\"app.example.com\")",
+                "    }",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&node, false), None);
+    }
 
     #[test]
     fn cors_permissive_fires_on_any_host() {
@@ -590,6 +729,27 @@ mod tests {
             ],
         );
         assert_eq!(check_id(&node, false), Some("samesite-weakened"));
+    }
+
+    #[test]
+    fn cookie_samesite_ignores_marker_in_comment() {
+        // FIX 1: the SameSite downgrade named only in a comment must not fire.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "fun build(): Cookie {",
+                "    cookie.sameSite = \"Strict\"",
+                "    return cookie",
+                "}",
+            ],
+            &[
+                "fun build(): Cookie {",
+                "    cookie.sameSite = \"Strict\" // not None",
+                "    return cookie",
+                "}",
+            ],
+        );
+        assert_eq!(check_id(&node, false), None);
     }
 
     #[test]

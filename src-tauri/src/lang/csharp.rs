@@ -41,12 +41,19 @@ pub static PACK: FamilyPack = FamilyPack {
     subprocess_call: Some(r"\b(Process\s*\.\s*Start|new\s+ProcessStartInfo)\b"),
     // Roslyn scripting: `CSharpScript.EvaluateAsync(…)` / `.RunAsync(…)`.
     eval_call: Some(r"\bCSharpScript\s*\.\s*(?:EvaluateAsync|RunAsync|Create|Run)\b"),
-    // TLS verification turned off: the HttpClientHandler escape hatch, a custom
-    // server-cert callback that always returns true, or the process-wide
-    // ServicePointManager callback. Matching any of these newly in the after
-    // fires (differential check lives in the rule).
+    // TLS verification turned off. Three concrete bypass idioms only — the
+    // assignment alone is NOT enough, because a custom callback can be SECURE
+    // (cert pinning that returns `false` on mismatch, or `=> SslPolicyErrors.None
+    // == errors`). We fire when:
+    //  - the `DangerousAcceptAnyServerCertificateValidator` escape hatch appears
+    //    (it IS the accept-anything value, however it is assigned), OR
+    //  - a server-cert callback is assigned a lambda/delegate that
+    //    unconditionally returns `true` (`=> true`, `=> { … return true; }`,
+    //    `delegate { … return true; }`).
+    // A pinning callback (`=> errors == SslPolicyErrors.None`, `return false` on
+    // mismatch) matches none of these, so it stays silent.
     tls_disable: Some(
-        r#"(DangerousAcceptAnyServerCertificateValidator|ServerCertificateCustomValidationCallback\s*=|ServerCertificateValidationCallback\s*(?:\+?=)\s*(?:delegate|\([^)]*\)\s*=>\s*true|\([^)]*\)\s*=>\s*\{[^}]*return\s+true))"#,
+        r#"(?:DangerousAcceptAnyServerCertificateValidator|(?:ServerCertificateCustomValidationCallback|ServerCertificateValidationCallback)\s*\+?=\s*(?:\([^)]*\)\s*=>\s*true\b|\([^)]*\)\s*=>\s*\{[^}]*return\s+true\b|delegate\s*(?:\([^)]*\))?\s*\{[^}]*return\s+true\b))"#,
     ),
     // Regex construction whose string argument is the pattern body (group 1):
     // `new Regex("pat")` (pattern is first arg) and `Regex.IsMatch(input,
@@ -111,6 +118,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file,
+            is_build_script: false,
             lang: Lang::CSharp,
         }
     }
@@ -461,6 +469,127 @@ mod tests {
             ],
         );
         assert_eq!(hit(&node, false), None);
+    }
+
+    #[test]
+    fn tls_disable_fires_on_always_true_callback() {
+        // FIX 2: assigning a callback that UNCONDITIONALLY returns true is a
+        // bypass and must fire.
+        let node = modified(
+            "VariableDeclaration",
+            &["var handler = new HttpClientHandler { };"],
+            &[
+                "var handler = new HttpClientHandler {",
+                "    ServerCertificateCustomValidationCallback = (m, c, ch, e) => true,",
+                "};",
+            ],
+        );
+        assert_eq!(hit(&node, false), Some("tls-reject-false"));
+    }
+
+    #[test]
+    fn tls_disable_ignores_secure_callback_returning_none_check() {
+        // FIX 2: a callback that returns `SslPolicyErrors.None == errors` is the
+        // SECURE default check — assigning it must NOT fire. (Previously any
+        // assignment to the callback flagged.)
+        let node = modified(
+            "VariableDeclaration",
+            &["var handler = new HttpClientHandler { };"],
+            &[
+                "var handler = new HttpClientHandler {",
+                "    ServerCertificateCustomValidationCallback = (m, c, ch, e) => e == SslPolicyErrors.None,",
+                "};",
+            ],
+        );
+        assert_eq!(hit(&node, false), None);
+    }
+
+    #[test]
+    fn tls_disable_ignores_cert_pinning_callback() {
+        // FIX 2: a pinning callback that returns `false` on mismatch is secure —
+        // assigning it must NOT fire.
+        let node = modified(
+            "FunctionDeclaration",
+            &["public void Configure(HttpClientHandler h) { }"],
+            &[
+                "public void Configure(HttpClientHandler h) {",
+                "    h.ServerCertificateCustomValidationCallback = (m, cert, ch, e) => {",
+                "        if (cert.Thumbprint != Pinned) { return false; }",
+                "        return e == SslPolicyErrors.None;",
+                "    };",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&node, false), None);
+    }
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: the dangerous validator named only in a comment/string must not
+        // fire.
+        let comment = modified(
+            "VariableDeclaration",
+            &["var handler = new HttpClientHandler { };"],
+            &[
+                "// do not assign DangerousAcceptAnyServerCertificateValidator",
+                "var handler = new HttpClientHandler { };",
+            ],
+        );
+        assert_eq!(hit(&comment, false), None, "marker in comment");
+        let string = modified(
+            "VariableDeclaration",
+            &["var msg = \"ok\";"],
+            &["var msg = \"never use DangerousAcceptAnyServerCertificateValidator\";"],
+        );
+        assert_eq!(hit(&string, false), None, "marker in string");
+    }
+
+    #[test]
+    fn eval_call_suppressed_in_test_file() {
+        // FIX 5: a Roslyn-scripting integration test of CSharpScript in a
+        // *Test.cs file is scaffolding, not production drift.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "public async Task Run(string code) {",
+                "    await Task.CompletedTask;",
+                "}",
+            ],
+            &[
+                "public async Task Run(string code) {",
+                "    await CSharpScript.EvaluateAsync(code);",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&node, true), None, "eval suppressed in test file");
+        // Sanity: fires in a non-test file.
+        assert_eq!(hit(&node, false), Some("eval-call"));
+    }
+
+    #[test]
+    fn child_process_ignores_marker_in_comment_or_string() {
+        // FIX 1: `Process.Start` named only in a comment/string is not a call.
+        let comment = modified(
+            "FunctionDeclaration",
+            &["public void Open(string url) { Log(url); }"],
+            &[
+                "public void Open(string url) {",
+                "    // never Process.Start(\"explorer\", url) with user input",
+                "    Log(url);",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&comment, false), None, "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            &["public void Open(string url) { Log(url); }"],
+            &[
+                "public void Open(string url) {",
+                "    Log(\"calls Process.Start internally\");",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&string, false), None, "marker in string");
     }
 
     // ---------------------------------------------------------------

@@ -18,8 +18,21 @@ pub struct RuleCtx {
     pub deps: HashSet<String>,
     /// Whether this file looks like a test/fixture (suppresses noisy rules).
     pub is_test_file: bool,
+    /// Whether this file is a Cargo build script (`build.rs`). Build scripts
+    /// legitimately shell out to `git`/`protoc`/`bindgen`, so `child-process` is
+    /// suppressed for them — same treatment as a test path.
+    pub is_build_script: bool,
     /// The file's language, for structural (tree-sitter query) matching.
     pub lang: Lang,
+}
+
+/// True when a repo-relative path is a Cargo build script (`build.rs`), at the
+/// crate root or any nested crate. Build scripts shell out to tooling as a
+/// matter of course, so the `child-process` rule treats them like test paths.
+pub fn is_build_script_path(path: &str) -> bool {
+    let slashed = path.replace('\\', "/");
+    let file = slashed.rsplit('/').next().unwrap_or(&slashed);
+    file.eq_ignore_ascii_case("build.rs")
 }
 
 pub struct Finding {
@@ -209,11 +222,55 @@ fn compiled_marker(src: &'static str) -> Option<std::sync::Arc<Regex>> {
 fn joined(lines: &Option<Vec<String>>) -> String {
     lines.as_ref().map(|l| l.join("\n")).unwrap_or_default()
 }
+
+/// The before/after snippet text with every comment body and string-literal
+/// interior blanked, so a non-JsTs marker rule matches against CODE ONLY — a
+/// marker token that appears solely inside a log line, docstring, error message,
+/// or comment never fires the rule. Returns `None` on parse failure, which the
+/// marker rules treat as "no answer" → the rule stays silent (the existing
+/// structural-or-nothing degradation contract). The empty string maps to an
+/// empty code-only string (no parse needed) so a missing `before` side stays
+/// cheap and total.
+fn code_only(lines: &Option<Vec<String>>, lang: Lang) -> Option<String> {
+    let src = joined(lines);
+    if src.is_empty() {
+        return Some(String::new());
+    }
+    crate::structural::code_only_text(&src, lang)
+}
+
+/// Like [`code_only`] but blanks comment bodies ONLY (strings stay intact).
+/// Used by the env-var TLS rule, whose marker (the env-var name) lives inside a
+/// string key — so strings must survive, but a marker named only in a comment
+/// must still be ignored.
+fn code_minus_comments(lines: &Option<Vec<String>>, lang: Lang) -> Option<String> {
+    let src = joined(lines);
+    if src.is_empty() {
+        return Some(String::new());
+    }
+    crate::structural::code_minus_comments_text(&src, lang)
+}
 fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 fn added_or_modified(s: NodeState) -> bool {
     matches!(s, NodeState::Added | NodeState::Modified)
+}
+
+/// Whether `s` mentions a CORS construct (case-insensitive `cors`). Used to gate
+/// the ambiguous Rust `.allow_origin(Any)` marker so it only fires on an actual
+/// CORS layer (`CorsLayer`/`Cors::…`), not on an unrelated builder that happens
+/// to expose an `allow_origin` method.
+fn has_cors_context(s: &str) -> bool {
+    s.to_ascii_lowercase().contains("cors")
+}
+
+/// Whether `s` mentions a cookie (case-insensitive `cookie`). Used to gate the
+/// cookie-flag markers (`http_only`/`secure`/`http_only` builder methods) so a
+/// `secure(true)`/`http_only(true)` on an unrelated builder (a `TlsConfig`, a
+/// Ktor `sslConnector`, a `ServerConfig`) doesn't read as a weakened cookie.
+fn has_cookie_context(s: &str) -> bool {
+    s.to_ascii_lowercase().contains("cookie")
 }
 
 // ---------- rules ----------
@@ -284,7 +341,10 @@ impl Rule for EvalCall {
         EVAL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if !added_or_modified(node.state) {
+        // Like child-process and tls, suppress in test/fixture files: a dynamic
+        // eval inside an integration test (e.g. a C# test of `CSharpScript`) is
+        // test scaffolding, not production drift.
+        if ctx.is_test_file || !added_or_modified(node.state) {
             return None;
         }
         let after = joined(&node.after);
@@ -309,9 +369,13 @@ impl Rule for EvalCall {
             return None;
         }
         // Non-JsTs: marker-driven (e.g. Python eval/exec/compile). Empty pack
-        // field => silent, no JS fallback.
+        // field => silent, no JS fallback. Match against CODE ONLY so the marker
+        // token inside a string/comment (e.g. `# never call eval()`) is ignored;
+        // a parse failure => silent.
         let marker = lang::pack(ctx.lang.family()).eval_call?;
         let re = compiled_marker(marker)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        let before = code_only(&node.before, ctx.lang)?;
         if re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
@@ -369,7 +433,10 @@ impl Rule for ChildProcess {
         ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if ctx.is_test_file || !added_or_modified(node.state) {
+        // Suppress in test/fixture files and in Cargo build scripts: both
+        // legitimately spawn subprocesses (test harnesses, `build.rs` calling
+        // git/protoc/bindgen).
+        if ctx.is_test_file || ctx.is_build_script || !added_or_modified(node.state) {
             return None;
         }
         let after = joined(&node.after);
@@ -394,15 +461,29 @@ impl Rule for ChildProcess {
         // Non-JsTs: marker-driven (per-family subprocess import + call regexes).
         // Either an import or a call newly appearing fires; empty fields => no
         // match => silent.
+        //
+        // CALL markers (`subprocess.run(`, `Process.Start`, `exec.Command(`,
+        // `Command::new(`) are CODE, so they run against the fully code-only text
+        // — a call named in a string OR comment is ignored. IMPORT markers can be
+        // string-valued module specifiers (Go's `import "os/exec"`), so they run
+        // against the comments-only text (strings kept) — which still drops an
+        // import token named in a `// …` comment. Parse failure on either side
+        // => silent.
         let pack = lang::pack(ctx.lang.family());
-        let newly = |marker: Option<&'static str>| -> bool {
+        let after_code = code_only(&node.after, ctx.lang)?;
+        let before_code = code_only(&node.before, ctx.lang)?;
+        let after_nc = code_minus_comments(&node.after, ctx.lang)?;
+        let before_nc = code_minus_comments(&node.before, ctx.lang)?;
+        let newly = |marker: Option<&'static str>, after: &str, before: &str| -> bool {
             let Some(src) = marker else { return false };
             let Some(re) = compiled_marker(src) else {
                 return false;
             };
-            re.is_match(&after) && !re.is_match(&before)
+            re.is_match(after) && !re.is_match(before)
         };
-        if newly(pack.subprocess_import) || newly(pack.subprocess_call) {
+        if newly(pack.subprocess_import, &after_nc, &before_nc)
+            || newly(pack.subprocess_call, &after_code, &before_code)
+        {
             return finding(
                 Severity::High,
                 "Child process execution",
@@ -457,9 +538,13 @@ impl Rule for TlsRejectFalse {
             return None;
         }
         // Non-JsTs: marker-driven (per-family TLS-disable markers). Empty field
-        // => silent.
+        // => silent. Match against CODE ONLY so a marker named in a comment or
+        // string (e.g. `// never set InsecureSkipVerify: true`) is ignored; a
+        // parse failure => silent.
         let marker = lang::pack(ctx.lang.family()).tls_disable?;
         let re = compiled_marker(marker)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        let before = code_only(&node.before, ctx.lang)?;
         if re.is_match(&after) && !re.is_match(&before) {
             return finding_with_evidence(
                 Severity::High,
@@ -505,9 +590,15 @@ impl Rule for EnvTlsReject {
             }
             return None;
         }
-        // Non-JsTs (Python): marker-driven env-var disable. Empty field => silent.
+        // Non-JsTs (Python): marker-driven env-var disable. Empty field =>
+        // silent. The env-var name lives inside a STRING key
+        // (`os.environ['PYTHONHTTPSVERIFY'] = '0'`), so we blank comments only —
+        // strings must survive for the marker to match — which still drops a
+        // marker named in a `# …` comment. Parse failure => silent.
         let marker = lang::pack(ctx.lang.family()).env_tls_disable?;
         let re = compiled_marker(marker)?;
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        let before = code_minus_comments(&node.before, ctx.lang)?;
         if re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
@@ -571,10 +662,21 @@ impl Rule for BroadenedCors {
             return None;
         }
         // Non-JsTs: marker-driven (per-framework permissive-origin markers).
-        // Empty field => silent.
+        // Empty field => silent. The permissive-origin value is often a string
+        // literal (`"*"`), so blank COMMENTS only — strings must survive for the
+        // marker to match — which still drops a marker named in a `// …` comment.
+        // Parse failure => silent.
         let marker = lang::pack(ctx.lang.family()).cors_permissive?;
         let re = compiled_marker(marker)?;
-        if re.is_match(&after) && !re.is_match(&before) {
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        let before = code_minus_comments(&node.before, ctx.lang)?;
+        // Rust's `.allow_origin(Any)` marker is ambiguous — a custom builder
+        // (e.g. a non-CORS `RouteConfig`) can expose the same method. Require a
+        // CORS token in the node so only an actual CORS layer fires. Other
+        // families' markers are already framework-named (`AllowAllOrigins`,
+        // `@CrossOrigin`, `CORSMiddleware`, `anyHost`), so they don't need it.
+        let context_ok = ctx.lang.family() != Family::Rust || has_cors_context(&after);
+        if context_ok && re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
                 "Broadened CORS",
@@ -614,7 +716,12 @@ impl Rule for CookieHttpOnlyRemoved {
         }
         let marker = lang::pack(ctx.lang.family()).cookie_httponly?;
         let re = compiled_marker(marker)?;
-        if re.is_match(&before) && !re.is_match(&after) {
+        // Code-only (ignore the marker in a string/comment); parse failure =>
+        // silent. Require cookie context so an `http_only(true)` builder method
+        // on an unrelated config (not a cookie) doesn't read as a cookie flag.
+        let before = code_only(&node.before, ctx.lang)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && re.is_match(&before) && !re.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
@@ -653,7 +760,13 @@ impl Rule for CookieSecureRemoved {
         }
         let marker = lang::pack(ctx.lang.family()).cookie_secure?;
         let re = compiled_marker(marker)?;
-        if re.is_match(&before) && !re.is_match(&after) {
+        // Code-only (ignore the marker in a string/comment); parse failure =>
+        // silent. Require cookie context so a `.secure(true)` builder method on
+        // an unrelated config (a TlsConfig, a Ktor sslConnector) doesn't read as
+        // a cookie flag.
+        let before = code_only(&node.before, ctx.lang)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && re.is_match(&before) && !re.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
@@ -707,7 +820,13 @@ impl Rule for SameSiteWeakened {
         else {
             return None;
         };
-        if strong.is_match(&before) && weak.is_match(&after) {
+        // The SameSite value is a string literal (`"None"`/`"Strict"`/`"Lax"`),
+        // so blank COMMENTS only — strings must survive for the markers to match.
+        // Require cookie context so a `sameSite`-shaped attribute on an unrelated
+        // builder doesn't read as a cookie downgrade. Parse failure => silent.
+        let before = code_minus_comments(&node.before, ctx.lang)?;
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && strong.is_match(&before) && weak.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
@@ -1097,11 +1216,24 @@ impl Rule for RemovedIfGuard {
 struct RemovedSanitize;
 
 fn has_sanitizer_callee(names: &HashSet<String>) -> bool {
-    names.iter().any(|n| {
-        n.rsplit('.').next().is_some_and(|last| {
-            last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
-        })
+    names.iter().any(|n| is_sanitizer_name(n))
+}
+
+/// Whether an identifier (bare or member, last segment) has a sanitizer prefix.
+fn is_sanitizer_name(n: &str) -> bool {
+    n.rsplit('.').next().is_some_and(|last| {
+        last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
     })
+}
+
+/// Function/method-declaration node kinds across the families. A node of one of
+/// these kinds whose own name is sanitizer-prefixed is a *validator definition*,
+/// not a caller — see `RemovedSanitize`'s definition-churn guard.
+fn is_function_decl_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "FunctionDeclaration" | "MethodDeclaration" | "ExportDeclaration"
+    )
 }
 
 impl Rule for RemovedSanitize {
@@ -1122,6 +1254,21 @@ impl Rule for RemovedSanitize {
         }
         let is_jsts = ctx.lang.family() == Family::JsTs;
         let after = joined(&node.after);
+        // FIX 3: a validator DEFINITION churning is not a removed caller-side
+        // sanitizer. When the matched node is itself a function/method named with
+        // a sanitizer prefix (`validate*`/`sanitize*`/`escape*`) and the after
+        // still references that name (its own header / a self-call survives), a
+        // signature- or annotation-only change (e.g. Alamofire's `validate`
+        // gaining `@Sendable`) must not read as "sanitization removed". Such a
+        // self-named validator owns the sanitization; only a CALLER dropping it
+        // is the smell this rule is after.
+        if is_function_decl_kind(&node.kind)
+            && is_sanitizer_name(&node.name)
+            && !node.name.is_empty()
+            && after.contains(node.name.as_str())
+        {
+            return None;
+        }
         // The sanitize/escape/validate prefix list is naming-convention neutral
         // (`sanitize_html` still prefix-matches), so the structural path works
         // for every family. The text-regex fallback is JS/TS-only.
@@ -1624,6 +1771,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         }
     }
@@ -1631,6 +1779,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Ts,
         }
     }
@@ -2518,6 +2667,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps,
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
 
@@ -2557,6 +2707,7 @@ mod tests {
         let no_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
         let mut import = node(
@@ -2587,6 +2738,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
         let mut import = node(
@@ -2766,6 +2918,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang,
         }
     }

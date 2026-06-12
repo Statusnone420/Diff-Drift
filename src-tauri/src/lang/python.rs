@@ -96,6 +96,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Python,
         }
     }
@@ -103,6 +104,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Python,
         }
     }
@@ -316,6 +318,98 @@ mod tests {
     }
 
     #[test]
+    fn eval_call_ignores_marker_in_comment_or_string() {
+        // FIX 1: `eval(` named only in a comment or a string is not a call.
+        let comment = node(
+            "ExpressionStatement",
+            NodeState::Added,
+            &[],
+            &["# never call eval(user_input) here"],
+        );
+        assert_eq!(fired(&comment, &ctx()), None, "marker in comment");
+        let string = node(
+            "VariableDeclaration",
+            NodeState::Added,
+            &[],
+            &["msg = \"do not use eval(payload)\""],
+        );
+        assert_eq!(fired(&string, &ctx()), None, "marker in string");
+        // Sanity: a real eval still fires.
+        let real = node("ExpressionStatement", NodeState::Added, &[], &["eval(payload)"]);
+        assert_eq!(fired(&real, &ctx()), Some("eval-call"));
+    }
+
+    #[test]
+    fn eval_call_suppressed_in_test_file() {
+        // FIX 5: like child-process/tls, eval is suppressed in test fixtures.
+        let n = node("ExpressionStatement", NodeState::Added, &[], &["eval(payload)"]);
+        assert_eq!(fired(&n, &test_ctx()), None);
+    }
+
+    #[test]
+    fn subprocess_ignores_marker_in_comment_or_string() {
+        // FIX 1: a subprocess call named only in a comment/string must not fire.
+        let comment = node(
+            "ExpressionStatement",
+            NodeState::Added,
+            &[],
+            &["# do not subprocess.run([cmd]) on user input"],
+        );
+        assert_eq!(fired(&comment, &ctx()), None, "marker in comment");
+        let string = node(
+            "VariableDeclaration",
+            NodeState::Added,
+            &[],
+            &["doc = \"calls subprocess.run([cmd]) internally\""],
+        );
+        assert_eq!(fired(&string, &ctx()), None, "marker in string");
+    }
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: `verify=False` named only in a comment/docstring must not fire.
+        let comment = node(
+            "ExpressionStatement",
+            NodeState::Added,
+            &[],
+            &["# requests.get(url, verify=False) would be insecure"],
+        );
+        assert_eq!(fired(&comment, &ctx()), None, "marker in comment");
+        let string = node(
+            "VariableDeclaration",
+            NodeState::Added,
+            &[],
+            &["hint = \"never pass verify=False\""],
+        );
+        assert_eq!(fired(&string, &ctx()), None, "marker in string");
+    }
+
+    #[test]
+    fn cors_permissive_ignores_marker_in_comment() {
+        // FIX 1: a permissive-CORS marker named only in a comment must not fire.
+        let n = node(
+            "ExpressionStatement",
+            NodeState::Added,
+            &[],
+            &["# allow_origins=[\"*\"] is forbidden in production"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
+    #[test]
+    fn samesite_weakened_ignores_marker_in_comment() {
+        // FIX 1: the SameSite=None downgrade named only in a comment must not
+        // fire (the strong→weak transition lives entirely in prose here).
+        let n = node(
+            "ExpressionStatement",
+            NodeState::Modified,
+            &["resp.set_cookie('sid', sid, samesite='Strict')  # was samesite='Lax'"],
+            &["resp.set_cookie('sid', sid, samesite='Strict')  # avoid samesite='None'"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
+    #[test]
     fn eval_call_negative_already_present() {
         // Already calling eval before the change — nothing newly introduced.
         let n = node(
@@ -424,6 +518,20 @@ mod tests {
             &["os.environ['PYTHONHTTPSVERIFY'] = '0'"],
         );
         assert_eq!(fired(&n, &ctx()), Some("env-tls-reject"));
+    }
+
+    #[test]
+    fn env_tls_reject_ignores_marker_in_comment() {
+        // FIX 1: the env-disable named only in a comment must not fire. (The
+        // env-var name lives in a string key, so strings are kept — but a comment
+        // mention is still dropped.)
+        let n = node(
+            "ExpressionStatement",
+            NodeState::Added,
+            &[],
+            &["log.warning('tls on')  # never set PYTHONHTTPSVERIFY=0"],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
     }
 
     #[test]

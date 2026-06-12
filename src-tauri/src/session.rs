@@ -320,6 +320,7 @@ fn drift_result(
     let ctx = RuleCtx {
         deps: deps.clone(),
         is_test_file: is_test_path(rel),
+        is_build_script: crate::rules::is_build_script_path(rel),
         lang,
     };
     let mut flags = Vec::new();

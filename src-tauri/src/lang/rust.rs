@@ -49,10 +49,15 @@ pub static PACK: FamilyPack = FamilyPack {
     handled_markers: &["?", "match ", "if let "],
 
     // ---- High-severity marker regexes (regex SOURCES, compiled+cached) ----
-    // ChildProcess: std::process::Command, Command::new(...), .spawn/.output/
-    // .status on a command builder. Either an import-shaped use or a call fires.
+    // ChildProcess: std::process::Command, Command::new(...), and the
+    // `.spawn/.output/.status` finishers — but the bare finishers fire ONLY when
+    // `Command` is in scope (in the same node), because `.output()`/`.status()`/
+    // `.spawn()` are common method names on unrelated receivers. `Command::new(`
+    // alone fires; a finisher fires only with a `Command` token before it; and an
+    // import (`use std::process::Command`) fires via subprocess_import. So a bare
+    // `reader.output()?` on an arbitrary value never trips the rule.
     subprocess_import: Some(r"std::process::Command"),
-    subprocess_call: Some(r"Command::new\s*\(|\.(spawn|output|status)\s*\("),
+    subprocess_call: Some(r"Command::new\s*\(|Command[\s\S]*?\.(spawn|output|status)\s*\("),
 
     // TlsRejectFalse: reqwest/native-tls danger toggles set to true.
     tls_disable: Some(
@@ -109,6 +114,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Rust,
         }
     }
@@ -117,6 +123,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Rust,
         }
     }
@@ -336,7 +343,155 @@ mod tests {
         assert!(fired(&node, &ctx()).is_none());
     }
 
+    #[test]
+    fn child_process_suppressed_in_build_script() {
+        // FIX 4: build.rs legitimately shells out to git/protoc/bindgen, so
+        // child-process is suppressed there (same as a test path).
+        let node = modified(
+            "FunctionDeclaration",
+            &["let out = read_file(path)?;"],
+            &[
+                "use std::process::Command;",
+                "let out = Command::new(\"protoc\").arg(proto).output()?;",
+            ],
+        );
+        let build_ctx = RuleCtx {
+            deps: HashSet::new(),
+            is_test_file: false,
+            is_build_script: true,
+            lang: Lang::Rust,
+        };
+        assert!(
+            fired(&node, &build_ctx).is_none(),
+            "build.rs subprocess is build tooling, not drift"
+        );
+        // Sanity: the same node DOES flag in an ordinary source file.
+        assert_eq!(fired(&node, &ctx()), Some("child-process"));
+    }
+
+    #[test]
+    fn child_process_ignores_bare_finisher_without_command() {
+        // FIX 2: a bare `.output()?` / `.status()?` / `.spawn()?` on an arbitrary
+        // receiver (here a query builder) is NOT a subprocess — the finisher
+        // markers fire only with `Command` in scope.
+        for after in [
+            "let rows = query.bind(id).output()?;",
+            "let st = pipeline.status()?;",
+            "let h = worker.spawn()?;",
+        ] {
+            let node = modified(
+                "FunctionDeclaration",
+                &["let rows = run(id);"],
+                &[after],
+            );
+            assert!(
+                fired(&node, &ctx()).is_none(),
+                "bare finisher without Command must not flag: {after}"
+            );
+        }
+        // Sanity: a Command-rooted builder still flags through the finisher.
+        let node = modified(
+            "FunctionDeclaration",
+            &["let rows = run(id);"],
+            &["let out = Command::new(\"ls\").spawn()?;"],
+        );
+        assert_eq!(fired(&node, &ctx()), Some("child-process"));
+    }
+
+    #[test]
+    fn child_process_ignores_marker_in_comment_or_string() {
+        // FIX 1: a subprocess token named only in a comment or string literal
+        // must not fire (often code that warns against it).
+        let comment = modified(
+            "FunctionDeclaration",
+            &["let x = compute();"],
+            &["// never reach for Command::new(\"sh\") here", "let x = compute();"],
+        );
+        assert!(fired(&comment, &ctx()).is_none(), "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            &["let x = compute();"],
+            &["let note = \"avoid Command::new(\\\"sh\\\").output()\";"],
+        );
+        assert!(fired(&string, &ctx()).is_none(), "marker in string");
+    }
+
     // ---------------- tls-disable ----------------
+
+    #[test]
+    fn tls_disable_ignores_marker_in_comment_or_string() {
+        // FIX 1: the TLS-disable idiom named only in a comment/string must not
+        // fire — these often document the forbidden call.
+        let comment = modified(
+            "FunctionDeclaration",
+            &["let c = Client::builder().build()?;"],
+            &[
+                "// do NOT call .danger_accept_invalid_certs(true) in prod",
+                "let c = Client::builder().build()?;",
+            ],
+        );
+        assert!(fired(&comment, &ctx()).is_none(), "marker in comment");
+        let string = modified(
+            "FunctionDeclaration",
+            &["let c = Client::builder().build()?;"],
+            &["let msg = \"danger_accept_invalid_certs(true) is banned\";"],
+        );
+        assert!(fired(&string, &ctx()).is_none(), "marker in string");
+    }
+
+    #[test]
+    fn cookie_secure_ignores_non_cookie_builder() {
+        // FIX 2: a `.secure(true)` removed from a TLS config (not a cookie) must
+        // not read as a weakened cookie flag — the cookie rules require cookie
+        // context in the node.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "let cfg = TlsConfig::builder()",
+                "    .secure(true)",
+                "    .build();",
+            ],
+            &["let cfg = TlsConfig::builder()", "    .build();"],
+        );
+        assert!(
+            fired(&node, &ctx()).is_none(),
+            "secure(true) on a TlsConfig is not a cookie flag"
+        );
+        // Sanity: the same removal on an actual Cookie builder still flags.
+        let cookie = modified(
+            "FunctionDeclaration",
+            &[
+                "let c = Cookie::build(\"sid\", v)",
+                "    .secure(true)",
+                "    .finish();",
+            ],
+            &["let c = Cookie::build(\"sid\", v)", "    .finish();"],
+        );
+        assert_eq!(fired(&cookie, &ctx()), Some("cookie-secure-removed"));
+    }
+
+    #[test]
+    fn cors_ignores_allow_origin_any_without_cors_context() {
+        // FIX 2: `.allow_origin(Any)` on a non-CORS builder (a custom
+        // RouteConfig) must not read as a broadened CORS — the Rust marker
+        // requires CORS context.
+        let node = modified(
+            "FunctionDeclaration",
+            &["let r = RouteConfig::new().allow_origin(trusted);"],
+            &["let r = RouteConfig::new().allow_origin(Any);"],
+        );
+        assert!(
+            fired(&node, &ctx()).is_none(),
+            "allow_origin(Any) without CORS context is not a CORS broadening"
+        );
+        // Sanity: the same call on a CorsLayer still flags.
+        let cors = modified(
+            "FunctionDeclaration",
+            &["let layer = CorsLayer::new().allow_origin(trusted);"],
+            &["let layer = CorsLayer::new().allow_origin(Any);"],
+        );
+        assert_eq!(fired(&cors, &ctx()), Some("broadened-cors"));
+    }
 
     #[test]
     fn tls_disable_fires_on_accept_invalid_certs() {

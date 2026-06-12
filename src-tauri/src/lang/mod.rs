@@ -84,7 +84,7 @@
 //!         after: Some(vec!["if False:".into(), "    audit()".into()]),
 //!         children: None,
 //!     };
-//!     let ctx = RuleCtx { deps: HashSet::new(), is_test_file: false, lang: Lang::Python };
+//!     let ctx = RuleCtx { deps: HashSet::new(), is_test_file: false, is_build_script: false, lang: Lang::Python };
 //!     let hit = registry().check(&node, &ctx);
 //!     assert_eq!(hit.map(|(id, _)| id), Some("removed-if-guard"));
 //! }
@@ -109,7 +109,7 @@
 //!         after: Some(vec!["if ok and ready:".into(), "    run()".into()]),
 //!         children: None,
 //!     };
-//!     let ctx = RuleCtx { deps: HashSet::new(), is_test_file: false, lang: Lang::Python };
+//!     let ctx = RuleCtx { deps: HashSet::new(), is_test_file: false, is_build_script: false, lang: Lang::Python };
 //!     assert!(registry().check(&node, &ctx).is_none());
 //! }
 //! ```
