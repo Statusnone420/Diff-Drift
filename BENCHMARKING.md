@@ -12,6 +12,8 @@ Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code ex
 
 **Limitation:** every fixture is synthetic and small. There is no real-world corpus, so the engine benchmark makes no claim about recall or precision on production diffs. For that, use `npm run eval:fp-replay` on your own repos.
 
+**Coverage card:** the README's engine coverage image is generated, never hand-edited. `npm run coverage:capture` counts the cases in `eval/cases/` by family, reads the latest fp-replay result from `.eval/results/fp-replay/latest.json`, renders `eval/benchmarks/coverage/coverage-card.html`, and screenshots it to `docs/assets/diff-drift-coverage-card.png`. Regenerate it whenever the suite or a noise run changes; the build fails if no fp-replay result exists, so the quiet panel can only show measured numbers.
+
 ## Blind-agent scorecard
 
 An advisory measurement: each model plays a blind reviewer over the benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. It does not measure detection rate; it measures output clarity — whether a reviewer who sees only Diff Drift's report can make the right call.

@@ -21,6 +21,8 @@
     "eval:panel": "node eval/panel.mjs",
     "eval:fp-replay": "node scripts/fp-replay.mjs",
     "scorecard:capture": "node scripts/capture-scorecard.mjs",
+    "coverage:card": "node scripts/build-coverage-card.mjs",
+    "coverage:capture": "node scripts/build-coverage-card.mjs && node scripts/capture-scorecard.mjs eval/benchmarks/coverage/coverage-card.html docs/assets/diff-drift-coverage-card.png",
     "bench": "cargo bench --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:unit": "vitest run",
