@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.3.2" src="https://img.shields.io/badge/version-0.3.2-e7a83e?style=for-the-badge">
+  <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -51,7 +51,7 @@ The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3`
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: Statusnone420/Diff-Drift@v0.3.2
+- uses: Statusnone420/Diff-Drift@v0.4.0
   with: { baseline: merge-base, fail-on: medium }
 ```
 
@@ -93,7 +93,7 @@ To predict your own triage burden, run `npm run eval:fp-replay` on your repos; t
 ## Status
 
 - Supported platform: Windows 11. macOS: experimental and unsigned.
-- Current version: `0.3.2` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+- Current version: `0.4.0` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Docs
 

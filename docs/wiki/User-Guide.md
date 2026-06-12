@@ -128,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Statusnone420/Diff-Drift@v0.3.2
+      - uses: Statusnone420/Diff-Drift@v0.4.0
         with:
           baseline: merge-base
           fail-on: medium

@@ -23,7 +23,7 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.3.2`.
+- Version: `0.4.0`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
 - Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`, `.rs`, `.go`, `.py`/`.pyi`, `.java`, `.cs`, `.kt`/`.kts`, and `.swift` files plus `package.json` dependency drift, against a selectable baseline. Heuristic flags are strongest for JS/TS and package drift.

@@ -13,8 +13,8 @@ npm run tauri -- build --bundles nsis,msi --ci
 Expected output:
 
 ```text
-src-tauri/target/release/bundle/nsis/Diff Drift_0.3.2_x64-setup.exe
-src-tauri/target/release/bundle/msi/Diff Drift_0.3.2_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/Diff Drift_0.4.0_x64-setup.exe
+src-tauri/target/release/bundle/msi/Diff Drift_0.4.0_x64_en-US.msi
 ```
 
 Both installers also place the console CLI, `diff-drift-cli.exe`, next to the app.

@@ -2,6 +2,22 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.4.0] — 2026-06-11
+
+### Added
+
+- Structural drift review for seven more languages: Rust, Go, Python, Java, C#, Kotlin, and Swift. Changed functions, methods, types, and other top-level declarations in these files now show as added, modified, and removed AST nodes with the same node-by-node review flow as TypeScript and JavaScript. The heuristic security rules stay scoped to JS/TS and `package.json` drift, where they are tuned; files in the new languages get structural review plus the hardcoded-secret check, and the docs say so plainly.
+- "Other changed files": paths git reports as changed but Diff Drift did not analyze — unsupported file types, or a `package.json` with no dependency or script drift — are listed by path in the sidebar and the report, so no part of the drift is invisible. Their content is part of the review fingerprint, so editing one un-pins **Mark reviewed**, and the live watcher refreshes the list when such a file changes.
+- Seven new engine benchmark cases covering the new languages (27 total, still a CI blocker).
+- [BENCHMARKING.md](BENCHMARKING.md): both measurements (engine benchmark and blind-agent scorecard) on one page, with version history, reproduction steps, and limitations. The README evaluation section now summarizes and links instead of explaining everything inline.
+- A trailer capture script (`npm run demo:trailer`) producing an MP4 and thumbnail for the README; like the demo video, the output is not committed.
+
+### Fixed
+
+- Overloaded Java methods no longer cross-match in the diff: when two declarations share a name, nodes match by signature.
+- A Python change that only touches a decorator now shows as drift on the decorated function.
+- App icons and the scorecard PNG carry a real alpha channel instead of an opaque background.
+
 ## [0.3.2] — 2026-06-11
 
 ### Added
