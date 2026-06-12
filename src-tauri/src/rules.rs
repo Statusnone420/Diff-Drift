@@ -935,14 +935,38 @@ fn regex_weakening(before: &str, after: &str) -> Option<String> {
     None
 }
 
-/// Pattern bodies of every regex-construction call in `src`, for a family whose
-/// regexes are string arguments (not literals). `marker` is a regex whose first
-/// capture group is the pattern string body (e.g. `Regex::new\("([^"]*)"`). The
-/// extracted strings are fed through the SAME weakening comparison the JS path
-/// uses on `/pat/` literals — only the extraction differs per family.
-fn regex_call_patterns(src: &str, marker: &Regex) -> Vec<String> {
+/// Pattern bodies of every *real-code* regex-construction call (ISSUE 8). The
+/// constructor is code, but its pattern argument is a string, so neither
+/// `code_only` (string interiors blanked) nor `code_minus_comments` (strings
+/// kept) alone is enough:
+/// - `code_minus_comments` keeps the pattern literal so the body is extractable,
+///   but it also keeps a constructor mentioned inside a STRING (a help/docs line);
+/// - `code_only` blanks string interiors (so a string-embedded constructor's
+///   call head is gone) but also blanks the genuine pattern body.
+///
+/// Both views are byte-length-preserving and offset-aligned. So: find each marker
+/// match in `code_minus_comments` (the pattern survives there) and keep only those
+/// whose match START byte is still real code in `code_only` (not a blanked string
+/// interior). A constructor in a comment never matches either view; a constructor
+/// inside a string matches `code_minus_comments` but its start byte is blank in
+/// `code_only`, so it is dropped. Parse failure on either view falls back to the
+/// raw text (structural-or-nothing degradation).
+fn real_regex_call_patterns(lines: &Option<Vec<String>>, lang: Lang, marker: &Regex) -> Vec<String> {
+    let raw = joined(lines);
+    let kept = code_minus_comments(lines, lang).unwrap_or_else(|| raw.clone());
+    let code = code_only(lines, lang).unwrap_or_else(|| raw.clone());
+    let code_bytes = code.as_bytes();
     marker
-        .captures_iter(src)
+        .captures_iter(&kept)
+        .filter(|c| {
+            // The whole-match start: the constructor call head. Real code keeps it
+            // non-blank in `code_only`; a string-embedded mention is spaced out.
+            c.get(0).is_some_and(|m| {
+                code_bytes
+                    .get(m.start())
+                    .is_some_and(|b| !b.is_ascii_whitespace())
+            })
+        })
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
         .collect()
 }
@@ -992,13 +1016,16 @@ impl Rule for LooseRegex {
             // the pattern body in group 1; empty field => silent.
             let marker_src = lang::pack(ctx.lang.family()).regex_compile?;
             let marker = compiled_marker(marker_src)?;
-            let after = joined(&node.after);
-            let before = joined(&node.before);
-            let after_pats = regex_call_patterns(&after, &marker);
+            // ISSUE 8: only real-code constructors count. A `Regex::new(".*")`
+            // named inside a comment or a string (a help/docs line) is not a real
+            // regex construction and must not raise a High flag. `real_regex_call_
+            // patterns` gates on the code-only view (string/comment interiors
+            // blanked) while extracting the pattern body from the strings-kept view.
+            let after_pats = real_regex_call_patterns(&node.after, ctx.lang, &marker);
             if after_pats.is_empty() {
                 return None;
             }
-            let before_pats = regex_call_patterns(&before, &marker);
+            let before_pats = real_regex_call_patterns(&node.before, ctx.lang, &marker);
             return regex_weakening_over_patterns(&before_pats, &after_pats)
                 .and_then(|desc| finding(Severity::High, "Loose regex pattern", desc));
         }
@@ -1242,6 +1269,20 @@ fn has_sanitizer_callee(names: &HashSet<String>) -> bool {
     names.iter().any(|n| is_sanitizer_name(n))
 }
 
+/// Whether some sanitizer-prefixed callee occurs FEWER times in `after` than in
+/// `before` — i.e. a specific sanitize/escape/validate call was dropped. Counts
+/// per name (multiplicity), so a genuinely removed sanitizer still registers even
+/// when a *different* sanitizer-prefixed callee survives
+/// (`sanitizeHtml(x); validateSchema(x);` → `validateSchema(x);` drops
+/// `sanitizeHtml`). A pure rename of the surrounding code that keeps the same
+/// sanitizer callee leaves every count unchanged and does not register.
+fn sanitizer_callee_dropped(before: &[String], after: &[String]) -> bool {
+    before
+        .iter()
+        .filter(|n| is_sanitizer_name(n))
+        .any(|name| count_of(after, name) < count_of(before, name))
+}
+
 /// Whether an identifier (bare or member, last segment) has a sanitizer prefix.
 fn is_sanitizer_name(n: &str) -> bool {
     n.rsplit('.').next().is_some_and(|last| {
@@ -1250,19 +1291,18 @@ fn is_sanitizer_name(n: &str) -> bool {
 }
 
 /// Whether a sanitizer-prefixed identifier (`sanitize*`/`escape*`/`validate*`)
-/// still appears in `src` as a definition or surviving call/reference. Used by
-/// `RemovedSanitize` to suppress validator-definition churn inside a container
-/// node (the Alamofire `extension DataRequest { func validate … }` case): if the
-/// name survives, the sanitization moved or re-shaped rather than disappeared.
+/// still appears in `src` as a *definition header*. Used by `RemovedSanitize` to
+/// suppress validator-definition churn inside a container node (the Alamofire
+/// `extension DataRequest { func validate … }` case): if the validator's own
+/// declaration survives, the sanitization moved or re-shaped rather than
+/// disappeared.
 ///
-/// Two shapes count:
-/// - a *definition header* — a declaration keyword (`func`/`fn`/`def`/`fun`/
-///   `void`/`sub`) immediately preceding the sanitizer name, covering languages
-///   whose function decl puts the name after a keyword; and
-/// - a *call/reference* — the sanitizer name immediately followed by `(`, which
-///   the `\b…\(` pattern matches in both bare (`validate(`) and member
-///   (`.validate(`) forms, and also matches the name in a decl header that is
-///   followed by its parameter list (`func validate(_ rule:)`).
+/// Only a *definition header* counts — a declaration keyword (`func`/`fn`/`def`/
+/// `fun`/`void`/`sub`) immediately preceding the sanitizer name, covering
+/// languages whose function decl puts the name after a keyword. A surviving
+/// *call/reference* deliberately does NOT count: a genuinely removed sanitizer
+/// alongside a different surviving sanitizer-prefixed CALL (e.g.
+/// `sanitizeHtml(x); validateSchema(x);` → `validateSchema(x);`) must still fire.
 ///
 /// `src` must already be code-only (comment/string interiors blanked) so a name
 /// mentioned in prose never falsely suppresses a real removal.
@@ -1270,9 +1310,7 @@ fn sanitizer_name_survives(src: &str) -> bool {
     static DEF: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\b(?:func|fn|def|fun|void|sub)\s+(?:sanitize|escape|validate)\w*").unwrap()
     });
-    static CALL: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\b(?:sanitize|escape|validate)\w*\s*\(").unwrap());
-    DEF.is_match(src) || CALL.is_match(src)
+    DEF.is_match(src)
 }
 
 /// Function/method-declaration node kinds across the families. A node of one of
@@ -1324,11 +1362,13 @@ impl Rule for RemovedSanitize {
         // validate(...) {...} }`) named after the type, so the validator the diff
         // restructured is an inner declaration the callee query never sees as a
         // call. If a sanitizer-prefixed name still appears in the AFTER as a
-        // definition (`func validate`/`fn validate`/`def validate`/`void
-        // validate`) or as a surviving call/reference (`validate(`, `.validate(`),
-        // the protection wasn't removed — just moved or re-shaped. Check the
-        // CODE-ONLY after so a name surviving solely in a comment or string never
-        // masks a genuine removal (parse failure falls back to the raw text).
+        // DEFINITION (`func validate`/`fn validate`/`def validate`/`void validate`),
+        // the protection wasn't removed — just moved or re-shaped. Only a
+        // surviving DEFINITION suppresses: a surviving sanitizer CALL must NOT,
+        // or a genuinely removed sanitizer that sits next to a *different*
+        // surviving sanitizer call would be missed (ISSUE 4). Check the CODE-ONLY
+        // after so a name surviving solely in a comment or string never masks a
+        // genuine removal (parse failure falls back to the raw text).
         let after_code = code_only(&node.after, ctx.lang).unwrap_or_else(|| after.clone());
         if node.state == NodeState::Modified && sanitizer_name_survives(&after_code) {
             return None;
@@ -1336,14 +1376,26 @@ impl Rule for RemovedSanitize {
         // The sanitize/escape/validate prefix list is naming-convention neutral
         // (`sanitize_html` still prefix-matches), so the structural path works
         // for every family. The text-regex fallback is JS/TS-only.
+        //
+        // Removed node: any sanitizer callee in the before is a removal. Modified
+        // node: a sanitizer callee must have DROPPED (count decreased) — set
+        // presence isn't enough, because a different surviving sanitizer call
+        // would otherwise mask the one that disappeared (ISSUE 4).
         let had = |src: &str| match callee_names(src, ctx.lang) {
             Some(n) => has_sanitizer_callee(&n),
             None if is_jsts => RE.is_match(src),
             None => false,
         };
+        let dropped = match (callee_list(&before, ctx.lang), callee_list(&after, ctx.lang)) {
+            (Some(b), Some(a)) => sanitizer_callee_dropped(&b, &a),
+            // Structural parse failed: JS/TS falls back to text presence
+            // (a sanitizer call in before that is gone from after).
+            _ if is_jsts => RE.is_match(&before) && !RE.is_match(&after),
+            _ => false,
+        };
         let fired = match node.state {
             NodeState::Removed => had(&before),
-            NodeState::Modified => had(&before) && !had(&after),
+            NodeState::Modified => dropped,
             _ => false,
         };
         if fired {
@@ -2251,6 +2303,44 @@ mod tests {
                 &ctx(),
             )
             .is_some());
+    }
+
+    #[test]
+    fn removed_sanitize_fires_when_only_a_different_sanitizer_call_survives() {
+        // ISSUE 4 regression: `sanitizeHtml` is genuinely removed; a *different*
+        // sanitizer-prefixed CALL (`validateSchema(...)`) survives in the after.
+        // A surviving call must NOT suppress the removal — only a surviving
+        // sanitizer DEFINITION (a validator the protection moved into) should.
+        let f = RemovedSanitize.check(
+            &node(
+                "ExpressionStatement",
+                NodeState::Modified,
+                &["sanitizeHtml(input); validateSchema(input);"],
+                &["validateSchema(input);"],
+            ),
+            &ctx(),
+        );
+        assert!(
+            f.is_some(),
+            "a removed sanitizer must still flag when only a different sanitizer CALL survives"
+        );
+    }
+
+    #[test]
+    fn removed_sanitize_stays_silent_when_a_validator_definition_survives() {
+        // ISSUE 4: the Alamofire container case. The node is an `extension`
+        // whose own name (`DataRequest`) is NOT sanitizer-prefixed, so the
+        // self-named-validator guard does not apply. The inner `func validate`
+        // DEFINITION survives the signature churn (gaining `@Sendable`), so the
+        // sanitization moved/re-shaped — not removed. Must stay silent.
+        let before = "extension DataRequest {\n  public func validate(_ statusCode: Int) -> Self {\n    return self\n  }\n}";
+        let after = "extension DataRequest {\n  @Sendable public func validate(_ statusCode: Int) -> Self {\n    return self\n  }\n}";
+        let mut n = node("ExportDeclaration", NodeState::Modified, &[before], &[after]);
+        n.name = "DataRequest".into();
+        assert!(
+            RemovedSanitize.check(&n, &lang_ctx(Lang::Swift)).is_none(),
+            "a surviving validator DEFINITION must keep signature churn silent"
+        );
     }
 
     // ---- Red-team round 1: confirmed findings become regression tests ----

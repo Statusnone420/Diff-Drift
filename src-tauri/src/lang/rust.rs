@@ -548,6 +548,52 @@ mod tests {
         assert!(fired(&node, &ctx()).is_none());
     }
 
+    #[test]
+    fn loose_regex_ignores_constructor_in_a_comment() {
+        // ISSUE 8: a catch-all constructor mentioned only in a COMMENT must not
+        // raise a loose-regex flag — there is no real constructor in the code.
+        let node = modified(
+            "VariableDeclaration",
+            &[r#"let n = 1;"#],
+            &[r#"// historical: Regex::new(r".*") matched everything"#, r#"let n = 2;"#],
+        );
+        assert!(
+            fired(&node, &ctx()).is_none(),
+            "a constructor named only in a comment must not flag"
+        );
+    }
+
+    #[test]
+    fn loose_regex_ignores_constructor_in_a_string() {
+        // ISSUE 8: a constructor mentioned inside a STRING literal (docs/help
+        // text) is not a real regex construction — must stay silent. A raw string
+        // keeps the inner quotes unescaped, so the marker WOULD match the string
+        // body without the code_only gate (a genuine false positive).
+        let node = modified(
+            "VariableDeclaration",
+            &[r##"let help = "tweak the matcher";"##],
+            &[r##"let help = r#"Use Regex::new(".*") only in tests"#;"##],
+        );
+        assert!(
+            fired(&node, &ctx()).is_none(),
+            "a constructor named only in a string must not flag"
+        );
+    }
+
+    #[test]
+    fn loose_regex_still_fires_with_a_real_constructor_alongside_a_string_mention() {
+        // ISSUE 8 (EXTRACT side): a genuine constructor weakened from an anchored
+        // pattern still fires even when an unrelated string also mentions a
+        // constructor — the pattern body must be extractable from code-minus-
+        // comments (strings kept) for the weakening comparison.
+        let node = modified(
+            "VariableDeclaration",
+            &[r#"let email = Regex::new(r"^[^@]+@[^@]+$").unwrap();"#],
+            &[r#"let email = Regex::new(r".*").unwrap(); // see Regex::new docs"#],
+        );
+        assert_eq!(fired(&node, &ctx()), Some("loose-regex"));
+    }
+
     // ---------------- cookies ----------------
 
     #[test]

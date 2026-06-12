@@ -284,6 +284,54 @@ fn cargo_dep_spec(value: &toml::Value) -> String {
     }
 }
 
+/// The real crate name a Cargo dependency resolves to when the manifest key is a
+/// rename: `http-client = { package = "reqwest" }` → `Some("reqwest")`. This is
+/// Cargo's rename mechanism, and the lockfile records the REAL crate name, so
+/// vouching must use it rather than the manifest key (ISSUE 6). `None` for a
+/// plain dependency whose key already IS its crate name.
+fn cargo_dep_package(value: &toml::Value) -> Option<String> {
+    value
+        .as_table()?
+        .get("package")
+        .and_then(|p| p.as_str())
+        .map(str::to_string)
+}
+
+/// Manifest-key → real-crate-name for every renamed dependency across all
+/// dependency sections (including per-target tables), so vouching can translate a
+/// manifest key to the crate name the lockfile actually records (ISSUE 6). Only
+/// renamed entries appear; a plain dependency is absent (its key is its name).
+fn cargo_all_renames(value: &toml::Value) -> BTreeMap<String, String> {
+    let mut renames = BTreeMap::new();
+    let mut collect = |v: &toml::Value, path: &[&str]| {
+        let mut cur = v;
+        for key in path {
+            match cur.get(key) {
+                Some(next) => cur = next,
+                None => return,
+            }
+        }
+        if let Some(table) = cur.as_table() {
+            for (k, dep) in table {
+                if let Some(real) = cargo_dep_package(dep) {
+                    renames.insert(k.clone(), real);
+                }
+            }
+        }
+    };
+    for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        collect(value, &[kind]);
+        if let Some(targets) = value.get("target").and_then(|t| t.as_table()) {
+            for (_target, table) in targets {
+                collect(table, &[kind]);
+            }
+        }
+    }
+    // [workspace.dependencies] (ISSUE 5) follows the same rename rule.
+    collect(value, &["workspace", "dependencies"]);
+    renames
+}
+
 /// Collect a `[dependencies]`-style table from a Cargo manifest into entries.
 fn cargo_section(value: &toml::Value, path: &[&str]) -> Entries {
     let mut cur = value;
@@ -303,7 +351,8 @@ fn cargo_section(value: &toml::Value, path: &[&str]) -> Entries {
 }
 
 /// Every dependency section in a Cargo manifest, including per-target tables
-/// (`[target.'cfg(...)'.dependencies]`), merged into one entry map per kind.
+/// (`[target.'cfg(...)'.dependencies]`) and the workspace-root shared table
+/// (`[workspace.dependencies]`), merged into one entry map per kind.
 fn cargo_all_sections(value: &toml::Value) -> Vec<(String, Entries)> {
     let mut out: Vec<(String, Entries)> = Vec::new();
     for kind in ["dependencies", "dev-dependencies", "build-dependencies"] {
@@ -320,6 +369,13 @@ fn cargo_all_sections(value: &toml::Value) -> Vec<(String, Entries)> {
         if !entries.is_empty() {
             out.push((kind.to_string(), entries));
         }
+    }
+    // [workspace.dependencies] (ISSUE 5): shared across member crates in a
+    // workspace root. A new entry here is real dependency drift, vouched like any
+    // other section (and the rename rule from ISSUE 6 applies via cargo_all_renames).
+    let workspace = cargo_section(value, &["workspace", "dependencies"]);
+    if !workspace.is_empty() {
+        out.push(("workspace.dependencies".to_string(), workspace));
     }
     out
 }
@@ -343,6 +399,10 @@ pub fn analyze_cargo_toml(
 
     let before_sections: BTreeMap<String, Entries> = cargo_all_sections(b).into_iter().collect();
     let after_sections: BTreeMap<String, Entries> = cargo_all_sections(a).into_iter().collect();
+    // Manifest-key → real-crate-name for renamed deps (ISSUE 6). Merge both sides
+    // so a rename present in either before or after translates the vouching name.
+    let mut renames = cargo_all_renames(b);
+    renames.extend(cargo_all_renames(a));
     let kinds: BTreeSet<&String> = before_sections.keys().chain(after_sections.keys()).collect();
     let empty_entries = Entries::new();
     for kind in kinds {
@@ -352,7 +412,12 @@ pub fn analyze_cargo_toml(
             kind,
             "Dependency",
             &mut nodes,
-            |state, name, old, new| cargo_go_rule(state, name, old, new, kind, lockfile),
+            |state, name, old, new| {
+                // A renamed dep displays its manifest key but vouches by the real
+                // crate name the lockfile records (ISSUE 6).
+                let vouch_name = renames.get(name).map(String::as_str).unwrap_or(name);
+                cargo_go_rule(state, name, vouch_name, old, new, kind, lockfile)
+            },
         ));
     }
 
@@ -408,9 +473,16 @@ fn cargo_build_script(value: &toml::Value) -> Option<String> {
 /// Shared add/modify rule for the lockfile-vouching ecosystems (Cargo, Go,
 /// Poetry-locked Python). With a lockfile, an unvouched add is High; without
 /// one, every add is a Low "new dependency".
+///
+/// `vouch_name` is the name checked against the lockfile, which can differ from
+/// the displayed `name`: a renamed Cargo dependency
+/// (`http-client = { package = "reqwest" }`) displays its manifest key but must
+/// vouch by the REAL crate name the lockfile records (ISSUE 6). Callers without
+/// a rename pass the same string for both.
 fn cargo_go_rule(
     state: NodeState,
     name: &str,
+    vouch_name: &str,
     old: &str,
     new: &str,
     sec: &str,
@@ -434,7 +506,7 @@ fn cargo_go_rule(
     }
     match state {
         NodeState::Added => match lockfile {
-            Some(lock) if !lock.contains(name) => Some((
+            Some(lock) if !lock.contains(vouch_name) => Some((
                 "dep-not-in-lockfile",
                 format!(
                     "\u{201c}{name}\u{201d} was added to {sec} but isn't in the lockfile — confirm the package exists and was installed intentionally. Hallucinated package names are a known agent risk."
@@ -524,10 +596,15 @@ pub fn analyze_go_mod(
         &mut nodes,
         |state, name, old, new| {
             // `// indirect` requires are transitive entries the module graph
-            // pulls in (and go.sum vouches for) — `go mod tidy` adds them in
-            // bulk. They aren't a developer-chosen direct dependency, so an
-            // added indirect require is Low, not the Medium "you chose this".
-            if state == NodeState::Added && after_indirect.contains(name) {
+            // pulls in — `go mod tidy` adds them in bulk. They aren't a
+            // developer-chosen direct dependency, so a VOUCHED indirect add is
+            // Low, not the Medium "you chose this". But the downgrade is gated on
+            // go.sum vouching FIRST (ISSUE 7): a manually-pasted `// indirect`
+            // line that go.sum does NOT vouch for is still the unvouched-
+            // dependency case and must stay High — falling through to
+            // `cargo_go_rule` below, which emits the High "not in lockfile" flag.
+            let vouched = lockfile.is_none_or(|lock| lock.contains(name));
+            if state == NodeState::Added && after_indirect.contains(name) && vouched {
                 return Some((
                     "dep-added-indirect",
                     format!(
@@ -535,7 +612,7 @@ pub fn analyze_go_mod(
                     ),
                 ));
             }
-            cargo_go_rule(state, name, old, new, "require", lockfile)
+            cargo_go_rule(state, name, name, old, new, "require", lockfile)
         },
     );
 
@@ -623,6 +700,32 @@ fn pyproject_sections(value: &toml::Value) -> Vec<(String, Entries)> {
         }
     }
 
+    // PEP 621 extras (ISSUE 3): [project.optional-dependencies] is a table of
+    // extra-name → list of PEP 508 requirement strings. Merge every extra's
+    // requirements into one section so an added/changed optional dep surfaces the
+    // same way as a main dep. A package shared across extras keeps its first spec.
+    if let Some(extras) = value
+        .get("project")
+        .and_then(|p| p.get("optional-dependencies"))
+        .and_then(|d| d.as_table())
+    {
+        let mut entries = Entries::new();
+        for (_extra, reqs) in extras {
+            if let Some(arr) = reqs.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        if let Some((name, spec)) = requirement_entry(s) {
+                            entries.entry(name).or_insert(spec);
+                        }
+                    }
+                }
+            }
+        }
+        if !entries.is_empty() {
+            out.push(("project.optional-dependencies".to_string(), entries));
+        }
+    }
+
     // Poetry: [tool.poetry.dependencies] is a table name -> version/constraint.
     if let Some(table) = value
         .get("tool")
@@ -673,7 +776,7 @@ pub fn analyze_pyproject_toml(
             "Dependency",
             &mut nodes,
             |state, name, old, new| match lockfile {
-                Some(_) => cargo_go_rule(state, name, old, new, kind, lockfile),
+                Some(_) => cargo_go_rule(state, name, name, old, new, kind, lockfile),
                 None => no_lock_rule(state, name, old, new),
             },
         ));
@@ -913,7 +1016,7 @@ pub fn analyze_csproj(
         "Dependency",
         &mut nodes,
         |state, name, old, new| match lockfile {
-            Some(_) => cargo_go_rule(state, name, old, new, "PackageReference", lockfile),
+            Some(_) => cargo_go_rule(state, name, name, old, new, "PackageReference", lockfile),
             None => no_lock_rule(state, name, old, new),
         },
     );
@@ -1399,6 +1502,83 @@ mod tests {
     }
 
     #[test]
+    fn cargo_renamed_dep_vouches_by_real_crate_name() {
+        // ISSUE 6: a renamed dependency declares the crate via `package = "…"`.
+        // Cargo.lock records the REAL crate name (`reqwest`), not the manifest key
+        // (`http-client`), so vouching must use the package override — otherwise a
+        // legitimately-locked dependency is falsely flagged "not in lockfile".
+        let before = "[dependencies]\nserde = \"1\"\n";
+        let after = "[dependencies]\nserde = \"1\"\nhttp-client = { package = \"reqwest\", version = \"0.12\" }\n";
+        // The lock vouches for the real crate name only.
+        let lock = vouched(&["serde", "reqwest"]);
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock)).unwrap();
+        let http = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("http-client"))
+            .expect("the renamed dep still surfaces as a node/flag");
+        assert_eq!(
+            http.r#type, "New dependency",
+            "a renamed dep present in the lock by its real crate name is a Medium new dep, not a High missing one"
+        );
+        assert!(matches!(http.severity, Severity::Medium));
+        assert!(
+            !res.flags.iter().any(|f| f.r#type == "Dependency not in lockfile"),
+            "no false 'not in lockfile' High for the renamed-but-present crate"
+        );
+    }
+
+    #[test]
+    fn cargo_renamed_dep_with_unvouched_real_crate_still_high() {
+        // ISSUE 6 complement: when the REAL crate name is genuinely absent from
+        // the lock, the rename still flags High — vouching by the real name, not
+        // the manifest key, in both directions.
+        let before = "[dependencies]\nserde = \"1\"\n";
+        let after = "[dependencies]\nserde = \"1\"\nhttp-client = { package = \"reqwest-typo\", version = \"0.12\" }\n";
+        let lock = vouched(&["serde", "reqwest"]); // real crate name absent
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock)).unwrap();
+        let http = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("http-client"))
+            .expect("the renamed dep surfaces");
+        assert_eq!(http.r#type, "Dependency not in lockfile");
+        assert!(matches!(http.severity, Severity::High));
+    }
+
+    #[test]
+    fn cargo_workspace_dependencies_section_is_read() {
+        // ISSUE 5: a workspace root shares deps via [workspace.dependencies].
+        // A new entry there must surface as drift, vouched against the lockfile
+        // like any other dependency section.
+        let before = "[workspace]\nmembers = [\"a\", \"b\"]\n\n[workspace.dependencies]\nserde = \"1\"\n";
+        let after = "[workspace]\nmembers = [\"a\", \"b\"]\n\n[workspace.dependencies]\nserde = \"1\"\nghost-typo = \"0.0.1\"\n";
+        let lock = vouched(&["serde"]); // the new crate is absent from the lock
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock))
+            .expect("a new workspace.dependencies entry surfaces as drift");
+        let ghost = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("ghost-typo"))
+            .expect("the new workspace dep produces a flag");
+        assert!(matches!(ghost.severity, Severity::High));
+        assert_eq!(ghost.r#type, "Dependency not in lockfile");
+    }
+
+    #[test]
+    fn cargo_workspace_dependencies_vouched_add_is_medium() {
+        // A vouched add in [workspace.dependencies] is the Medium new-dep case,
+        // and the rename rule (ISSUE 6) applies there too.
+        let before = "[workspace.dependencies]\nserde = \"1\"\n";
+        let after = "[workspace.dependencies]\nserde = \"1\"\nhttp = { package = \"reqwest\", version = \"0.12\" }\n";
+        let lock = vouched(&["serde", "reqwest"]);
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock)).unwrap();
+        let http = res.flags.iter().find(|f| f.desc.contains("http")).unwrap();
+        assert_eq!(http.r#type, "New dependency", "renamed workspace dep vouches by real crate");
+        assert!(matches!(http.severity, Severity::Medium));
+    }
+
+    #[test]
     fn cargo_idiomatic_manifest_edit_does_not_flag() {
         // A real-world manifest where only non-dependency metadata changes.
         let before = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = \"1\"\nclap = \"4\"\n";
@@ -1550,6 +1730,47 @@ mod tests {
     }
 
     #[test]
+    fn go_unvouched_indirect_require_stays_high() {
+        // ISSUE 7: an indirect require that go.sum does NOT vouch for is the
+        // unvouched-dependency case (a manually-pasted `// indirect` line absent
+        // from go.sum). It must stay High — the `// indirect` downgrade to Low
+        // applies only when go.sum actually vouches for the module.
+        let before = "module m\n\ngo 1.22\n\nrequire github.com/real/direct v1.0.0\n";
+        let after = "module m\n\ngo 1.22\n\nrequire (\n\tgithub.com/real/direct v1.0.0\n\tgithub.com/ghost/typo v0.0.1 // indirect\n)\n";
+        // go.sum vouches for the direct dep only — the indirect ghost is absent.
+        let lock = vouched(&["github.com/real/direct"]);
+        let res = analyze_go_mod(Some(before), Some(after), Some(&lock)).unwrap();
+        let ghost = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("github.com/ghost/typo"))
+            .expect("unvouched indirect add produces a flag");
+        assert!(
+            matches!(ghost.severity, Severity::High),
+            "an unvouched indirect require stays High, got {:?}",
+            ghost.severity
+        );
+        assert_eq!(ghost.r#type, "Dependency not in lockfile");
+    }
+
+    #[test]
+    fn go_vouched_indirect_require_is_low() {
+        // ISSUE 7 (complement): a vouched `// indirect` add still downgrades to
+        // the Low "Indirect dependency added" once go.sum vouches for it.
+        let before = "module m\n\ngo 1.22\n\nrequire github.com/real/direct v1.0.0\n";
+        let after = "module m\n\ngo 1.22\n\nrequire (\n\tgithub.com/real/direct v1.0.0\n\tgithub.com/transitive/dep v1.1.0 // indirect\n)\n";
+        let lock = vouched(&["github.com/real/direct", "github.com/transitive/dep"]);
+        let res = analyze_go_mod(Some(before), Some(after), Some(&lock)).unwrap();
+        let dep = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("github.com/transitive/dep"))
+            .expect("vouched indirect add produces a flag");
+        assert!(matches!(dep.severity, Severity::Low), "vouched indirect is Low");
+        assert_eq!(dep.r#type, "Indirect dependency added");
+    }
+
+    #[test]
     fn go_sum_names_takes_module_paths() {
         let sum = "github.com/a/b v1.0.0 h1:abc=\ngithub.com/a/b v1.0.0/go.mod h1:def=\n";
         let names = go_sum_names(sum);
@@ -1644,6 +1865,42 @@ mod tests {
             analyze_pyproject_toml(Some(before), Some(after), None).is_none(),
             "metadata churn is not dependency drift"
         );
+    }
+
+    #[test]
+    fn pyproject_optional_dependencies_extra_surfaces() {
+        // ISSUE 3: PEP 621 extras live in [project.optional-dependencies] as a
+        // table of extra-name → list of requirement strings. A new extra
+        // requirement is real dependency drift the function contract promises to
+        // cover, so it must surface as a node/flag.
+        let before = "[project]\nname = \"app\"\ndependencies = [\"flask>=2.0\"]\n";
+        let after = "[project]\nname = \"app\"\ndependencies = [\"flask>=2.0\"]\n\n[project.optional-dependencies]\ndev = [\"pytest\"]\n";
+        let res = analyze_pyproject_toml(Some(before), Some(after), None)
+            .expect("a new optional-dependency surfaces as drift");
+        let pytest = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("pytest"))
+            .expect("the optional dep produces a flag");
+        assert_eq!(pytest.r#type, "New dependency");
+        assert!(matches!(pytest.severity, Severity::Low), "no lock → Low new dep");
+    }
+
+    #[test]
+    fn pyproject_optional_dependency_unvouched_is_high_with_lock() {
+        // The optional-dependencies extras vouch against poetry.lock like the
+        // main deps: an unvouched add is High.
+        let before = "[project]\nname = \"app\"\ndependencies = [\"flask\"]\n\n[project.optional-dependencies]\ntest = [\"coverage\"]\n";
+        let after = "[project]\nname = \"app\"\ndependencies = [\"flask\"]\n\n[project.optional-dependencies]\ntest = [\"coverage\", \"ghostpkg==1.0\"]\n";
+        let lock = vouched(&["flask", "coverage"]); // ghostpkg absent
+        let res = analyze_pyproject_toml(Some(before), Some(after), Some(&lock)).unwrap();
+        let ghost = res
+            .flags
+            .iter()
+            .find(|f| f.desc.contains("ghostpkg"))
+            .expect("unvouched optional dep flags");
+        assert_eq!(ghost.r#type, "Dependency not in lockfile");
+        assert!(matches!(ghost.severity, Severity::High));
     }
 
     // --- Maven pom.xml -----------------------------------------------------
