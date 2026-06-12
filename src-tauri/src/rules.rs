@@ -257,12 +257,23 @@ fn added_or_modified(s: NodeState) -> bool {
     matches!(s, NodeState::Added | NodeState::Modified)
 }
 
-/// Whether `s` mentions a CORS construct (case-insensitive `cors`). Used to gate
-/// the ambiguous Rust `.allow_origin(Any)` marker so it only fires on an actual
-/// CORS layer (`CorsLayer`/`Cors::…`), not on an unrelated builder that happens
-/// to expose an `allow_origin` method.
+/// Whether `s` mentions a CORS construct. Used to gate the ambiguous non-JsTs
+/// permissive-origin markers so they only fire on an actual CORS configuration,
+/// not on an unrelated struct/builder that happens to expose a similarly named
+/// field or method (a custom `ProxyConfig{AllowAllOrigins}`, a `RouteConfig`
+/// with an `AllowAnyOrigin()` method, a non-CORS `anyHost()`).
+///
+/// Accepts any of these case-insensitive tokens, so frameworks whose marker
+/// lacks the literal substring "cors" still register context:
+/// - `cors` — gin `cors.Config`, ASP.NET `UseCors`/`CorsPolicyBuilder`, Ktor
+///   `install(CORS)`, tower-http `CorsLayer`, Flask/FastAPI `CORSMiddleware`.
+/// - `crossorigin` — Spring `@CrossOrigin`.
+/// - `allowedorigin` (singular, so it also matches the plural `AllowedOrigins`)
+///   — gorilla `handlers.AllowedOrigins`, Spring `addAllowedOrigin`/
+///   `setAllowedOrigins`/`allowedOrigins`.
 fn has_cors_context(s: &str) -> bool {
-    s.to_ascii_lowercase().contains("cors")
+    let lower = s.to_ascii_lowercase();
+    lower.contains("cors") || lower.contains("crossorigin") || lower.contains("allowedorigin")
 }
 
 /// Whether `s` mentions a cookie (case-insensitive `cookie`). Used to gate the
@@ -599,6 +610,14 @@ impl Rule for EnvTlsReject {
         let re = compiled_marker(marker)?;
         let after = code_minus_comments(&node.after, ctx.lang)?;
         let before = code_minus_comments(&node.before, ctx.lang)?;
+        // Because strings survive, the marker also matches the env-var name in a
+        // bare DOC string (`MSG = "Do not set PYTHONHTTPSVERIFY=0"`). The real
+        // disable is always an `os.environ[...]` assignment, so require an
+        // `environ` token in the after — a prose string that merely names the var
+        // (without `environ`) is then ignored.
+        if !after.to_ascii_lowercase().contains("environ") {
+            return None;
+        }
         if re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
@@ -670,12 +689,16 @@ impl Rule for BroadenedCors {
         let re = compiled_marker(marker)?;
         let after = code_minus_comments(&node.after, ctx.lang)?;
         let before = code_minus_comments(&node.before, ctx.lang)?;
-        // Rust's `.allow_origin(Any)` marker is ambiguous — a custom builder
-        // (e.g. a non-CORS `RouteConfig`) can expose the same method. Require a
-        // CORS token in the node so only an actual CORS layer fires. Other
-        // families' markers are already framework-named (`AllowAllOrigins`,
-        // `@CrossOrigin`, `CORSMiddleware`, `anyHost`), so they don't need it.
-        let context_ok = ctx.lang.family() != Family::Rust || has_cors_context(&after);
+        // Every non-JsTs permissive-origin marker is ambiguous enough that a
+        // custom struct/builder can expose the same field or method name: Go's
+        // `AllowAllOrigins` on a `ProxyConfig`, C#'s `AllowAnyOrigin()` on a
+        // `RouteConfig`, Kotlin's `anyHost()` on a non-CORS builder, Rust's
+        // `.allow_origin(Any)`. Require an explicit CORS token in the node so
+        // only an actual CORS configuration fires. `has_cors_context` accepts the
+        // framework markers that lack the literal "cors" substring (Spring's
+        // `@CrossOrigin`, gorilla's `AllowedOrigins`), so real detections keep
+        // firing. JS/TS keeps its own structural path above and is exempt.
+        let context_ok = ctx.lang.family() == Family::JsTs || has_cors_context(&after);
         if context_ok && re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
@@ -1226,6 +1249,32 @@ fn is_sanitizer_name(n: &str) -> bool {
     })
 }
 
+/// Whether a sanitizer-prefixed identifier (`sanitize*`/`escape*`/`validate*`)
+/// still appears in `src` as a definition or surviving call/reference. Used by
+/// `RemovedSanitize` to suppress validator-definition churn inside a container
+/// node (the Alamofire `extension DataRequest { func validate … }` case): if the
+/// name survives, the sanitization moved or re-shaped rather than disappeared.
+///
+/// Two shapes count:
+/// - a *definition header* — a declaration keyword (`func`/`fn`/`def`/`fun`/
+///   `void`/`sub`) immediately preceding the sanitizer name, covering languages
+///   whose function decl puts the name after a keyword; and
+/// - a *call/reference* — the sanitizer name immediately followed by `(`, which
+///   the `\b…\(` pattern matches in both bare (`validate(`) and member
+///   (`.validate(`) forms, and also matches the name in a decl header that is
+///   followed by its parameter list (`func validate(_ rule:)`).
+///
+/// `src` must already be code-only (comment/string interiors blanked) so a name
+/// mentioned in prose never falsely suppresses a real removal.
+fn sanitizer_name_survives(src: &str) -> bool {
+    static DEF: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\b(?:func|fn|def|fun|void|sub)\s+(?:sanitize|escape|validate)\w*").unwrap()
+    });
+    static CALL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b(?:sanitize|escape|validate)\w*\s*\(").unwrap());
+    DEF.is_match(src) || CALL.is_match(src)
+}
+
 /// Function/method-declaration node kinds across the families. A node of one of
 /// these kinds whose own name is sanitizer-prefixed is a *validator definition*,
 /// not a caller — see `RemovedSanitize`'s definition-churn guard.
@@ -1267,6 +1316,21 @@ impl Rule for RemovedSanitize {
             && !node.name.is_empty()
             && after.contains(node.name.as_str())
         {
+            return None;
+        }
+        // FIX (v0.5.0 Alamofire cluster): the guard above only catches a node
+        // whose OWN name is sanitizer-prefixed. The real Alamofire case surfaces
+        // as a container node (`extension DataRequest { @Sendable public func
+        // validate(...) {...} }`) named after the type, so the validator the diff
+        // restructured is an inner declaration the callee query never sees as a
+        // call. If a sanitizer-prefixed name still appears in the AFTER as a
+        // definition (`func validate`/`fn validate`/`def validate`/`void
+        // validate`) or as a surviving call/reference (`validate(`, `.validate(`),
+        // the protection wasn't removed — just moved or re-shaped. Check the
+        // CODE-ONLY after so a name surviving solely in a comment or string never
+        // masks a genuine removal (parse failure falls back to the raw text).
+        let after_code = code_only(&node.after, ctx.lang).unwrap_or_else(|| after.clone());
+        if node.state == NodeState::Modified && sanitizer_name_survives(&after_code) {
             return None;
         }
         // The sanitize/escape/validate prefix list is naming-convention neutral

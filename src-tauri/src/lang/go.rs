@@ -418,6 +418,65 @@ mod tests {
     }
 
     #[test]
+    fn cors_permissive_ignores_non_cors_struct() {
+        // Owner-reported FP: a custom non-CORS struct that happens to expose an
+        // `AllowAllOrigins` field must NOT read as a broadened CORS. The
+        // permissive-origin gate requires an actual CORS token in the node
+        // (`cors`/`crossorigin`/`allowedorigin`); `ProxyConfig` has none.
+        let n = node(
+            "VariableDeclaration",
+            &[
+                "type ProxyConfig struct{ AllowAllOrigins bool }",
+                "cfg := ProxyConfig{AllowAllOrigins: false}",
+            ],
+            &[
+                "type ProxyConfig struct{ AllowAllOrigins bool }",
+                "cfg := ProxyConfig{AllowAllOrigins: true}",
+            ],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
+    #[test]
+    fn cors_permissive_fires_on_gin_cors_config() {
+        // gin's cors.Config{AllowAllOrigins: true} — has the `cors` token, so the
+        // context gate lets the true positive fire.
+        let n = node(
+            "VariableDeclaration",
+            &["cfg := cors.Config{AllowAllOrigins: false}"],
+            &["cfg := cors.Config{AllowAllOrigins: true}"],
+        );
+        assert_eq!(fired(&n, &ctx()), Some("broadened-cors"));
+    }
+
+    #[test]
+    fn cors_permissive_fires_on_gorilla_allowed_origins() {
+        // gorilla/handlers: a wildcard AllowedOrigins inside handlers.CORS(...).
+        // Has both `cors` and `allowedorigin` tokens — must still fire under the
+        // gate.
+        let n = node(
+            "VariableDeclaration",
+            &["h := handlers.CORS(handlers.AllowedOrigins([]string{\"https://app.example.com\"}))(r)"],
+            &["h := handlers.CORS(handlers.AllowedOrigins([]string{\"*\"}))(r)"],
+        );
+        assert_eq!(fired(&n, &ctx()), Some("broadened-cors"));
+    }
+
+    #[test]
+    fn cors_permissive_ignores_method_marker_inside_string_denylist() {
+        // FIX 3 (string-literal markers): a permissive-origin method named only
+        // inside a string denylist or log line lacks CORS context after FIX 1, so
+        // it stays silent. (Strings survive `code_minus_comments`, but the gate
+        // sees no `cors`/`crossorigin`/`allowedorigin` token.)
+        let denylist = node(
+            "VariableDeclaration",
+            &["banned := []string{}"],
+            &["banned := []string{\"AllowAllOrigins: true\"}"],
+        );
+        assert_eq!(fired(&denylist, &ctx()), None, "marker in string denylist");
+    }
+
+    #[test]
     fn cors_permissive_fires_on_wildcard_allowed_origins() {
         let n = node(
             "VariableDeclaration",

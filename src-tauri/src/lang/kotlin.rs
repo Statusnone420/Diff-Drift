@@ -626,6 +626,19 @@ mod tests {
     }
 
     #[test]
+    fn cors_permissive_ignores_method_marker_in_log_string() {
+        // FIX 3 (string-literal markers): `anyHost()` named only inside a log
+        // string lacks CORS context after FIX 1 (no `install(CORS)` etc.), so it
+        // stays silent even though strings survive `code_minus_comments`.
+        let node = modified(
+            "FunctionDeclaration",
+            &["fun warn() {", "    log(\"ok\")", "}"],
+            &["fun warn() {", "    log(\"anyHost() is not allowed\")", "}"],
+        );
+        assert_eq!(check_id(&node, false), None);
+    }
+
+    #[test]
     fn cors_permissive_fires_on_any_host() {
         let node = modified(
             "FunctionDeclaration",
@@ -645,6 +658,31 @@ mod tests {
             ],
         );
         assert_eq!(check_id(&node, false), Some("broadened-cors"));
+    }
+
+    #[test]
+    fn cors_permissive_ignores_non_cors_any_host() {
+        // FP: a custom builder exposing `anyHost()` with no CORS context must NOT
+        // read as a broadened CORS. The gate finds no `cors`/`crossorigin`/
+        // `allowedorigin` token here (no `install(CORS)`, no `@CrossOrigin`).
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "fun buildAllowlist(builder: HostBuilder) {",
+                "    builder.allowHost(\"app.example.com\")",
+                "}",
+            ],
+            &[
+                "fun buildAllowlist(builder: HostBuilder) {",
+                "    builder.anyHost()",
+                "}",
+            ],
+        );
+        assert_eq!(
+            check_id(&node, false),
+            None,
+            "anyHost() on a non-CORS builder is not a CORS broadening"
+        );
     }
 
     #[test]

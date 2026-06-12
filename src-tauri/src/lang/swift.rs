@@ -272,6 +272,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn removed_sanitize_ignores_validate_definition_in_container_node() {
+        // FIX (v0.5.0 Alamofire cluster): the real misfire on Validation.swift.
+        // The node is the CONTAINER (`extension DataRequest { ... }`), surfaced as
+        // a ClassDeclaration named "DataRequest" — NOT a function node named
+        // `validate`, so the older self-named guard misses it. The inner `validate`
+        // method gains `@Sendable` and its internal self-call is restructured, so
+        // the lost `validate(...)` callee would read as a removed sanitizer. The
+        // surviving `func validate(` definition in the after proves the protection
+        // wasn't removed.
+        let n = node(
+            "ClassDeclaration",
+            NodeState::Modified,
+            "extension DataRequest {\n    public func validate(_ rule: Rule) -> Self {\n        return validate(rule, options: defaults)\n    }\n}",
+            "extension DataRequest {\n    @Sendable public func validate(_ rule: Rule) -> Self {\n        return Self(rule)\n    }\n}",
+        );
+        let mut n = n;
+        // The parser surfaces the extension's type as the node name.
+        n.name = "DataRequest".into();
+        assert!(
+            fired(&n, &ctx()).is_none(),
+            "a validate definition surviving in a container node is not a removed sanitizer"
+        );
+    }
+
+    #[test]
+    fn removed_sanitize_still_fires_when_caller_drops_only_sanitizer() {
+        // True positive must survive FIX: a caller that drops its ONLY sanitize
+        // call, with no surviving validate*/sanitize*/escape* definition or
+        // reference in the after, still flags.
+        let n = node(
+            "FunctionDeclaration",
+            NodeState::Modified,
+            "func save(_ raw: String) {\n    store(sanitizeInput(raw))\n}",
+            "func save(_ raw: String) {\n    store(raw)\n}",
+        );
+        assert_eq!(fired(&n, &ctx()), Some("removed-sanitize"));
+    }
+
     // ---------------- verify-to-decode ----------------
 
     #[test]

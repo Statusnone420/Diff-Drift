@@ -546,6 +546,22 @@ mod tests {
         assert_eq!(fired(&n, &ctx()), None);
     }
 
+    #[test]
+    fn env_tls_reject_ignores_var_name_in_doc_string() {
+        // FIX 3: the env-var name lives in a STRING key, so strings survive the
+        // comment-only blanking — which means a bare DOC string that merely names
+        // the var would otherwise match. A real disable is always an
+        // `os.environ[...]` assignment, so requiring an `environ` token keeps the
+        // prose string silent.
+        let n = node(
+            "VariableDeclaration",
+            NodeState::Added,
+            &[],
+            &["MSG = \"Do not set PYTHONHTTPSVERIFY=0 in production\""],
+        );
+        assert_eq!(fired(&n, &ctx()), None);
+    }
+
     // ---------------- loose-regex ----------------
 
     #[test]

@@ -637,6 +637,47 @@ mod tests {
     }
 
     #[test]
+    fn cors_permissive_fires_on_use_cors_allow_any_origin() {
+        // ASP.NET pipeline: app.UseCors(b => b.AllowAnyOrigin()). The `UseCors`
+        // seam supplies the `cors` token the context gate needs.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "public void Configure(IApplicationBuilder app) {",
+                "    app.UseCors(b => b.WithOrigins(\"https://admin.example.com\"));",
+                "}",
+            ],
+            &[
+                "public void Configure(IApplicationBuilder app) {",
+                "    app.UseCors(b => b.AllowAnyOrigin());",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&node, false), Some("broadened-cors"));
+    }
+
+    #[test]
+    fn cors_permissive_ignores_non_cors_builder() {
+        // FP: a custom routing builder that exposes an `AllowAnyOrigin()` method
+        // with no CORS context must NOT read as a broadened CORS — the gate finds
+        // no `cors`/`crossorigin`/`allowedorigin` token in `RouteConfig`.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "public void Map(RouteConfig cfg) {",
+                "    new RouteConfig().WithRoutes(\"/api\").WithHost(\"admin\");",
+                "}",
+            ],
+            &[
+                "public void Map(RouteConfig cfg) {",
+                "    new RouteConfig().WithRoutes(\"/api\").AllowAnyOrigin();",
+                "}",
+            ],
+        );
+        assert_eq!(hit(&node, false), None);
+    }
+
+    #[test]
     fn cors_permissive_negative_allowlist_kept() {
         let node = modified(
             "FunctionDeclaration",
