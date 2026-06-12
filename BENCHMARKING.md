@@ -4,9 +4,9 @@ Diff Drift has two separate measurements. This page summarises both, documents h
 
 ## Engine benchmark
 
-A deterministic CI gate: `npm run eval:engine` runs 20 fixture cases through the real binary and asserts exact expected flags, risk counts, and exit codes. The fixture cases are real temporary git repos built from in-memory helpers (no first-read penalty). A failing case is a regression.
+A deterministic CI gate: `npm run eval:engine` runs 27 fixture cases through the real binary and asserts exact expected flags, risk counts, and exit codes. The fixture cases are real temporary git repos built from in-memory helpers (no first-read penalty). A failing case is a regression.
 
-**Gate:** CI blocker. Current case count: 20.
+**Gate:** CI blocker. Current case count: 27.
 
 Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code execution, Child process execution, Disabled TLS verification, Broadened CORS, Weakened cookie flags, Loose regex pattern, Crypto downgrade, Undeclared import, Disabled guard, Removed sanitization, Permissive logging config, Dependency not in lockfile, New dependency, npm script changed, Dependency version changed, test-file hardcoded secret, structural differential cases (guard removed, regex anchors removed, try-catch removed, constant-falsy guard evasion, benign eval in string).
 
