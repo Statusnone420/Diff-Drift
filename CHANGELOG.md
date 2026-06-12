@@ -2,7 +2,7 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
-## [Unreleased]
+## [0.4.2] — 2026-06-11
 
 ### Added
 
