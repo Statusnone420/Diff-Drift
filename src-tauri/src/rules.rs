@@ -990,7 +990,14 @@ impl Rule for UnvettedPackage {
 }
 
 fn is_node_builtin(module: &str) -> bool {
-    let module = module.strip_prefix("node:").unwrap_or(module);
+    // An explicit `node:` specifier is always a core module — the scheme is
+    // reserved, so no npm package imports under it. Honoring the prefix also
+    // covers node-only built-ins (node:test, node:sqlite, node:sea) without
+    // adding their bare names to the allowlist below, where they would shadow
+    // real npm packages such as the popular `sqlite` wrapper.
+    if module.starts_with("node:") {
+        return true;
+    }
     let base = module.split('/').next().unwrap_or(module);
     matches!(
         base,
@@ -998,26 +1005,41 @@ fn is_node_builtin(module: &str) -> bool {
             | "async_hooks"
             | "buffer"
             | "child_process"
+            | "cluster"
             | "console"
+            | "constants"
             | "crypto"
+            | "dgram"
+            | "diagnostics_channel"
             | "dns"
+            | "domain"
             | "events"
             | "fs"
             | "http"
+            | "http2"
             | "https"
+            | "inspector"
+            | "module"
             | "net"
             | "os"
             | "path"
+            | "perf_hooks"
             | "process"
+            | "punycode"
+            | "querystring"
             | "readline"
+            | "repl"
             | "stream"
             | "string_decoder"
             | "timers"
             | "tls"
+            | "trace_events"
             | "tty"
             | "url"
             | "util"
+            | "v8"
             | "vm"
+            | "wasi"
             | "worker_threads"
             | "zlib"
     )
@@ -2112,6 +2134,29 @@ mod tests {
             "net",
             "os",
             "util",
+            // Regression: the v0.4.0 self-review dogfood flagged
+            // `import { createRequire } from 'module'` as an undeclared package
+            // because these stdlib modules were missing from the allowlist.
+            "module",
+            "node:module",
+            "cluster",
+            "dgram",
+            "perf_hooks",
+            "querystring",
+            "v8",
+            "http2",
+            "node:http2",
+            "inspector",
+            "domain",
+            "trace_events",
+            "wasi",
+            // `node:`-prefixed specifiers are built-ins by the scheme, including
+            // node-only modules whose bare names we deliberately do NOT allowlist.
+            "node:test",
+            "node:test/reporters",
+            "node:sqlite",
+            "node:sea",
+            "node:sys",
         ] {
             import.name = module.into();
             assert!(
@@ -2124,6 +2169,14 @@ mod tests {
         assert!(
             UnvettedPackage.check(&import, &with_deps).is_some(),
             "true undeclared third-party import still flagged"
+        );
+
+        // A bare `sqlite` is the popular npm package, not node:sqlite — it must
+        // still flag, which is why these node-only names are not bare-allowlisted.
+        import.name = "sqlite".into();
+        assert!(
+            UnvettedPackage.check(&import, &with_deps).is_some(),
+            "bare `sqlite` is an npm package and must still flag"
         );
     }
 

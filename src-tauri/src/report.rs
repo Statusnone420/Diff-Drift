@@ -96,6 +96,27 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     out
 }
 
+/// Cap on how many before/after lines a single flag's diff block renders. A
+/// flag can land on a large node — e.g. an entire refactored test module
+/// flagged for a one-line secret — and dumping the whole body per side blew a
+/// real export up to ~4,800 lines. The cap is generous so a realistically
+/// sized flagged node keeps its evidence in the report; only pathological
+/// nodes truncate, and the remainder is summarized. (A position-aware render
+/// that always surfaces the matched line is tracked as a follow-up.)
+const MAX_DIFF_LINES_PER_SIDE: usize = 80;
+
+fn push_diff_side(out: &mut String, lines: &[String], marker: char) {
+    let shown = lines.len().min(MAX_DIFF_LINES_PER_SIDE);
+    for line in &lines[..shown] {
+        out.push_str(&format!("{marker} {line}\n"));
+    }
+    let hidden = lines.len() - shown;
+    if hidden > 0 {
+        let suffix = if hidden == 1 { "" } else { "s" };
+        out.push_str(&format!("{marker} … {hidden} more line{suffix} (truncated)\n"));
+    }
+}
+
 fn render_flag(out: &mut String, f: &Flag, files: &[FileEntry]) {
     out.push_str(&format!("#### {} — `{}`\n\n", f.r#type, f.file_path));
     out.push_str(&format!("- **Node:** {}\n", f.node_path));
@@ -107,18 +128,12 @@ fn render_flag(out: &mut String, f: &Flag, files: &[FileEntry]) {
     {
         if let Some(before) = node.before.as_ref().filter(|l| !l.is_empty()) {
             out.push_str("\n```diff\n");
-            for line in before {
-                out.push_str(&format!("- {line}\n"));
-            }
-            for line in node.after.iter().flatten() {
-                out.push_str(&format!("+ {line}\n"));
-            }
+            push_diff_side(out, before, '-');
+            push_diff_side(out, node.after.as_deref().unwrap_or(&[]), '+');
             out.push_str("```\n");
         } else if let Some(after) = node.after.as_ref().filter(|l| !l.is_empty()) {
             out.push_str("\n```diff\n");
-            for line in after {
-                out.push_str(&format!("+ {line}\n"));
-            }
+            push_diff_side(out, after, '+');
             out.push_str("```\n");
         }
     }
@@ -299,6 +314,34 @@ mod tests {
             !clean.contains("## Other changed files"),
             "absent when nothing outside the analyzed set"
         );
+    }
+
+    #[test]
+    fn diff_side_caps_large_bodies() {
+        // A flag landing on a huge node (e.g. a whole test module flagged for a
+        // one-line secret) must not dump the entire body — the report capped a
+        // real ~4,800-line export this way. The remainder is summarized.
+        let lines: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
+
+        let mut out = String::new();
+        push_diff_side(&mut out, &lines, '+');
+        let content = out.lines().filter(|l| l.starts_with("+ line ")).count();
+        assert_eq!(
+            content, MAX_DIFF_LINES_PER_SIDE,
+            "only the cap renders as content lines: {out}"
+        );
+        let hidden = 200 - MAX_DIFF_LINES_PER_SIDE;
+        assert!(
+            out.contains(&format!("{hidden} more lines (truncated)")),
+            "remainder is summarized: {out}"
+        );
+        assert!(!out.contains("line 199"), "lines past the cap are omitted");
+
+        // Small bodies render whole, with no truncation note.
+        let mut small = String::new();
+        push_diff_side(&mut small, &lines[..3], '-');
+        assert_eq!(small.lines().filter(|l| l.starts_with("- ")).count(), 3);
+        assert!(!small.contains("truncated"));
     }
 
     #[test]
