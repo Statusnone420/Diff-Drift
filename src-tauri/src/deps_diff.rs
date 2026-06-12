@@ -1991,4 +1991,122 @@ mod tests {
         assert!(analyze_cargo_toml(Some(cargo), Some(cargo), Some(&vouched(&["serde"]))).is_none());
         let _ = flag_types; // silence unused in case all asserts compile out
     }
+
+    #[test]
+    fn malformed_xml_manifests_are_graceful_not_panic() {
+        // A truncated/garbled pom.xml or .csproj must yield no flag (the reader
+        // stops at the error), never a panic that would crash the scan.
+        let bad_pom = "<project><dependencies><dependency><groupId>g</groupId><artifactId>a";
+        assert!(
+            analyze_pom_xml(Some("<project/>"), Some(bad_pom)).is_none(),
+            "an incomplete <dependency> contributes no finished entry"
+        );
+        let weird_pom = "<<>not<xml & broken";
+        assert!(analyze_pom_xml(Some(weird_pom), Some(weird_pom)).is_none());
+
+        let bad_csproj = "<Project><ItemGroup><PackageReference Include=\"X\"";
+        assert!(
+            analyze_csproj("x.csproj", Some("<Project/>"), Some(bad_csproj), None).is_none(),
+            "an unterminated PackageReference start tag never closes, so no entry"
+        );
+        // A malformed Cargo.toml / pyproject.toml is unparseable → no flag.
+        assert!(analyze_cargo_toml(Some("[dependencies"), Some("[dependencies"), None).is_none());
+    }
+
+    #[test]
+    fn cargo_virtual_workspace_root_reads_workspace_dependencies() {
+        // A virtual workspace root is a Cargo.toml with ONLY [workspace] and no
+        // [package]. It must parse without error and read [workspace.dependencies];
+        // the absent [package] (hence no build script) must not break anything.
+        let before = "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nserde = \"1\"\n";
+        let after = "[workspace]\nmembers = [\"a\", \"b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nserde = \"1\"\nghost-typo = \"0.0.1\"\n";
+        let lock = vouched(&["serde"]); // phantom absent from the lock
+        let res = analyze_cargo_toml(Some(before), Some(after), Some(&lock))
+            .expect("a virtual workspace root's [workspace.dependencies] add surfaces");
+        let ghost = res.flags.iter().find(|f| f.desc.contains("ghost-typo")).unwrap();
+        assert_eq!(ghost.r#type, "Dependency not in lockfile");
+        assert!(matches!(ghost.severity, Severity::High));
+        assert_eq!(ghost.node_path, "workspace.dependencies › ghost-typo");
+        // And a virtual root with no dependency churn at all is simply None.
+        assert!(
+            analyze_cargo_toml(Some(before), Some(before), Some(&lock)).is_none(),
+            "an unchanged virtual workspace root is not drift"
+        );
+    }
+
+    #[test]
+    fn pyproject_reads_both_poetry_and_pep621_in_one_file() {
+        // A project can declare PEP 621 [project.dependencies] AND Poetry
+        // [tool.poetry.dependencies] in the same pyproject.toml. Both must be read.
+        let before = concat!(
+            "[project]\nname = \"app\"\ndependencies = [\"flask>=2.0\"]\n\n",
+            "[tool.poetry.dependencies]\npython = \"^3.11\"\nrequests = \"^2.28\"\n",
+        );
+        let after = concat!(
+            "[project]\nname = \"app\"\ndependencies = [\"flask>=2.0\", \"pep621-add==1.0\"]\n\n",
+            "[tool.poetry.dependencies]\npython = \"^3.11\"\nrequests = \"^2.28\"\npoetry-add = \"^1.0\"\n",
+        );
+        let res = analyze_pyproject_toml(Some(before), Some(after), None)
+            .expect("adds in both dependency styles surface");
+        assert!(
+            res.flags.iter().any(|f| f.desc.contains("pep621-add")),
+            "PEP 621 [project.dependencies] add is read"
+        );
+        assert!(
+            res.flags.iter().any(|f| f.desc.contains("poetry-add")),
+            "[tool.poetry.dependencies] add is read"
+        );
+    }
+
+    #[test]
+    fn requirements_includes_and_editable_installs_are_skipped_gracefully() {
+        // `-r other.txt`, `-c constraints.txt`, `-e .`, and option lines all start
+        // with `-` and must be skipped — never crash, never read as a package, and
+        // never mislabel a same-package edit as a version change.
+        let before = concat!(
+            "-r base.txt\n",
+            "-c constraints.txt\n",
+            "-e .\n",
+            "--index-url https://pypi.org/simple\n",
+            "flask==2.0\n",
+        );
+        // Reorder the include/editable lines (no dependency change at all).
+        let after = concat!(
+            "--index-url https://pypi.org/simple\n",
+            "-e .\n",
+            "-c constraints.txt\n",
+            "-r base.txt\n",
+            "flask==2.0\n",
+        );
+        assert!(
+            analyze_requirements_txt(Some(before), Some(after)).is_none(),
+            "include/editable/option lines are not dependencies — reordering them is not drift"
+        );
+        // The parser attributes none of those lines to a package name.
+        let entries = requirements(before);
+        assert_eq!(entries.len(), 1, "only flask is a real requirement");
+        assert!(entries.contains_key("flask"));
+    }
+
+    #[test]
+    fn same_ecosystem_manifests_keyed_distinctly_have_independent_locks() {
+        // Two Cargo manifests in different crates must not alias: each is analyzed
+        // against its OWN lockfile. (Router-level localization keys them by path;
+        // here we prove the analyzer treats independent lock sets independently.)
+        let before = "[dependencies]\nserde = \"1\"\n";
+        let after_a = "[dependencies]\nserde = \"1\"\nshared-dep = \"1.0\"\n";
+        // Crate A's lock vouches the new dep → Medium.
+        let res_a =
+            analyze_cargo_toml(Some(before), Some(after_a), Some(&vouched(&["serde", "shared-dep"])))
+                .unwrap();
+        let a = res_a.flags.iter().find(|f| f.desc.contains("shared-dep")).unwrap();
+        assert_eq!(a.r#type, "New dependency");
+        // Crate B adds the SAME dep but its OWN lock does NOT vouch it → High.
+        let res_b = analyze_cargo_toml(Some(before), Some(after_a), Some(&vouched(&["serde"]))).unwrap();
+        let b = res_b.flags.iter().find(|f| f.desc.contains("shared-dep")).unwrap();
+        assert_eq!(
+            b.r#type, "Dependency not in lockfile",
+            "the same dep name vouches per-manifest, not globally"
+        );
+    }
 }

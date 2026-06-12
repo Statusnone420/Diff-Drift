@@ -366,18 +366,10 @@ pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResu
             map.insert(rel.clone(), res);
         }
     }
-    if changed.iter().any(|p| p == "package.json") {
-        let before = before_content_in(repo.as_ref(), baseline, "package.json");
-        let after = git::worktree_content(root, "package.json");
-        let lock = crate::deps_diff::lockfile_names(root);
-        if let Some(res) = crate::deps_diff::analyze_package_json(
-            before.as_deref(),
-            after.as_deref(),
-            lock.as_ref(),
-        ) {
-            map.insert("package.json".into(), res);
-        }
-    }
+    // Every manifest ecosystem — package.json included — is routed by basename in
+    // analyze_manifests, so a root package.json and a workspace member's nested one
+    // get the same dependency analysis. The root keeps its canonical `package_json`
+    // id (not nested → not re-keyed), preserving persisted dismissals/approvals.
     analyze_manifests(root, repo.as_ref(), baseline, &changed, &mut map);
     map
 }
@@ -492,7 +484,19 @@ fn analyze_manifests(
                 }
             })
         };
-        let res = if name == deps_diff::CARGO_MANIFEST {
+        let res = if name == "package.json" {
+            // package.json is routed here too (not just the root) so workspace
+            // members (`packages/*/package.json`) get the same dependency analysis.
+            // Its lockfiles are npm/yarn/pnpm (`LockfileNames`), resolved beside the
+            // manifest so a member vouches against its own lock, never the root's.
+            let (before, after) = content(rel);
+            let lock = deps_diff::lockfile_names(&lock_dir());
+            localized(deps_diff::analyze_package_json(
+                before.as_deref(),
+                after.as_deref(),
+                lock.as_ref(),
+            ))
+        } else if name == deps_diff::CARGO_MANIFEST {
             let (before, after) = content(rel);
             let lock = deps_diff::vouched_names(&lock_dir(), deps_diff::CARGO_LOCK);
             localized(deps_diff::analyze_cargo_toml(
@@ -1804,6 +1808,65 @@ function log(level: Level, msg: string): void {
             .expect("nested phantom dep flagged High against its sibling lock");
         assert_eq!(flag.file_path, "crates/api/Cargo.toml");
         assert!(flag.desc.contains("ghosty-crate"));
+    }
+
+    #[test]
+    fn nested_workspace_package_json_routes_and_vouches_against_its_sibling_lock() {
+        // npm/yarn/pnpm workspaces: a member `packages/api/package.json` below the
+        // repo root must get the SAME dependency analysis a root package.json gets
+        // (it predates v0.5.0 and was the one ecosystem still matched only at the
+        // exact root). A phantom dep in a workspace member is the dominant JS
+        // monorepo layout — leaving it unanalyzed is a false negative.
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+
+        // DECOY: a ROOT package-lock.json that DOES vouch the phantom. If routing
+        // wrongly resolved the nested manifest's lock to the root, the phantom
+        // would be downgraded — the decoy forces the sibling lock to be used.
+        std::fs::write(
+            root.join("package-lock.json"),
+            r#"{ "packages": { "node_modules/ghost-pkg": {} } }"#,
+        )
+        .unwrap();
+
+        // The real change: a nested member adds `ghost-pkg`; its OWN sibling lock
+        // vouches only the legit dep, so the phantom must stay High.
+        std::fs::create_dir_all(root.join("packages/api")).unwrap();
+        std::fs::write(
+            root.join("packages/api/package.json"),
+            r#"{ "name": "api", "dependencies": { "left-pad": "^1.3.0", "ghost-pkg": "^1.0.0" } }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("packages/api/package-lock.json"),
+            r#"{ "packages": { "node_modules/left-pad": {} } }"#,
+        )
+        .unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        // Routed under its real nested path AND vouched against the sibling lock
+        // that lacks the phantom, so it is High "not in lockfile" — not the Medium
+        // it would be if the root decoy lock had been used.
+        let flag = data
+            .flags
+            .iter()
+            .find(|f| f.r#type == "Dependency not in lockfile")
+            .expect("nested phantom dep flagged High against its sibling lock");
+        assert_eq!(flag.file_path, "packages/api/package.json");
+        assert!(flag.desc.contains("ghost-pkg"));
+        // The legit, sibling-vouched dep is the Medium "New dependency", not High.
+        assert!(
+            data.flags
+                .iter()
+                .any(|f| f.r#type == "New dependency" && f.desc.contains("left-pad")),
+            "sibling-vouched dep is a Medium new dep, proving the sibling lock was read"
+        );
     }
 
     #[test]
