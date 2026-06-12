@@ -99,8 +99,11 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
 /// Cap on how many before/after lines a single flag's diff block renders. A
 /// flag can land on a large node — e.g. an entire refactored test module
 /// flagged for a one-line secret — and dumping the whole body per side blew a
-/// real export up to ~4,800 lines. Past the cap, the remainder is summarized.
-const MAX_DIFF_LINES_PER_SIDE: usize = 20;
+/// real export up to ~4,800 lines. The cap is generous so a realistically
+/// sized flagged node keeps its evidence in the report; only pathological
+/// nodes truncate, and the remainder is summarized. (A position-aware render
+/// that always surfaces the matched line is tracked as a follow-up.)
+const MAX_DIFF_LINES_PER_SIDE: usize = 80;
 
 fn push_diff_side(out: &mut String, lines: &[String], marker: char) {
     let shown = lines.len().min(MAX_DIFF_LINES_PER_SIDE);
@@ -318,7 +321,7 @@ mod tests {
         // A flag landing on a huge node (e.g. a whole test module flagged for a
         // one-line secret) must not dump the entire body — the report capped a
         // real ~4,800-line export this way. The remainder is summarized.
-        let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+        let lines: Vec<String> = (0..200).map(|i| format!("line {i}")).collect();
 
         let mut out = String::new();
         push_diff_side(&mut out, &lines, '+');
@@ -327,11 +330,12 @@ mod tests {
             content, MAX_DIFF_LINES_PER_SIDE,
             "only the cap renders as content lines: {out}"
         );
+        let hidden = 200 - MAX_DIFF_LINES_PER_SIDE;
         assert!(
-            out.contains("80 more lines (truncated)"),
+            out.contains(&format!("{hidden} more lines (truncated)")),
             "remainder is summarized: {out}"
         );
-        assert!(!out.contains("line 99"), "lines past the cap are omitted");
+        assert!(!out.contains("line 199"), "lines past the cap are omitted");
 
         // Small bodies render whole, with no truncation note.
         let mut small = String::new();

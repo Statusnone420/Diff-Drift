@@ -7,7 +7,7 @@ All notable changes to Diff Drift are documented here. The format follows [Keep 
 ### Fixed
 
 - The "Undeclared import" rule no longer flags Node built-ins it failed to recognize — `module`, `http2`, `inspector`, `perf_hooks`, and others. `import { createRequire } from "module"` was reported as an undeclared package, which contradicted the rule's documented handling of Node built-ins; the import still shows as drift, only the false flag is gone.
-- Exported reports now cap each flag's diff body. A flag on a large node — for example a whole refactored test module flagged for a one-line secret — rendered the entire body before and after, inflating one real export to about 4,800 lines. Each side now shows up to 20 lines with the remainder summarized; the same renderer backs `diff-drift check --md`.
+- Exported reports now cap each flag's diff body. A flag on a large node — for example a whole refactored test module flagged for a one-line secret — rendered the entire body before and after, inflating one real export to about 4,800 lines. Each side now shows a bounded head with the remainder summarized; the same renderer backs `diff-drift check --md`.
 
 ## [0.4.0] — 2026-06-11
 
