@@ -30,7 +30,7 @@ The top toolbar shows the current repo, branch, baseline, review progress, flag 
 ## Understand Counts
 
 - **Changed files**: every path git reports as different from the baseline, any file type.
-- **Analyzed files**: changed source files Diff Drift parsed as AST drift (TS, TSX, JS, JSX, Rust, Go, Python, Java, C#, Kotlin, Swift), plus `package.json` when its dependency or script sections changed. Files over 2 MB are not parsed — they stay in the list with the summary "Skipped — file too large to analyze" so the limit is visible. Review giant generated bundles by other means. Core language structural drift plus package.json dependency/script drift; heuristic flags are strongest for JS/TS and package drift.
+- **Analyzed files**: changed source files Diff Drift parsed as AST drift (TS, TSX, JS, JSX, Rust, Go, Python, Java, C#, Kotlin, Swift), plus the dependency manifests (`package.json`, `Cargo.toml`, `go.mod`, `requirements.txt`, `pom.xml`, `.csproj`) when their dependency or script sections changed. Files over 2 MB are not parsed — they stay in the list with the summary "Skipped — file too large to analyze" so the limit is visible. Review giant generated bundles by other means. Heuristic security flags run across all of these source languages where the rule's concept exists; the [Rule Reference](Rule-Reference.md#language-coverage) records the per-rule coverage.
 - **Other changed files**: paths that changed but were not analyzed — unsupported file type (Markdown, TOML, YAML, images, etc.) or `package.json` with no dependency or script drift. These appear by path in the sidebar so they are never invisible. Review them outside Diff Drift.
 - **Flags**: active heuristic findings. Dismissed flags stay in the session but do not count as active.
 - **Reviewed**: changed nodes you've marked reviewed vs the total (shown per file as `n/m` and drift-wide in the toolbar).
@@ -128,7 +128,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Statusnone420/Diff-Drift@v0.4.2
+      - uses: Statusnone420/Diff-Drift@v0.5.0
         with:
           baseline: merge-base
           fail-on: medium

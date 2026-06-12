@@ -41,7 +41,7 @@ A changed file is any path git reports as different from the baseline, including
 
 ## Analyzed File
 
-An analyzed file is a changed source file Diff Drift parsed and rendered as structural (AST) drift — `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.rs`, `.go`, `.py`, `.pyi`, `.java`, `.cs`, `.kt`, `.kts`, or `.swift` — plus `package.json`, which is rendered as a dependency diff when its dependency or script sections changed. Core language structural drift plus package.json dependency/script drift; heuristic flags are strongest for JS/TS and package drift.
+An analyzed file is a changed source file Diff Drift parsed and rendered as structural (AST) drift — `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.rs`, `.go`, `.py`, `.pyi`, `.java`, `.cs`, `.kt`, `.kts`, or `.swift` — plus the dependency manifests (`package.json`, `Cargo.toml`, `go.mod`, `requirements.txt`, `pom.xml`, `.csproj`), each rendered as a dependency diff when its dependency or script sections changed. Heuristic security flags run across all of these source languages where the rule's concept exists; the per-rule coverage and its known limits are in the [Rule Reference](Rule-Reference.md#language-coverage).
 
 ## Other Changed File
 

@@ -54,6 +54,6 @@ Keep these contracts in sync. If a field changes in Rust, update TypeScript, moc
 
 - Stay local-only. Do not add telemetry, model calls, or remote repo uploads.
 - Prefer focused heuristics over broad static-analysis claims.
-- Keep docs and UI honest about scope: structural drift for supported source languages plus package.json dependency drift; heuristic flags are strongest for JS/TS and package drift.
+- Keep docs and UI honest about scope: structural drift for supported source languages plus dependency drift for `package.json` and the Cargo, Go, PyPI, Maven, and NuGet manifests; heuristic security flags run across every supported family where the rule's concept exists (see the Rule Reference language-coverage matrix and known limits).
 - The headless `check` command stays read-only: it must never mutate triage state.
 - Make surgical changes. Avoid large rewrites unless a specific bug requires them.

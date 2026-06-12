@@ -1,8 +1,8 @@
 # Rule Reference
 
-Diff Drift rules favor useful review prompts over complete static analysis. Most security heuristics run over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. Newer structural languages (Rust, Go, Python, Java, C#, Kotlin, Swift) get AST drift and review progress; only language-neutral hardcoded secret detection runs across those language families today.
+Diff Drift rules favor useful review prompts over complete static analysis. The security heuristics run over changed AST nodes across all supported source languages — TS/TSX/JS/JSX, Rust, Go, Python, Java, C#, Kotlin, and Swift — plus dependency drift for `package.json` and the Cargo, Go, PyPI, Maven, and NuGet manifests. Each rule runs for the language families where its concept exists: a rule about removed `try/catch` does not run on Go, a rule about a process-wide TLS env var runs only where that env var exists, and so on. The [Language coverage](#language-coverage) matrix records exactly which rule runs for which family. This is rule parity where the concept exists. It does not add new vulnerability classes per language, and it is not full static analysis.
 
-Most code rules match **structurally**: the changed node's before/after source is re-parsed with the file's tree-sitter grammar and matched against a compiled query, so a pattern inside a string literal or comment never triggers a flag and reformatting cannot evade one. A `match type` column below records how each rule matches. Rules marked **differential** compare the node's before and after versions — a question only a diff-aware tool can ask — and a few intentionally stay text-based where that is the correct tool (secret markers, env-var assignments). When a structural parse fails, a rule falls back to its text pattern rather than going silent.
+Most code rules are AST-aware: the changed node's before/after source is re-parsed with the file's tree-sitter grammar. JavaScript and TypeScript rules match against compiled tree-sitter queries; the other languages match marker patterns over the parsed source with comment and string-literal interiors blanked out. Either way, a marker that appears only inside a string or comment does not trigger a flag, and reformatting cannot evade one. A `match type` column below records how each rule matches. Rules marked **differential** compare the node's before and after versions, which a snapshot scanner cannot do; a few rules intentionally stay text-based where that is the correct tool (secret markers, env-var assignments). When a structural parse fails, JavaScript and TypeScript rules fall back to a text pattern; for the other languages the rule stays silent rather than guess against a grammar it could not parse.
 
 ## Severity
 
@@ -41,6 +41,46 @@ When a drifted `package.json` changes its dependency or script sections, each ch
 | npm script changed | Medium | A script added or modified | Scripts run arbitrary shell commands during install and dev. |
 
 Removed dependencies and scripts are shown as drift nodes without flags.
+
+## Language coverage
+
+Every code rule declares the language families it runs for. A rule is default-closed: it runs for JS/TS only unless it opts into more families, so an undeclared family never silently runs a rule. A rule runs for a family only where the concept exists in that language. There is no Go `try/catch` to remove, no Rust dynamic-eval primitive, and no Swift cookie-flag API in scope, so the gaps in the matrix below are deliberate. The dependency-drift rules are matched by manifest filename and are listed separately under [Dependency Drift Rules](#dependency-drift-rules-packagejson) and the per-ecosystem manifests.
+
+`ship` means the rule runs for that family; `n/a` means the concept does not exist there (or is covered by another rule).
+
+| Rule | JS/TS | Rust | Go | Python | Java | C# | Kotlin | Swift |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Hardcoded secret | ship | ship | ship | ship | ship | ship | ship | ship |
+| Dynamic code execution (`eval`) | ship | n/a | n/a | ship | ship | ship | ship | n/a |
+| `new Function` constructor | ship | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| Child process execution | ship | ship | ship | ship | ship | ship | ship | ship |
+| Disabled TLS verification | ship | ship | ship | ship | ship | ship | ship | ship |
+| TLS-disabling env var | ship | n/a | n/a | ship | n/a | n/a | n/a | n/a |
+| Broadened CORS | ship | ship | ship | ship | ship | ship | ship | ship |
+| Weakened cookie flags | ship | ship | ship | ship | ship | ship | ship | n/a |
+| Loose regex pattern | ship | ship | ship | ship | ship | ship | ship | ship |
+| Crypto downgrade (verify→decode) | ship | ship | ship | ship | ship | ship | ship | ship |
+| Guard removed | ship | ship | ship | ship | ship | ship | ship | ship |
+| Disabled guard (constant-falsy) | ship | ship | ship | ship | ship | ship | ship | ship |
+| Removed sanitization | ship | ship | ship | ship | ship | ship | ship | ship |
+| Error handling removed | ship | ship | n/a | ship | ship | ship | ship | ship |
+| Permissive logging config | ship | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| Undeclared import | ship | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+
+Dependency drift ships for six manifest ecosystems: npm (`package.json`), Cargo (`Cargo.toml`, vouched by `Cargo.lock`), Go (`go.mod`, vouched by `go.sum`), PyPI (`requirements.txt`, vouched by `poetry.lock`), Maven (`pom.xml`), and NuGet (`.csproj`, vouched by `packages.lock.json`). Maven and `.csproj` without a lockfile flag new and changed entries but cannot make a not-in-lockfile accusation.
+
+### Known limits
+
+These are the honest edges of the current cut. Each line is something a user might see and the reason it works that way. Flags are review prompts, so the conservative choice is to keep a rule grounded and let a reviewer judge rather than narrow it into silence.
+
+1. A pure rename can read as removed code. On a single-node diff there is no rename detection, so renaming `cfg` to `tlsCfg`, `validateEmail` to `isValidEmail`, or `to_string` to `to_owned` next to a marker can surface a differential flag.
+2. Kotlin guard-removed is silent on `?.let`, `takeIf?.also`, and `when`-branch guard idioms. It reads the consequences of an `if` block; these null-safe forms fall outside what it matches.
+3. Rust error-handling-removed treats `?` becoming `.expect("msg")` as removed handling, because for error propagation it is.
+4. verify→decode is intentionally broad: any verify-prefixed call renamed to a decode-prefixed call flags, including cross-domain pairs.
+5. The Go and C# `verify*`/`sanitize*` callee match is lowercase or camelCase-prefix only, so an exported PascalCase `Validate`/`Sanitize` can be missed.
+6. Swift TLS-disable matches on bare type and field names, so a type named `DisabledTrustEvaluator` or a field named `disableEvaluation` can flag without a real downgrade. Swift is the lowest-leverage family on a Windows-first build, so the marker stays grounded rather than over-narrowed.
+7. Two rare cases stay grounded rather than narrowed: a Python `import subprocess` under `if TYPE_CHECKING:`, and a Kotlin `getEngineByName` call on a non-engine object can each flag.
+8. Gradle (`build.gradle`/`build.gradle.kts`) and `Package.swift` dependency manifests are not shipped, because they are executable code rather than declarative manifests.
 
 ## False Positives
 

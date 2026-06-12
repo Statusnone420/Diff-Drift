@@ -1,6 +1,6 @@
 [package]
 name = "diff-drift"
-version = "0.4.2"
+version = "0.5.0"
 description = "Diff Drift — AST-level security inspector for the code drift AI coding agents leave behind"
 edition = "2021"
 # Two bins below; keep `cargo run -- check` meaning the app/GUI binary.

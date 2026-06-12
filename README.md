@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.4.2" src="https://img.shields.io/badge/version-0.4.2-e7a83e?style=for-the-badge">
+  <img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -30,9 +30,9 @@
 
 An AI agent just changed your repo. A normal diff shows you every hunk it touched. What you actually need to know is what structurally changed since the last point you trusted, and which of those changes still needs a human.
 
-Diff Drift is that second pass. It compares your working tree against a baseline you pick — `HEAD`, the **trust point** pinned by your last review, or the merge-base with `main` — and shows the drift as changed AST nodes for TypeScript, TSX, JavaScript, and JSX, plus `package.json` dependency drift. You review node by node, dismiss flags that don't matter in your codebase, and mark the drift reviewed. That pins a trust point: when the agent commits and keeps working, the next session reopens only what changed again.
+Diff Drift is that second pass. It compares your working tree against a baseline you pick — `HEAD`, the **trust point** pinned by your last review, or the merge-base with `main` — and shows the drift as changed AST nodes for TypeScript, TSX, JavaScript, JSX, Rust, Go, Python, Java, C#, Kotlin, and Swift, plus dependency drift for `package.json` and the Cargo, Go, PyPI, Maven, and NuGet manifests. You review node by node, dismiss flags that don't matter in your codebase, and mark the drift reviewed. That pins a trust point: when the agent commits and keeps working, the next session reopens only what changed again.
 
-Flags point you at security-shaped drift — a loosened validation regex, removed sanitization, disabled TLS checks, undeclared imports, dependencies the lockfile can't vouch for. Most rules match structurally against the parsed AST rather than by text, so a pattern inside a string or comment doesn't trigger a flag and reformatting doesn't evade one. Some are differential: they compare a node against your trusted baseline and flag what got *weaker* — a regex that lost its anchors, a call that lost its guard — which a snapshot scanner can't see. An exported Markdown or JSON report gives you evidence for the PR, and the same engine runs headless with severity exit codes for CI and agent hooks.
+Flags point you at security-shaped drift — a loosened validation regex, removed sanitization, disabled TLS checks, undeclared imports, dependencies the lockfile can't vouch for. The flags run across the same languages, firing in each one where the language's idioms make them reliable; the differential before-vs-after rules are the cross-language core, and some flags stay scoped to the families where the concept exists. Most rules match structurally against the parsed AST rather than by text, so a pattern inside a string or comment doesn't trigger a flag and reformatting doesn't evade one. Some are differential: they compare a node against your trusted baseline and flag what got *weaker* — a regex that lost its anchors, a call that lost its guard — which a snapshot scanner can't see. An exported Markdown or JSON report gives you evidence for the PR, and the same engine runs headless with severity exit codes for CI and agent hooks.
 
 ## Try it
 
@@ -51,7 +51,7 @@ The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3`
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: Statusnone420/Diff-Drift@v0.4.2
+- uses: Statusnone420/Diff-Drift@v0.5.0
   with: { baseline: merge-base, fail-on: medium }
 ```
 
@@ -80,7 +80,7 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 27 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
+A deterministic engine benchmark gates CI: 117 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
 
 The blind-agent panel is advisory, model-only, and based on a small synthetic suite — treat any headline number accordingly. Each model plays a blind reviewer over benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. The current panel lands **91–99 / 100** across three models (Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91); independent external validation pending. Details, version history, and the rubric are in [BENCHMARKING.md](BENCHMARKING.md) and [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
@@ -93,7 +93,7 @@ To predict your own triage burden, run `npm run eval:fp-replay` on your repos; t
 ## Status
 
 - Supported platform: Windows 11. macOS: experimental and unsigned.
-- Current version: `0.4.2` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+- Current version: `0.5.0` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Docs
 

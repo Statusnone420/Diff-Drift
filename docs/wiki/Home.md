@@ -23,10 +23,10 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.4.2`.
+- Version: `0.5.0`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
-- Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`, `.rs`, `.go`, `.py`/`.pyi`, `.java`, `.cs`, `.kt`/`.kts`, and `.swift` files plus `package.json` dependency drift, against a selectable baseline. Heuristic flags are strongest for JS/TS and package drift.
+- Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`, `.rs`, `.go`, `.py`/`.pyi`, `.java`, `.cs`, `.kt`/`.kts`, and `.swift` files plus dependency drift for `package.json` and the Cargo, Go, PyPI, Maven, and NuGet manifests, against a selectable baseline. Heuristic security flags run across all supported source languages where the rule's concept exists; the [Rule Reference](Rule-Reference.md#language-coverage) records the per-rule coverage and known limits.
 - Rule results are review prompts, not vulnerability verdicts.
 
 ## Source Copy
