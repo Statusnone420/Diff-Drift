@@ -320,6 +320,7 @@ fn drift_result(
     let ctx = RuleCtx {
         deps: deps.clone(),
         is_test_file: is_test_path(rel),
+        is_build_script: crate::rules::is_build_script_path(rel),
         lang,
     };
     let mut flags = Vec::new();
@@ -365,19 +366,180 @@ pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResu
             map.insert(rel.clone(), res);
         }
     }
-    if changed.iter().any(|p| p == "package.json") {
-        let before = before_content_in(repo.as_ref(), baseline, "package.json");
-        let after = git::worktree_content(root, "package.json");
-        let lock = crate::deps_diff::lockfile_names(root);
-        if let Some(res) = crate::deps_diff::analyze_package_json(
-            before.as_deref(),
-            after.as_deref(),
-            lock.as_ref(),
-        ) {
-            map.insert("package.json".into(), res);
+    // Every manifest ecosystem — package.json included — is routed by basename in
+    // analyze_manifests, so a root package.json and a workspace member's nested one
+    // get the same dependency analysis. The root keeps its canonical `package_json`
+    // id (not nested → not re-keyed), preserving persisted dismissals/approvals.
+    analyze_manifests(root, repo.as_ref(), baseline, &changed, &mut map);
+    map
+}
+
+/// The basename (final path component) of a repo-relative path, or `""` when the
+/// path has no name component. Used to route a manifest by file name regardless
+/// of how deeply it is nested (ISSUE 1: monorepos / workspaces).
+fn basename(rel: &str) -> &str {
+    rel.rsplit(['/', '\\']).next().unwrap_or(rel)
+}
+
+/// Whether a repo-relative path is nested (has a parent directory) rather than at
+/// the repository root.
+fn is_nested(rel: &str) -> bool {
+    rel.contains('/') || rel.contains('\\')
+}
+
+/// Re-key a manifest `FileResult` to the manifest's real path so several
+/// same-ecosystem manifests in different directories don't collide (ISSUE 1).
+/// The root-style analyzers (`analyze_cargo_toml`, …) hardcode a canonical file
+/// id and display path (`cargo_toml` / "Cargo.toml"); for a NESTED manifest that
+/// id is shared by every other manifest of the same ecosystem, which would alias
+/// their flag/node ids in the dismissal map and counts. This rewrites the file id
+/// (the literal prefix of every node id, and via that every flag id), the display
+/// path, and the per-flag path to the real rel path. Root-level manifests keep
+/// their canonical id untouched, preserving any persisted dismissals/approvals.
+fn localize_result(mut res: FileResult, rel: &str) -> FileResult {
+    let old_id = res.entry.id.clone();
+    let new_id = sanitize_id(rel);
+    if new_id == old_id {
+        return res;
+    }
+    fn retarget_nodes(nodes: &mut [AstNode], old_id: &str, new_id: &str) {
+        for n in nodes.iter_mut() {
+            // file_id is the prefix of `{file_id}:parent:kind:name` — replace once.
+            if let Some(rest) = n.id.strip_prefix(old_id) {
+                n.id = format!("{new_id}{rest}");
+            }
+            if let Some(fid) = n.flag_id.take() {
+                n.flag_id = Some(fid.replacen(old_id, new_id, 1));
+            }
+            if let Some(children) = n.children.as_mut() {
+                retarget_nodes(children, old_id, new_id);
+            }
         }
     }
-    map
+    retarget_nodes(&mut res.entry.nodes, &old_id, &new_id);
+
+    let (dir, name) = split_path(rel);
+    res.entry.id = new_id.clone();
+    res.entry.dir = dir;
+    res.entry.name = name;
+
+    for f in res.flags.iter_mut() {
+        f.id = f.id.replacen(&old_id, &new_id, 1);
+        f.node_id = f.node_id.replacen(&old_id, &new_id, 1);
+        f.file_id = new_id.clone();
+        f.file_path = rel.to_string();
+    }
+    res
+}
+
+/// The directory a nested manifest's sibling lockfile lives in (ISSUE 2): the
+/// manifest's parent directory joined onto `root`, falling back to `root` itself
+/// for a manifest at the repository root. So `crates/api/Cargo.toml` resolves its
+/// lock at `<root>/crates/api/Cargo.lock`, not the unrelated workspace-root lock.
+fn manifest_lock_dir(root: &Path, rel: &str) -> std::path::PathBuf {
+    match Path::new(rel).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => root.join(parent),
+        _ => root.to_path_buf(),
+    }
+}
+
+/// Route changed non-JS dependency manifests (Cargo, Go, Python, Maven, NuGet)
+/// into `deps_diff`. Kept beside the package.json block so the manifest set is
+/// detected in one place; siblings own the AST/rule paths.
+///
+/// Each changed path is routed by BASENAME, so manifests nested in a monorepo or
+/// workspace (`crates/api/Cargo.toml`, `services/api/go.mod`, `backend/pom.xml`)
+/// are analyzed, not just root-level ones (ISSUE 1). Each manifest vouches against
+/// the lockfile beside it (`manifest_lock_dir`), never an unrelated root lock
+/// (ISSUE 2). The real rel path is the map key, so several same-named manifests in
+/// different directories don't collide.
+fn analyze_manifests(
+    root: &Path,
+    repo: Option<&Repository>,
+    baseline: &Baseline,
+    changed: &[String],
+    map: &mut HashMap<String, FileResult>,
+) {
+    use crate::deps_diff;
+    let content = |rel: &str| {
+        (
+            before_content_in(repo, baseline, rel),
+            git::worktree_content(root, rel),
+        )
+    };
+
+    for rel in changed {
+        let name = basename(rel);
+        // Lock resolution is relative to the manifest's own directory (ISSUE 2).
+        let lock_dir = || manifest_lock_dir(root, rel);
+        // The root-style analyzers hardcode a canonical file id; a nested manifest
+        // must be re-keyed to its real path so same-ecosystem siblings don't alias
+        // (ISSUE 1). `analyze_csproj` already keys by path, so it is exempt.
+        let localized = |res: Option<FileResult>| {
+            res.map(|r| {
+                if is_nested(rel) {
+                    localize_result(r, rel)
+                } else {
+                    r
+                }
+            })
+        };
+        let res = if name == "package.json" {
+            // package.json is routed here too (not just the root) so workspace
+            // members (`packages/*/package.json`) get the same dependency analysis.
+            // Its lockfiles are npm/yarn/pnpm (`LockfileNames`), resolved beside the
+            // manifest so a member vouches against its own lock, never the root's.
+            let (before, after) = content(rel);
+            let lock = deps_diff::lockfile_names(&lock_dir());
+            localized(deps_diff::analyze_package_json(
+                before.as_deref(),
+                after.as_deref(),
+                lock.as_ref(),
+            ))
+        } else if name == deps_diff::CARGO_MANIFEST {
+            let (before, after) = content(rel);
+            let lock = deps_diff::vouched_names(&lock_dir(), deps_diff::CARGO_LOCK);
+            localized(deps_diff::analyze_cargo_toml(
+                before.as_deref(),
+                after.as_deref(),
+                lock.as_ref(),
+            ))
+        } else if name == deps_diff::GO_MANIFEST {
+            let (before, after) = content(rel);
+            let lock = deps_diff::vouched_names(&lock_dir(), deps_diff::GO_LOCK);
+            localized(deps_diff::analyze_go_mod(
+                before.as_deref(),
+                after.as_deref(),
+                lock.as_ref(),
+            ))
+        } else if name == deps_diff::REQUIREMENTS_TXT {
+            let (before, after) = content(rel);
+            localized(deps_diff::analyze_requirements_txt(
+                before.as_deref(),
+                after.as_deref(),
+            ))
+        } else if name == deps_diff::PYPROJECT_TOML {
+            let (before, after) = content(rel);
+            let lock = deps_diff::vouched_names(&lock_dir(), deps_diff::POETRY_LOCK);
+            localized(deps_diff::analyze_pyproject_toml(
+                before.as_deref(),
+                after.as_deref(),
+                lock.as_ref(),
+            ))
+        } else if name == "pom.xml" {
+            let (before, after) = content(rel);
+            localized(deps_diff::analyze_pom_xml(before.as_deref(), after.as_deref()))
+        } else if name.ends_with(".csproj") {
+            let (before, after) = content(rel);
+            let lock = deps_diff::nuget_lock(&lock_dir());
+            deps_diff::analyze_csproj(rel, before.as_deref(), after.as_deref(), lock.as_ref())
+        } else {
+            continue;
+        };
+        if let Some(res) = res {
+            map.insert(rel.clone(), res);
+        }
+    }
 }
 
 /// Build the `SessionData` from the cached per-file results, applying the user's
@@ -1598,6 +1760,116 @@ function log(level: Level, msg: string): void {
     }
 
     #[test]
+    fn nested_monorepo_cargo_manifest_routes_and_vouches_against_its_sibling_lock() {
+        // ISSUE 1/2 regression guard: a manifest below the repo root must be
+        // analyzed (not skipped by exact-root-name matching), and must vouch
+        // against the lockfile beside it — never an unrelated root lock.
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+
+        // DECOY: a ROOT Cargo.lock that DOES contain the dep. If routing wrongly
+        // resolved the nested manifest's lock to the root, the phantom dep would
+        // be (incorrectly) vouched and downgraded — this decoy makes the test fail
+        // unless the sibling lock is used.
+        std::fs::write(
+            root.join("Cargo.lock"),
+            "[[package]]\nname = \"ghosty-crate\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+
+        // The real change: a nested crate adds `ghosty-crate`; its OWN lock does
+        // not vouch it.
+        std::fs::create_dir_all(root.join("crates/api")).unwrap();
+        std::fs::write(
+            root.join("crates/api/Cargo.toml"),
+            "[package]\nname = \"api\"\nversion = \"0.1.0\"\n\n[dependencies]\nghosty-crate = \"1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/api/Cargo.lock"),
+            "[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        // Routed under its real nested path (ISSUE 1) AND vouched against the
+        // sibling lock that lacks the dep, so it is High "not in lockfile" rather
+        // than the Medium it would be if the root lock had been used (ISSUE 2).
+        let flag = data
+            .flags
+            .iter()
+            .find(|f| f.r#type == "Dependency not in lockfile")
+            .expect("nested phantom dep flagged High against its sibling lock");
+        assert_eq!(flag.file_path, "crates/api/Cargo.toml");
+        assert!(flag.desc.contains("ghosty-crate"));
+    }
+
+    #[test]
+    fn nested_workspace_package_json_routes_and_vouches_against_its_sibling_lock() {
+        // npm/yarn/pnpm workspaces: a member `packages/api/package.json` below the
+        // repo root must get the SAME dependency analysis a root package.json gets
+        // (it predates v0.5.0 and was the one ecosystem still matched only at the
+        // exact root). A phantom dep in a workspace member is the dominant JS
+        // monorepo layout — leaving it unanalyzed is a false negative.
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+
+        // DECOY: a ROOT package-lock.json that DOES vouch the phantom. If routing
+        // wrongly resolved the nested manifest's lock to the root, the phantom
+        // would be downgraded — the decoy forces the sibling lock to be used.
+        std::fs::write(
+            root.join("package-lock.json"),
+            r#"{ "packages": { "node_modules/ghost-pkg": {} } }"#,
+        )
+        .unwrap();
+
+        // The real change: a nested member adds `ghost-pkg`; its OWN sibling lock
+        // vouches only the legit dep, so the phantom must stay High.
+        std::fs::create_dir_all(root.join("packages/api")).unwrap();
+        std::fs::write(
+            root.join("packages/api/package.json"),
+            r#"{ "name": "api", "dependencies": { "left-pad": "^1.3.0", "ghost-pkg": "^1.0.0" } }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("packages/api/package-lock.json"),
+            r#"{ "packages": { "node_modules/left-pad": {} } }"#,
+        )
+        .unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        // Routed under its real nested path AND vouched against the sibling lock
+        // that lacks the phantom, so it is High "not in lockfile" — not the Medium
+        // it would be if the root decoy lock had been used.
+        let flag = data
+            .flags
+            .iter()
+            .find(|f| f.r#type == "Dependency not in lockfile")
+            .expect("nested phantom dep flagged High against its sibling lock");
+        assert_eq!(flag.file_path, "packages/api/package.json");
+        assert!(flag.desc.contains("ghost-pkg"));
+        // The legit, sibling-vouched dep is the Medium "New dependency", not High.
+        assert!(
+            data.flags
+                .iter()
+                .any(|f| f.r#type == "New dependency" && f.desc.contains("left-pad")),
+            "sibling-vouched dep is a Medium new dep, proving the sibling lock was read"
+        );
+    }
+
+    #[test]
     fn node_review_state_tracks_content_and_feeds_progress_counts() {
         let fixture = test_fixture::payments_api();
         let root = git::repo_root(&fixture.root).unwrap();
@@ -1788,7 +2060,11 @@ export default router;
         let res = analyze_file(&root, "src/lib.rs", &HashSet::new(), &Baseline::default())
             .expect("rust file drifts");
         assert_eq!(res.entry.lang, "Rust");
-        assert!(res.flags.is_empty(), "no JS-specific flags for Rust");
+        // The dropped `sanitize(input)` call raises one Low "Removed sanitization"
+        // flag — end-to-end proof the structural-parity path reaches session.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         // The `process` body shrank — its body statements (the guard, the
         // sanitize call) show as removed children. Drift must be non-empty.
         let names = changed_node_names(&res);
@@ -1825,7 +2101,11 @@ export default router;
         let res = analyze_file(&root, "app.py", &HashSet::new(), &Baseline::default())
             .expect("python file drifts");
         assert_eq!(res.entry.lang, "Python");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(data)` raises one Low "Removed sanitization" flag —
+        // structural parity reaching session end-to-end.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(
             !names.is_empty(),
@@ -1975,7 +2255,10 @@ export default router;
         let res = analyze_file(&root, "App.kt", &HashSet::new(), &Baseline::default())
             .expect("kotlin file drifts");
         assert_eq!(res.entry.lang, "Kotlin");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(input)` raises one Low "Removed sanitization" flag.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
         assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
@@ -1990,7 +2273,10 @@ export default router;
         let res = analyze_file(&root, "App.swift", &HashSet::new(), &Baseline::default())
             .expect("swift file drifts");
         assert_eq!(res.entry.lang, "Swift");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(data)` raises one Low "Removed sanitization" flag.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
         assert!(res.entry.nodes.iter().any(|n| n.name == "process"));

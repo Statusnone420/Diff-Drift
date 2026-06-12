@@ -2,6 +2,19 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.5.0] — 2026-06-12
+
+### Added
+
+- The heuristic security rules now run across Rust, Go, Python, Java, C#, Kotlin, and Swift wherever the rule's concept exists, so subprocess calls, disabled TLS, broadened CORS, loosened regexes, removed sanitization or guards, crypto downgrades, and weakened cookie flags flag in those languages the same way they do in JS/TS.
+- Dependency drift now covers five more manifest ecosystems beyond `package.json`: Cargo (`Cargo.toml`, vouched by `Cargo.lock`), Go (`go.mod`, vouched by `go.sum`), PyPI (`requirements.txt`, vouched by `poetry.lock`), Maven (`pom.xml`), and NuGet (`.csproj`, vouched by `packages.lock.json`), each with the new-dependency, version-changed, and not-in-lockfile rules where a lockfile exists.
+- A language-coverage matrix and a numbered known-limits list in [Rule Reference](docs/wiki/Rule-Reference.md) record exactly which rule runs for which language family and the honest edges of the current cut.
+
+### Changed
+
+- Rules are now gated per language family: each rule declares the families it runs for and runs only where the concept exists, so error-handling-removed does not run on Go, the TLS env-var rule runs only on JS/TS and Python, and `new Function`, permissive-logging, and undeclared-import stay JS/TS.
+- The CI engine benchmark grew from 27 to 117 fixture cases covering the cross-language rules, and it still gates CI through the real binary with exact expected flags and exit codes.
+
 ## [0.4.2] — 2026-06-11
 
 ### Added

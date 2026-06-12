@@ -107,6 +107,119 @@ pub fn query_hit(src: &str, lang: Lang, query_src: &'static str) -> Option<bool>
     Some(matches.next().is_some())
 }
 
+/// Return `src` with the *interior* of every comment node and every
+/// string-literal node blanked to spaces, preserving byte length and newlines so
+/// all offsets and the line structure stay intact. Comment bodies are blanked
+/// whole; string literals keep their delimiter bytes (the first and last byte of
+/// the node) and blank everything between. Identifiers, keywords, and operators
+/// are untouched.
+///
+/// This lets the non-JsTs marker rules run their substring / regex checks over
+/// *code only* — a marker token that appears solely inside a log line, docstring,
+/// error message, or `//` comment (often code that WARNS AGAINST the very thing)
+/// no longer fires the rule.
+///
+/// Returns `None` on parse failure (same graceful-degradation contract as the
+/// rest of this module): the caller then treats the structural layer as having
+/// no answer.
+pub fn code_only_text(src: &str, lang: Lang) -> Option<String> {
+    let tree = parse_snippet(src, lang)?;
+    let mut out = src.as_bytes().to_vec();
+    let mut cursor = tree.root_node().walk();
+    blank_comments_and_strings(&mut cursor, &mut out);
+    // `out` only ever has interior bytes replaced by ASCII spaces (newlines
+    // preserved), so it remains valid UTF-8.
+    String::from_utf8(out).ok()
+}
+
+/// Like [`code_only_text`] but blanks comment bodies ONLY, leaving string
+/// literals intact. Used by the env-var TLS rule, whose marker (the env-var
+/// name) legitimately lives inside a string key — blanking strings would defeat
+/// it, but a marker named only in a comment must still be ignored.
+pub fn code_minus_comments_text(src: &str, lang: Lang) -> Option<String> {
+    let tree = parse_snippet(src, lang)?;
+    let mut out = src.as_bytes().to_vec();
+    let mut cursor = tree.root_node().walk();
+    blank_comments_only(&mut cursor, &mut out);
+    String::from_utf8(out).ok()
+}
+
+/// Walk the tree blanking only comment nodes (strings untouched).
+fn blank_comments_only(cursor: &mut tree_sitter::TreeCursor, out: &mut [u8]) {
+    let node = cursor.node();
+    if is_comment_kind(node.kind()) {
+        blank_range(out, node.start_byte(), node.end_byte());
+        return;
+    }
+    if cursor.goto_first_child() {
+        loop {
+            blank_comments_only(cursor, out);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    }
+}
+
+/// True when a node kind denotes a comment in any of the supported grammars.
+fn is_comment_kind(kind: &str) -> bool {
+    kind.contains("comment")
+}
+
+/// True when a node kind denotes a string/character literal whose *contents*
+/// should be blanked. Covers JS/TS (`string`, `template_string`), Rust
+/// (`string_literal`, `raw_string_literal`, `char_literal`), Go
+/// (`interpreted_string_literal`, `raw_string_literal`), Python (`string`),
+/// Java/C#/Kotlin/Swift (`string_literal`, `line_string_literal`, …). The match
+/// is intentionally broad: blanking the inside of any string-shaped node is
+/// always safe for marker matching.
+fn is_string_kind(kind: &str) -> bool {
+    kind.contains("string") || kind == "char_literal" || kind == "character_literal"
+}
+
+/// Blank `b` from `start..end` (exclusive) to ASCII spaces, leaving newlines and
+/// carriage returns intact so line offsets are preserved.
+fn blank_range(b: &mut [u8], start: usize, end: usize) {
+    for byte in b.iter_mut().take(end).skip(start) {
+        if *byte != b'\n' && *byte != b'\r' {
+            *byte = b' ';
+        }
+    }
+}
+
+/// Walk the tree; for the outermost comment / string node encountered, blank its
+/// interior in `out` and do NOT descend into it (its children are already
+/// covered). Other nodes are descended into normally.
+fn blank_comments_and_strings(cursor: &mut tree_sitter::TreeCursor, out: &mut [u8]) {
+    let node = cursor.node();
+    let kind = node.kind();
+    if is_comment_kind(kind) {
+        // Blank the whole comment body (delimiters included — they carry no
+        // marker token).
+        blank_range(out, node.start_byte(), node.end_byte());
+        return;
+    }
+    if is_string_kind(kind) {
+        // Keep one delimiter byte at each end; blank everything between. For a
+        // degenerate 0/1/2-byte node there is nothing interior to blank.
+        let (s, e) = (node.start_byte(), node.end_byte());
+        if e > s + 2 {
+            blank_range(out, s + 1, e - 1);
+        }
+        return;
+    }
+    if cursor.goto_first_child() {
+        loop {
+            blank_comments_and_strings(cursor, out);
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        cursor.goto_parent();
+    }
+}
+
 /// Source text of every node captured under `capture_name`, in document order.
 pub fn capture_texts(
     src: &str,
@@ -176,6 +289,43 @@ mod tests {
             query_hit("<Badge onClick={() => eval(s)} />", Lang::Tsx, EVAL_CALL),
             Some(true)
         );
+    }
+
+    #[test]
+    fn code_only_text_blanks_comment_and_string_interiors_preserving_offsets() {
+        // A marker token living only in a string and a comment is gone from the
+        // code-only view, while real code (the identifier, the call) survives.
+        let src = "let x = \"InsecureSkipVerify: true\"; // child_process here\nrun(InsecureSkipVerify);";
+        let out = code_only_text(src, Lang::Rust).expect("parse ok");
+        // Byte length and newline positions are preserved.
+        assert_eq!(out.len(), src.len(), "length preserved");
+        assert_eq!(
+            out.matches('\n').count(),
+            src.matches('\n').count(),
+            "newlines preserved"
+        );
+        // The marker inside the string literal is blanked.
+        assert!(
+            !out.contains("InsecureSkipVerify: true"),
+            "string interior blanked: {out:?}"
+        );
+        // The comment body is blanked.
+        assert!(!out.contains("child_process"), "comment blanked: {out:?}");
+        // Real code survives: the bare identifier reference and the call.
+        assert!(out.contains("run("), "code survives: {out:?}");
+        assert!(
+            out.contains("InsecureSkipVerify)"),
+            "identifier in code survives: {out:?}"
+        );
+    }
+
+    #[test]
+    fn code_only_text_keeps_string_delimiters() {
+        // The delimiters stay so the result still parses / reads as a string.
+        let src = r#"const s = "eval(x)";"#;
+        let out = code_only_text(src, Lang::Ts).expect("parse ok");
+        assert!(out.contains('"'), "delimiters kept: {out:?}");
+        assert!(!out.contains("eval(x)"), "interior blanked: {out:?}");
     }
 
     #[test]

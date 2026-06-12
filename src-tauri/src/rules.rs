@@ -8,8 +8,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use crate::lang::{self, ErrorHandlingStrategy};
 use crate::model::{AstNode, NodeState, Severity};
-use crate::parse::Lang;
+use crate::parse::{Family, Lang, ALL_FAMILIES};
 
 /// Per-file context a rule may consult.
 pub struct RuleCtx {
@@ -17,8 +18,21 @@ pub struct RuleCtx {
     pub deps: HashSet<String>,
     /// Whether this file looks like a test/fixture (suppresses noisy rules).
     pub is_test_file: bool,
+    /// Whether this file is a Cargo build script (`build.rs`). Build scripts
+    /// legitimately shell out to `git`/`protoc`/`bindgen`, so `child-process` is
+    /// suppressed for them — same treatment as a test path.
+    pub is_build_script: bool,
     /// The file's language, for structural (tree-sitter query) matching.
     pub lang: Lang,
+}
+
+/// True when a repo-relative path is a Cargo build script (`build.rs`), at the
+/// crate root or any nested crate. Build scripts shell out to tooling as a
+/// matter of course, so the `child-process` rule treats them like test paths.
+pub fn is_build_script_path(path: &str) -> bool {
+    let slashed = path.replace('\\', "/");
+    let file = slashed.rsplit('/').next().unwrap_or(&slashed);
+    file.eq_ignore_ascii_case("build.rs")
 }
 
 pub struct Finding {
@@ -56,6 +70,14 @@ fn finding_with_evidence(
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
+    /// The language families this rule runs for. Default-closed: JS/TS only —
+    /// the historical behavior. A rule must explicitly opt into other families
+    /// by overriding this; an undeclared family never runs the rule, and for an
+    /// opted-in family with an empty pack field the rule still returns `None`
+    /// silently (structural-or-nothing).
+    fn families(&self) -> &'static [Family] {
+        &[Family::JsTs]
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding>;
 }
 
@@ -94,37 +116,21 @@ impl RuleRegistry {
 
     /// First matching rule's id + its finding.
     ///
-    /// SAFETY GATE: every security rule except `hardcoded-secret` is written
-    /// against JS/TS grammar node kinds — its tree-sitter queries (eval, CORS,
-    /// TLS, regex, try/catch, …) and its kind-string checks
-    /// (`VariableDeclaration`/`ImportDeclaration`) only make sense for the JS/TS
-    /// family. For any other language family we run ONLY the neutral allowlist,
-    /// so a JS query is never compiled against a Rust/Go/Python/Java grammar
-    /// (no structural.rs debug_assert panic, no coincidental cross-grammar
-    /// match, no JS-regex fallback firing on foreign syntax). The core-four
-    /// languages still get full structural drift + review progress; they just
-    /// don't get JS-specific security rules. `hardcoded-secret` is genuinely
-    /// language-neutral (plain AWS/OpenAI/PEM regex over the node's after-text),
-    /// so it runs everywhere.
+    /// Each rule declares the families it applies to (`Rule::families`,
+    /// default-closed to JS/TS). We run only the rules opted into the file's
+    /// family, preserving the first-match-wins confidence ordering of `rules`.
+    /// A rule that opts into a family but finds an empty pack field for it
+    /// returns `None` (structural-or-nothing) — so an unfilled language pack
+    /// produces silence, never a JS query compiled against a foreign grammar
+    /// (structural.rs's per-grammar cache + debug_assert still guard that path).
     pub fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<(&'static str, Finding)> {
-        if ctx.lang.family() != crate::parse::Family::JsTs {
-            return self
-                .rules
-                .iter()
-                .filter(|r| NEUTRAL_RULES.contains(&r.id()))
-                .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)));
-        }
+        let family = ctx.lang.family();
         self.rules
             .iter()
+            .filter(|r| r.families().contains(&family))
             .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)))
     }
 }
-
-/// Rules that are language-neutral enough to run for every family. Only the
-/// hardcoded-secret check qualifies today: it is pure text regex over the node's
-/// after-content with markers (AWS / OpenAI / PEM) that are identical in any
-/// language, and it carries no JS grammar or kind-string assumptions.
-const NEUTRAL_RULES: &[&str] = &["hardcoded-secret"];
 
 impl Default for RuleRegistry {
     fn default() -> Self {
@@ -138,15 +144,144 @@ pub fn registry() -> &'static RuleRegistry {
     &REGISTRY
 }
 
+// ---------- family applicability sets ----------
+// Static `&[Family]` slices the `families()` overrides return. Kept here next to
+// the registry so the applicability matrix reads in one place.
+
+/// Every family except Swift — the weakened-cookie rules (cookies live in a
+/// plist on Apple platforms, not in source).
+const ALL_EXCEPT_SWIFT: &[Family] = &[
+    Family::JsTs,
+    Family::Rust,
+    Family::Go,
+    Family::Python,
+    Family::Java,
+    Family::CSharp,
+    Family::Kotlin,
+];
+
+/// Every family except Go — `ErrorHandlingRemoved` (Go's error handling is
+/// already covered by the guard rules).
+const ALL_EXCEPT_GO: &[Family] = &[
+    Family::JsTs,
+    Family::Rust,
+    Family::Python,
+    Family::Java,
+    Family::CSharp,
+    Family::Kotlin,
+    Family::Swift,
+];
+
+/// `EvalCall` — families with a real dynamic-code-execution primitive.
+const EVAL_FAMILIES: &[Family] = &[
+    Family::JsTs,
+    Family::Python,
+    Family::Java,
+    Family::CSharp,
+    Family::Kotlin,
+];
+
+/// `EnvTlsReject` — families with a process-wide TLS-disabling env var.
+const ENV_TLS_FAMILIES: &[Family] = &[Family::JsTs, Family::Python];
+
 // ---------- helpers ----------
+/// Whether any of `markers` appears as a substring of `s`. Empty `markers` =>
+/// false (the rule is silent for that family).
+fn any_marker(s: &str, markers: &[&str]) -> bool {
+    markers.iter().any(|m| s.contains(m))
+}
+
+/// Compile a marker regex source (from a family pack) once and cache it. The
+/// sources come from `&'static str` pack fields, so they live for the process;
+/// caching keyed by the source pointer/text avoids recompiling per call. A
+/// source that fails to compile returns `None` — the rule then stays silent,
+/// matching the structural layer's graceful-degradation contract. Marker
+/// sources are exercised by each family's unit tests, so a broken source turns
+/// CI red before release.
+fn compiled_marker(src: &'static str) -> Option<std::sync::Arc<Regex>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    /// Source text -> compiled regex (or `None` if the source failed to compile).
+    type MarkerCache = HashMap<&'static str, Option<Arc<Regex>>>;
+    static CACHE: OnceLock<Mutex<MarkerCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = match cache.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    guard
+        .entry(src)
+        .or_insert_with(|| {
+            let r = Regex::new(src).ok().map(Arc::new);
+            debug_assert!(r.is_some(), "rule marker regex failed to compile: {src}");
+            r
+        })
+        .clone()
+}
+
 fn joined(lines: &Option<Vec<String>>) -> String {
     lines.as_ref().map(|l| l.join("\n")).unwrap_or_default()
+}
+
+/// The before/after snippet text with every comment body and string-literal
+/// interior blanked, so a non-JsTs marker rule matches against CODE ONLY — a
+/// marker token that appears solely inside a log line, docstring, error message,
+/// or comment never fires the rule. Returns `None` on parse failure, which the
+/// marker rules treat as "no answer" → the rule stays silent (the existing
+/// structural-or-nothing degradation contract). The empty string maps to an
+/// empty code-only string (no parse needed) so a missing `before` side stays
+/// cheap and total.
+fn code_only(lines: &Option<Vec<String>>, lang: Lang) -> Option<String> {
+    let src = joined(lines);
+    if src.is_empty() {
+        return Some(String::new());
+    }
+    crate::structural::code_only_text(&src, lang)
+}
+
+/// Like [`code_only`] but blanks comment bodies ONLY (strings stay intact).
+/// Used by the env-var TLS rule, whose marker (the env-var name) lives inside a
+/// string key — so strings must survive, but a marker named only in a comment
+/// must still be ignored.
+fn code_minus_comments(lines: &Option<Vec<String>>, lang: Lang) -> Option<String> {
+    let src = joined(lines);
+    if src.is_empty() {
+        return Some(String::new());
+    }
+    crate::structural::code_minus_comments_text(&src, lang)
 }
 fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 fn added_or_modified(s: NodeState) -> bool {
     matches!(s, NodeState::Added | NodeState::Modified)
+}
+
+/// Whether `s` mentions a CORS construct. Used to gate the ambiguous non-JsTs
+/// permissive-origin markers so they only fire on an actual CORS configuration,
+/// not on an unrelated struct/builder that happens to expose a similarly named
+/// field or method (a custom `ProxyConfig{AllowAllOrigins}`, a `RouteConfig`
+/// with an `AllowAnyOrigin()` method, a non-CORS `anyHost()`).
+///
+/// Accepts any of these case-insensitive tokens, so frameworks whose marker
+/// lacks the literal substring "cors" still register context:
+/// - `cors` — gin `cors.Config`, ASP.NET `UseCors`/`CorsPolicyBuilder`, Ktor
+///   `install(CORS)`, tower-http `CorsLayer`, Flask/FastAPI `CORSMiddleware`.
+/// - `crossorigin` — Spring `@CrossOrigin`.
+/// - `allowedorigin` (singular, so it also matches the plural `AllowedOrigins`)
+///   — gorilla `handlers.AllowedOrigins`, Spring `addAllowedOrigin`/
+///   `setAllowedOrigins`/`allowedOrigins`.
+fn has_cors_context(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    lower.contains("cors") || lower.contains("crossorigin") || lower.contains("allowedorigin")
+}
+
+/// Whether `s` mentions a cookie (case-insensitive `cookie`). Used to gate the
+/// cookie-flag markers (`http_only`/`secure`/`http_only` builder methods) so a
+/// `secure(true)`/`http_only(true)` on an unrelated builder (a `TlsConfig`, a
+/// Ktor `sslConnector`, a `ServerConfig`) doesn't read as a weakened cookie.
+fn has_cookie_context(s: &str) -> bool {
+    s.to_ascii_lowercase().contains("cookie")
 }
 
 // ---------- rules ----------
@@ -156,6 +291,11 @@ struct HardcodedSecret;
 impl Rule for HardcodedSecret {
     fn id(&self) -> &'static str {
         "hardcoded-secret"
+    }
+    fn families(&self) -> &'static [Family] {
+        // Genuinely language-neutral: plain AWS/OpenAI/PEM regex over the node's
+        // after-text, no grammar assumptions — runs for every family.
+        ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
         // Unlike the other rules, secrets are NOT suppressed in test files: a
@@ -208,25 +348,50 @@ impl Rule for EvalCall {
     fn id(&self) -> &'static str {
         "eval-call"
     }
+    fn families(&self) -> &'static [Family] {
+        EVAL_FAMILIES
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if !added_or_modified(node.state) {
+        // Like child-process and tls, suppress in test/fixture files: a dynamic
+        // eval inside an integration test (e.g. a C# test of `CSharpScript`) is
+        // test scaffolding, not production drift.
+        if ctx.is_test_file || !added_or_modified(node.state) {
             return None;
         }
-        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\beval\s*\(").unwrap());
         let after = joined(&node.after);
-        // Cheap pre-filter: no `eval` text means no parse needed.
-        if !after.contains("eval") {
+        let before = joined(&node.before);
+        if ctx.lang.family() == Family::JsTs {
+            static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\beval\s*\(").unwrap());
+            // Cheap pre-filter: no `eval` text means no parse needed.
+            if !after.contains("eval") {
+                return None;
+            }
+            let hit = |src: &str| {
+                crate::structural::query_hit(src, ctx.lang, EVAL_CALL_QUERY)
+                    .unwrap_or_else(|| RE.is_match(src))
+            };
+            if hit(&after) && !hit(&before) {
+                return finding(
+                    Severity::High,
+                    "Dynamic code execution",
+                    "`eval(…)` executes arbitrary code — a code-injection risk; use a safe alternative.",
+                );
+            }
             return None;
         }
-        let hit = |src: &str| {
-            crate::structural::query_hit(src, ctx.lang, EVAL_CALL_QUERY)
-                .unwrap_or_else(|| RE.is_match(src))
-        };
-        if hit(&after) && !hit(&joined(&node.before)) {
+        // Non-JsTs: marker-driven (e.g. Python eval/exec/compile). Empty pack
+        // field => silent, no JS fallback. Match against CODE ONLY so the marker
+        // token inside a string/comment (e.g. `# never call eval()`) is ignored;
+        // a parse failure => silent.
+        let marker = lang::pack(ctx.lang.family()).eval_call?;
+        let re = compiled_marker(marker)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        let before = code_only(&node.before, ctx.lang)?;
+        if re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
                 "Dynamic code execution",
-                "`eval(…)` executes arbitrary code — a code-injection risk; use a safe alternative.",
+                "Dynamic code execution was introduced — executing built-from-strings code is a code-injection risk; use a safe alternative.",
             );
         }
         None
@@ -275,24 +440,65 @@ impl Rule for ChildProcess {
     fn id(&self) -> &'static str {
         "child-process"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if ctx.is_test_file || !added_or_modified(node.state) {
+        // Suppress in test/fixture files and in Cargo build scripts: both
+        // legitimately spawn subprocesses (test harnesses, `build.rs` calling
+        // git/protoc/bindgen).
+        if ctx.is_test_file || ctx.is_build_script || !added_or_modified(node.state) {
             return None;
         }
-        static IMPORT: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r#"(require\s*\(\s*['"](?:node:)?child_process['"]|from\s+['"](?:node:)?child_process['"])"#).unwrap()
-        });
-        static CALL: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\.(exec|execSync|spawn|spawnSync)\s*\(").unwrap());
         let after = joined(&node.after);
         let before = joined(&node.before);
-        if (IMPORT.is_match(&after) && !IMPORT.is_match(&before))
-            || (CALL.is_match(&after) && !CALL.is_match(&before))
+        if ctx.lang.family() == Family::JsTs {
+            static IMPORT: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#"(require\s*\(\s*['"](?:node:)?child_process['"]|from\s+['"](?:node:)?child_process['"])"#).unwrap()
+            });
+            static CALL: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"\.(exec|execSync|spawn|spawnSync)\s*\(").unwrap());
+            if (IMPORT.is_match(&after) && !IMPORT.is_match(&before))
+                || (CALL.is_match(&after) && !CALL.is_match(&before))
+            {
+                return finding(
+                    Severity::High,
+                    "Child process execution",
+                    "Spawns a subprocess (`child_process`) — ensure arguments can't be attacker-controlled.",
+                );
+            }
+            return None;
+        }
+        // Non-JsTs: marker-driven (per-family subprocess import + call regexes).
+        // Either an import or a call newly appearing fires; empty fields => no
+        // match => silent.
+        //
+        // CALL markers (`subprocess.run(`, `Process.Start`, `exec.Command(`,
+        // `Command::new(`) are CODE, so they run against the fully code-only text
+        // — a call named in a string OR comment is ignored. IMPORT markers can be
+        // string-valued module specifiers (Go's `import "os/exec"`), so they run
+        // against the comments-only text (strings kept) — which still drops an
+        // import token named in a `// …` comment. Parse failure on either side
+        // => silent.
+        let pack = lang::pack(ctx.lang.family());
+        let after_code = code_only(&node.after, ctx.lang)?;
+        let before_code = code_only(&node.before, ctx.lang)?;
+        let after_nc = code_minus_comments(&node.after, ctx.lang)?;
+        let before_nc = code_minus_comments(&node.before, ctx.lang)?;
+        let newly = |marker: Option<&'static str>, after: &str, before: &str| -> bool {
+            let Some(src) = marker else { return false };
+            let Some(re) = compiled_marker(src) else {
+                return false;
+            };
+            re.is_match(after) && !re.is_match(before)
+        };
+        if newly(pack.subprocess_import, &after_nc, &before_nc)
+            || newly(pack.subprocess_call, &after_code, &before_code)
         {
             return finding(
                 Severity::High,
                 "Child process execution",
-                "Spawns a subprocess (`child_process`) — ensure arguments can't be attacker-controlled.",
+                "Spawns a subprocess — ensure arguments can't be attacker-controlled.",
             );
         }
         None
@@ -314,25 +520,53 @@ impl Rule for TlsRejectFalse {
     fn id(&self) -> &'static str {
         "tls-reject-false"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if ctx.is_test_file || !added_or_modified(node.state) {
             return None;
         }
-        static RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"rejectUnauthorized\s*:\s*false").unwrap());
         let after = joined(&node.after);
-        if !after.contains("rejectUnauthorized") {
+        let before = joined(&node.before);
+        if ctx.lang.family() == Family::JsTs {
+            static RE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"rejectUnauthorized\s*:\s*false").unwrap());
+            if !after.contains("rejectUnauthorized") {
+                return None;
+            }
+            let hit = |src: &str| {
+                crate::structural::query_hit(src, ctx.lang, TLS_REJECT_QUERY)
+                    .unwrap_or_else(|| RE.is_match(src))
+            };
+            if hit(&after) && !hit(&before) {
+                return finding(
+                    Severity::High,
+                    "Disabled TLS verification",
+                    "`rejectUnauthorized: false` turns off certificate validation — restore it.",
+                );
+            }
             return None;
         }
-        let hit = |src: &str| {
-            crate::structural::query_hit(src, ctx.lang, TLS_REJECT_QUERY)
-                .unwrap_or_else(|| RE.is_match(src))
-        };
-        if hit(&after) && !hit(&joined(&node.before)) {
-            return finding(
+        // Non-JsTs: marker-driven (per-family TLS-disable markers). Empty field
+        // => silent. Match against CODE ONLY so a marker named in a comment or
+        // string (e.g. `// never set InsecureSkipVerify: true`) is ignored; a
+        // parse failure => silent.
+        let marker = lang::pack(ctx.lang.family()).tls_disable?;
+        let re = compiled_marker(marker)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        let before = code_only(&node.before, ctx.lang)?;
+        if re.is_match(&after) && !re.is_match(&before) {
+            return finding_with_evidence(
                 Severity::High,
                 "Disabled TLS verification",
-                "`rejectUnauthorized: false` turns off certificate validation — restore it.",
+                "Certificate validation was turned off — restore it.",
+                after
+                    .lines()
+                    .find(|l| re.is_match(l))
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_string(),
             );
         }
         None
@@ -345,17 +579,50 @@ impl Rule for EnvTlsReject {
     fn id(&self) -> &'static str {
         "env-tls-reject"
     }
-    fn check(&self, node: &AstNode, _ctx: &RuleCtx) -> Option<Finding> {
+    fn families(&self) -> &'static [Family] {
+        ENV_TLS_FAMILIES
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) {
             return None;
         }
-        static RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r#"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#).unwrap());
-        if RE.is_match(&joined(&node.after)) && !RE.is_match(&joined(&node.before)) {
+        let after = joined(&node.after);
+        let before = joined(&node.before);
+        if ctx.lang.family() == Family::JsTs {
+            static RE: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#"NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#).unwrap()
+            });
+            if RE.is_match(&after) && !RE.is_match(&before) {
+                return finding(
+                    Severity::High,
+                    "Disabled TLS verification",
+                    "`NODE_TLS_REJECT_UNAUTHORIZED=0` disables TLS verification process-wide — remove it.",
+                );
+            }
+            return None;
+        }
+        // Non-JsTs (Python): marker-driven env-var disable. Empty field =>
+        // silent. The env-var name lives inside a STRING key
+        // (`os.environ['PYTHONHTTPSVERIFY'] = '0'`), so we blank comments only —
+        // strings must survive for the marker to match — which still drops a
+        // marker named in a `# …` comment. Parse failure => silent.
+        let marker = lang::pack(ctx.lang.family()).env_tls_disable?;
+        let re = compiled_marker(marker)?;
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        let before = code_minus_comments(&node.before, ctx.lang)?;
+        // Because strings survive, the marker also matches the env-var name in a
+        // bare DOC string (`MSG = "Do not set PYTHONHTTPSVERIFY=0"`). The real
+        // disable is always an `os.environ[...]` assignment, so require an
+        // `environ` token in the after — a prose string that merely names the var
+        // (without `environ`) is then ignored.
+        if !after.to_ascii_lowercase().contains("environ") {
+            return None;
+        }
+        if re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
                 "Disabled TLS verification",
-                "`NODE_TLS_REJECT_UNAUTHORIZED=0` disables TLS verification process-wide — remove it.",
+                "An environment variable that disables TLS verification process-wide was introduced — remove it.",
             );
         }
         None
@@ -383,26 +650,60 @@ impl Rule for BroadenedCors {
     fn id(&self) -> &'static str {
         "broadened-cors"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if ctx.is_test_file || !added_or_modified(node.state) {
             return None;
         }
-        static WILDCARD: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
-        static TRUE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
         let after = joined(&node.after);
-        if !after.contains("origin") {
+        let before = joined(&node.before);
+        if ctx.lang.family() == Family::JsTs {
+            static WILDCARD: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r#"origin\s*:\s*['"]\*['"]"#).unwrap());
+            static TRUE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"origin\s*:\s*true").unwrap());
+            if !after.contains("origin") {
+                return None;
+            }
+            let hit = |src: &str| {
+                crate::structural::query_hit(src, ctx.lang, CORS_QUERY)
+                    .unwrap_or_else(|| WILDCARD.is_match(src) || TRUE.is_match(src))
+            };
+            if hit(&after) && !hit(&before) {
+                return finding(
+                    Severity::High,
+                    "Broadened CORS",
+                    "CORS origin was opened to any site (`*`/`true`) — credentials can leak; use an allowlist.",
+                );
+            }
             return None;
         }
-        let hit = |src: &str| {
-            crate::structural::query_hit(src, ctx.lang, CORS_QUERY)
-                .unwrap_or_else(|| WILDCARD.is_match(src) || TRUE.is_match(src))
-        };
-        if hit(&after) && !hit(&joined(&node.before)) {
+        // Non-JsTs: marker-driven (per-framework permissive-origin markers).
+        // Empty field => silent. The permissive-origin value is often a string
+        // literal (`"*"`), so blank COMMENTS only — strings must survive for the
+        // marker to match — which still drops a marker named in a `// …` comment.
+        // Parse failure => silent.
+        let marker = lang::pack(ctx.lang.family()).cors_permissive?;
+        let re = compiled_marker(marker)?;
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        let before = code_minus_comments(&node.before, ctx.lang)?;
+        // Every non-JsTs permissive-origin marker is ambiguous enough that a
+        // custom struct/builder can expose the same field or method name: Go's
+        // `AllowAllOrigins` on a `ProxyConfig`, C#'s `AllowAnyOrigin()` on a
+        // `RouteConfig`, Kotlin's `anyHost()` on a non-CORS builder, Rust's
+        // `.allow_origin(Any)`. Require an explicit CORS token in the node so
+        // only an actual CORS configuration fires. `has_cors_context` accepts the
+        // framework markers that lack the literal "cors" substring (Spring's
+        // `@CrossOrigin`, gorilla's `AllowedOrigins`), so real detections keep
+        // firing. JS/TS keeps its own structural path above and is exempt.
+        let context_ok = ctx.lang.family() == Family::JsTs || has_cors_context(&after);
+        if context_ok && re.is_match(&after) && !re.is_match(&before) {
             return finding(
                 Severity::High,
                 "Broadened CORS",
-                "CORS origin was opened to any site (`*`/`true`) — credentials can leak; use an allowlist.",
+                "Cross-origin access was opened to any site — credentials can leak; use an allowlist.",
             );
         }
         None
@@ -415,16 +716,39 @@ impl Rule for CookieHttpOnlyRemoved {
     fn id(&self) -> &'static str {
         "cookie-httponly-removed"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_EXCEPT_SWIFT
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if ctx.is_test_file || node.state != NodeState::Modified {
             return None;
         }
-        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"httpOnly\s*:\s*true").unwrap());
-        if RE.is_match(&joined(&node.before)) && !RE.is_match(&joined(&node.after)) {
+        let before = joined(&node.before);
+        let after = joined(&node.after);
+        if ctx.lang.family() == Family::JsTs {
+            static RE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r"httpOnly\s*:\s*true").unwrap());
+            if RE.is_match(&before) && !RE.is_match(&after) {
+                return finding(
+                    Severity::High,
+                    "Weakened cookie flags",
+                    "Cookie `httpOnly` was removed — scripts can now read the cookie (XSS theft risk).",
+                );
+            }
+            return None;
+        }
+        let marker = lang::pack(ctx.lang.family()).cookie_httponly?;
+        let re = compiled_marker(marker)?;
+        // Code-only (ignore the marker in a string/comment); parse failure =>
+        // silent. Require cookie context so an `http_only(true)` builder method
+        // on an unrelated config (not a cookie) doesn't read as a cookie flag.
+        let before = code_only(&node.before, ctx.lang)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && re.is_match(&before) && !re.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
-                "Cookie `httpOnly` was removed — scripts can now read the cookie (XSS theft risk).",
+                "Cookie HttpOnly was removed — scripts can now read the cookie (XSS theft risk).",
             );
         }
         None
@@ -437,16 +761,39 @@ impl Rule for CookieSecureRemoved {
     fn id(&self) -> &'static str {
         "cookie-secure-removed"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_EXCEPT_SWIFT
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if ctx.is_test_file || node.state != NodeState::Modified {
             return None;
         }
-        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"secure\s*:\s*true").unwrap());
-        if RE.is_match(&joined(&node.before)) && !RE.is_match(&joined(&node.after)) {
+        let before = joined(&node.before);
+        let after = joined(&node.after);
+        if ctx.lang.family() == Family::JsTs {
+            static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"secure\s*:\s*true").unwrap());
+            if RE.is_match(&before) && !RE.is_match(&after) {
+                return finding(
+                    Severity::High,
+                    "Weakened cookie flags",
+                    "Cookie `secure` was removed — the cookie may now be sent over plain HTTP.",
+                );
+            }
+            return None;
+        }
+        let marker = lang::pack(ctx.lang.family()).cookie_secure?;
+        let re = compiled_marker(marker)?;
+        // Code-only (ignore the marker in a string/comment); parse failure =>
+        // silent. Require cookie context so a `.secure(true)` builder method on
+        // an unrelated config (a TlsConfig, a Ktor sslConnector) doesn't read as
+        // a cookie flag.
+        let before = code_only(&node.before, ctx.lang)?;
+        let after = code_only(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && re.is_match(&before) && !re.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
-                "Cookie `secure` was removed — the cookie may now be sent over plain HTTP.",
+                "Cookie Secure was removed — the cookie may now be sent over plain HTTP.",
             );
         }
         None
@@ -459,19 +806,54 @@ impl Rule for SameSiteWeakened {
     fn id(&self) -> &'static str {
         "samesite-weakened"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_EXCEPT_SWIFT
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if ctx.is_test_file || node.state != NodeState::Modified {
             return None;
         }
-        static STRONG: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r#"sameSite\s*:\s*['"]?(Strict|Lax|strict|lax)"#).unwrap());
-        static NONE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r#"sameSite\s*:\s*['"]?(None|none)"#).unwrap());
-        if STRONG.is_match(&joined(&node.before)) && NONE.is_match(&joined(&node.after)) {
+        let before = joined(&node.before);
+        let after = joined(&node.after);
+        if ctx.lang.family() == Family::JsTs {
+            static STRONG: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#"sameSite\s*:\s*['"]?(Strict|Lax|strict|lax)"#).unwrap()
+            });
+            static NONE: LazyLock<Regex> =
+                LazyLock::new(|| Regex::new(r#"sameSite\s*:\s*['"]?(None|none)"#).unwrap());
+            if STRONG.is_match(&before) && NONE.is_match(&after) {
+                return finding(
+                    Severity::High,
+                    "Weakened cookie flags",
+                    "Cookie `sameSite` was downgraded to `None` — restores CSRF exposure; use Lax or Strict.",
+                );
+            }
+            return None;
+        }
+        // Non-JsTs: a strong SameSite marker in the before and a weak one in the
+        // after. Both must be present in the pack; either empty => silent.
+        let pack = lang::pack(ctx.lang.family());
+        let (Some(strong_src), Some(weak_src)) =
+            (pack.cookie_samesite, pack.cookie_samesite_weak)
+        else {
+            return None;
+        };
+        let (Some(strong), Some(weak)) =
+            (compiled_marker(strong_src), compiled_marker(weak_src))
+        else {
+            return None;
+        };
+        // The SameSite value is a string literal (`"None"`/`"Strict"`/`"Lax"`),
+        // so blank COMMENTS only — strings must survive for the markers to match.
+        // Require cookie context so a `sameSite`-shaped attribute on an unrelated
+        // builder doesn't read as a cookie downgrade. Parse failure => silent.
+        let before = code_minus_comments(&node.before, ctx.lang)?;
+        let after = code_minus_comments(&node.after, ctx.lang)?;
+        if has_cookie_context(&before) && strong.is_match(&before) && weak.is_match(&after) {
             return finding(
                 Severity::High,
                 "Weakened cookie flags",
-                "Cookie `sameSite` was downgraded to `None` — restores CSRF exposure; use Lax or Strict.",
+                "Cookie SameSite was downgraded to None — restores CSRF exposure; use Lax or Strict.",
             );
         }
         None
@@ -553,13 +935,99 @@ fn regex_weakening(before: &str, after: &str) -> Option<String> {
     None
 }
 
+/// Pattern bodies of every *real-code* regex-construction call (ISSUE 8). The
+/// constructor is code, but its pattern argument is a string, so neither
+/// `code_only` (string interiors blanked) nor `code_minus_comments` (strings
+/// kept) alone is enough:
+/// - `code_minus_comments` keeps the pattern literal so the body is extractable,
+///   but it also keeps a constructor mentioned inside a STRING (a help/docs line);
+/// - `code_only` blanks string interiors (so a string-embedded constructor's
+///   call head is gone) but also blanks the genuine pattern body.
+///
+/// Both views are byte-length-preserving and offset-aligned. So: find each marker
+/// match in `code_minus_comments` (the pattern survives there) and keep only those
+/// whose match START byte is still real code in `code_only` (not a blanked string
+/// interior). A constructor in a comment never matches either view; a constructor
+/// inside a string matches `code_minus_comments` but its start byte is blank in
+/// `code_only`, so it is dropped. Parse failure on either view falls back to the
+/// raw text (structural-or-nothing degradation).
+fn real_regex_call_patterns(lines: &Option<Vec<String>>, lang: Lang, marker: &Regex) -> Vec<String> {
+    let raw = joined(lines);
+    let kept = code_minus_comments(lines, lang).unwrap_or_else(|| raw.clone());
+    let code = code_only(lines, lang).unwrap_or_else(|| raw.clone());
+    let code_bytes = code.as_bytes();
+    marker
+        .captures_iter(&kept)
+        .filter(|c| {
+            // The whole-match start: the constructor call head. Real code keeps it
+            // non-blank in `code_only`; a string-embedded mention is spaced out.
+            c.get(0).is_some_and(|m| {
+                code_bytes
+                    .get(m.start())
+                    .is_some_and(|b| !b.is_ascii_whitespace())
+            })
+        })
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+/// Run the shared added/edited weakening comparison over two sets of regex
+/// *pattern bodies* (already unwrapped from their literal/string form). Returns
+/// the finding description, if any. Shared by the JS literal path (after
+/// stripping `/…/`) and the marker path.
+fn regex_weakening_over_patterns(before_pats: &[String], after_pats: &[String]) -> Option<String> {
+    let added: Vec<&String> = after_pats.iter().filter(|a| !before_pats.contains(a)).collect();
+    let removed: Vec<&String> = before_pats.iter().filter(|b| !after_pats.contains(b)).collect();
+    let before_had_catch_all = before_pats.iter().any(|b| is_catch_all_pattern(b));
+    if !before_had_catch_all {
+        for a in &added {
+            if is_catch_all_pattern(a) {
+                return Some(format!(
+                    "Validation regex was widened to {a} — any string now passes validation."
+                ));
+            }
+        }
+    }
+    if removed.len() == 1 && added.len() == 1 {
+        // Compare the single edited pair. `regex_weakening` strips `/…/`; these
+        // are already bare patterns, so pass them through unchanged (no slashes
+        // means `regex_pattern` returns them as-is).
+        if let Some(weakened) = regex_weakening(removed[0], added[0]) {
+            return Some(format!("Validation regex {weakened}."));
+        }
+    }
+    None
+}
+
 impl Rule for LooseRegex {
     fn id(&self) -> &'static str {
         "loose-regex"
     }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
+    }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if !added_or_modified(node.state) || node.kind != "VariableDeclaration" {
             return None;
+        }
+        if ctx.lang.family() != Family::JsTs {
+            // Non-JsTs: regexes are string arguments to a construction call
+            // (`Regex::new("…")`, `re.compile("…")`). The pack marker captures
+            // the pattern body in group 1; empty field => silent.
+            let marker_src = lang::pack(ctx.lang.family()).regex_compile?;
+            let marker = compiled_marker(marker_src)?;
+            // ISSUE 8: only real-code constructors count. A `Regex::new(".*")`
+            // named inside a comment or a string (a help/docs line) is not a real
+            // regex construction and must not raise a High flag. `real_regex_call_
+            // patterns` gates on the code-only view (string/comment interiors
+            // blanked) while extracting the pattern body from the strings-kept view.
+            let after_pats = real_regex_call_patterns(&node.after, ctx.lang, &marker);
+            if after_pats.is_empty() {
+                return None;
+            }
+            let before_pats = real_regex_call_patterns(&node.before, ctx.lang, &marker);
+            return regex_weakening_over_patterns(&before_pats, &after_pats)
+                .and_then(|desc| finding(Severity::High, "Loose regex pattern", desc));
         }
         let after = joined(&node.after);
         // Cheap pre-filter: a widened/weakened regex must appear in the after
@@ -635,8 +1103,18 @@ const CALLEE_QUERY: &str = r#"
 (call_expression function: (member_expression property: (property_identifier) @callee))
 "#;
 
+/// The callee query for a family: the JS/TS const for `JsTs`, otherwise the
+/// family pack's `@callee` query. `None` => the family has no grounded query, so
+/// every callee-based rule returns `None` (silent) for it.
+fn callee_query(lang: Lang) -> Option<&'static str> {
+    match lang.family() {
+        Family::JsTs => Some(CALLEE_QUERY),
+        f => lang::pack(f).callee,
+    }
+}
+
 fn callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
-    crate::structural::capture_texts(src, lang, CALLEE_QUERY, "callee")
+    crate::structural::capture_texts(src, lang, callee_query(lang)?, "callee")
 }
 
 fn callee_names(src: &str, lang: Lang) -> Option<HashSet<String>> {
@@ -650,6 +1128,9 @@ fn count_of(names: &[String], callee: &str) -> usize {
 impl Rule for VerifyToDecode {
     fn id(&self) -> &'static str {
         "verify-to-decode"
+    }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if node.state != NodeState::Modified {
@@ -682,7 +1163,10 @@ impl Rule for VerifyToDecode {
                 // code that already decoded before isn't regressing here.
                 verifies(&b) && !verifies(&a) && decodes(&a) && !decodes(&b)
             }
-            _ => {
+            // JS/TS-only text fallback when the structural parse can't answer.
+            // For non-JsTs families this stays structural-or-nothing: no JS
+            // regex ever runs against foreign syntax.
+            _ if ctx.lang.family() == Family::JsTs => {
                 static VERIFY: LazyLock<Regex> =
                     LazyLock::new(|| Regex::new(r"\b(verify|sign)\w*\s*\(").unwrap());
                 // `decode*` or exactly `parse(` — never `parseInt(`/`parseFloat(`.
@@ -693,6 +1177,7 @@ impl Rule for VerifyToDecode {
                     && DECODE.is_match(&after)
                     && !DECODE.is_match(&before)
             }
+            _ => false,
         };
         if fired {
             return finding(
@@ -718,18 +1203,34 @@ const IF_CONDITION_QUERY: &str = r#"
 (if_statement condition: (parenthesized_expression (_) @cond))
 "#;
 
+/// The if-condition query for a family: JS/TS const for `JsTs`, else the pack's
+/// `@cond` query. `None` => the rule is silent for the family.
+fn if_condition_query(lang: Lang) -> Option<&'static str> {
+    match lang.family() {
+        Family::JsTs => Some(IF_CONDITION_QUERY),
+        f => lang::pack(f).if_condition,
+    }
+}
+
+/// JS/TS constant-falsy condition texts. Other families bring their own list via
+/// the pack (`falsy_literals`).
+const JS_FALSY: &[&str] = &["false", "0", "null", "undefined"];
+
 fn has_const_falsy_guard(src: &str, lang: Lang) -> Option<bool> {
-    let conds = crate::structural::capture_texts(src, lang, IF_CONDITION_QUERY, "cond")?;
-    Some(
-        conds
-            .iter()
-            .any(|c| matches!(c.trim(), "false" | "0" | "null" | "undefined")),
-    )
+    let conds = crate::structural::capture_texts(src, lang, if_condition_query(lang)?, "cond")?;
+    let falsy: &[&str] = match lang.family() {
+        Family::JsTs => JS_FALSY,
+        f => lang::pack(f).falsy_literals,
+    };
+    Some(conds.iter().any(|c| falsy.contains(&c.trim())))
 }
 
 impl Rule for RemovedIfGuard {
     fn id(&self) -> &'static str {
         "removed-if-guard"
+    }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         // Any Modified node qualifies: exported functions aren't split into
@@ -738,9 +1239,15 @@ impl Rule for RemovedIfGuard {
         if node.state != NodeState::Modified {
             return None;
         }
+        let is_jsts = ctx.lang.family() == Family::JsTs;
         static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"if\s*\(\s*false\s*\)").unwrap());
         let hit = |src: &str| {
-            has_const_falsy_guard(src, ctx.lang).unwrap_or_else(|| RE.is_match(src))
+            match has_const_falsy_guard(src, ctx.lang) {
+                Some(h) => h,
+                // JS/TS text fallback only; non-JsTs stays structural-or-nothing.
+                None if is_jsts => RE.is_match(src),
+                None => false,
+            }
         };
         if hit(&joined(&node.after)) && !hit(&joined(&node.before)) {
             return finding(
@@ -759,16 +1266,69 @@ impl Rule for RemovedIfGuard {
 struct RemovedSanitize;
 
 fn has_sanitizer_callee(names: &HashSet<String>) -> bool {
-    names.iter().any(|n| {
-        n.rsplit('.').next().is_some_and(|last| {
-            last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
-        })
+    names.iter().any(|n| is_sanitizer_name(n))
+}
+
+/// Whether some sanitizer-prefixed callee occurs FEWER times in `after` than in
+/// `before` — i.e. a specific sanitize/escape/validate call was dropped. Counts
+/// per name (multiplicity), so a genuinely removed sanitizer still registers even
+/// when a *different* sanitizer-prefixed callee survives
+/// (`sanitizeHtml(x); validateSchema(x);` → `validateSchema(x);` drops
+/// `sanitizeHtml`). A pure rename of the surrounding code that keeps the same
+/// sanitizer callee leaves every count unchanged and does not register.
+fn sanitizer_callee_dropped(before: &[String], after: &[String]) -> bool {
+    before
+        .iter()
+        .filter(|n| is_sanitizer_name(n))
+        .any(|name| count_of(after, name) < count_of(before, name))
+}
+
+/// Whether an identifier (bare or member, last segment) has a sanitizer prefix.
+fn is_sanitizer_name(n: &str) -> bool {
+    n.rsplit('.').next().is_some_and(|last| {
+        last.starts_with("sanitize") || last.starts_with("escape") || last.starts_with("validate")
     })
+}
+
+/// Whether a sanitizer-prefixed identifier (`sanitize*`/`escape*`/`validate*`)
+/// still appears in `src` as a *definition header*. Used by `RemovedSanitize` to
+/// suppress validator-definition churn inside a container node (the Alamofire
+/// `extension DataRequest { func validate … }` case): if the validator's own
+/// declaration survives, the sanitization moved or re-shaped rather than
+/// disappeared.
+///
+/// Only a *definition header* counts — a declaration keyword (`func`/`fn`/`def`/
+/// `fun`/`void`/`sub`) immediately preceding the sanitizer name, covering
+/// languages whose function decl puts the name after a keyword. A surviving
+/// *call/reference* deliberately does NOT count: a genuinely removed sanitizer
+/// alongside a different surviving sanitizer-prefixed CALL (e.g.
+/// `sanitizeHtml(x); validateSchema(x);` → `validateSchema(x);`) must still fire.
+///
+/// `src` must already be code-only (comment/string interiors blanked) so a name
+/// mentioned in prose never falsely suppresses a real removal.
+fn sanitizer_name_survives(src: &str) -> bool {
+    static DEF: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\b(?:func|fn|def|fun|void|sub)\s+(?:sanitize|escape|validate)\w*").unwrap()
+    });
+    DEF.is_match(src)
+}
+
+/// Function/method-declaration node kinds across the families. A node of one of
+/// these kinds whose own name is sanitizer-prefixed is a *validator definition*,
+/// not a caller — see `RemovedSanitize`'s definition-churn guard.
+fn is_function_decl_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "FunctionDeclaration" | "MethodDeclaration" | "ExportDeclaration"
+    )
 }
 
 impl Rule for RemovedSanitize {
     fn id(&self) -> &'static str {
         "removed-sanitize"
+    }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         static RE: LazyLock<Regex> =
@@ -779,15 +1339,63 @@ impl Rule for RemovedSanitize {
         {
             return None;
         }
+        let is_jsts = ctx.lang.family() == Family::JsTs;
         let after = joined(&node.after);
-        let had = |src: &str| {
-            callee_names(src, ctx.lang)
-                .map(|n| has_sanitizer_callee(&n))
-                .unwrap_or_else(|| RE.is_match(src))
+        // FIX 3: a validator DEFINITION churning is not a removed caller-side
+        // sanitizer. When the matched node is itself a function/method named with
+        // a sanitizer prefix (`validate*`/`sanitize*`/`escape*`) and the after
+        // still references that name (its own header / a self-call survives), a
+        // signature- or annotation-only change (e.g. Alamofire's `validate`
+        // gaining `@Sendable`) must not read as "sanitization removed". Such a
+        // self-named validator owns the sanitization; only a CALLER dropping it
+        // is the smell this rule is after.
+        if is_function_decl_kind(&node.kind)
+            && is_sanitizer_name(&node.name)
+            && !node.name.is_empty()
+            && after.contains(node.name.as_str())
+        {
+            return None;
+        }
+        // FIX (v0.5.0 Alamofire cluster): the guard above only catches a node
+        // whose OWN name is sanitizer-prefixed. The real Alamofire case surfaces
+        // as a container node (`extension DataRequest { @Sendable public func
+        // validate(...) {...} }`) named after the type, so the validator the diff
+        // restructured is an inner declaration the callee query never sees as a
+        // call. If a sanitizer-prefixed name still appears in the AFTER as a
+        // DEFINITION (`func validate`/`fn validate`/`def validate`/`void validate`),
+        // the protection wasn't removed — just moved or re-shaped. Only a
+        // surviving DEFINITION suppresses: a surviving sanitizer CALL must NOT,
+        // or a genuinely removed sanitizer that sits next to a *different*
+        // surviving sanitizer call would be missed (ISSUE 4). Check the CODE-ONLY
+        // after so a name surviving solely in a comment or string never masks a
+        // genuine removal (parse failure falls back to the raw text).
+        let after_code = code_only(&node.after, ctx.lang).unwrap_or_else(|| after.clone());
+        if node.state == NodeState::Modified && sanitizer_name_survives(&after_code) {
+            return None;
+        }
+        // The sanitize/escape/validate prefix list is naming-convention neutral
+        // (`sanitize_html` still prefix-matches), so the structural path works
+        // for every family. The text-regex fallback is JS/TS-only.
+        //
+        // Removed node: any sanitizer callee in the before is a removal. Modified
+        // node: a sanitizer callee must have DROPPED (count decreased) — set
+        // presence isn't enough, because a different surviving sanitizer call
+        // would otherwise mask the one that disappeared (ISSUE 4).
+        let had = |src: &str| match callee_names(src, ctx.lang) {
+            Some(n) => has_sanitizer_callee(&n),
+            None if is_jsts => RE.is_match(src),
+            None => false,
+        };
+        let dropped = match (callee_list(&before, ctx.lang), callee_list(&after, ctx.lang)) {
+            (Some(b), Some(a)) => sanitizer_callee_dropped(&b, &a),
+            // Structural parse failed: JS/TS falls back to text presence
+            // (a sanitizer call in before that is gone from after).
+            _ if is_jsts => RE.is_match(&before) && !RE.is_match(&after),
+            _ => false,
         };
         let fired = match node.state {
             NodeState::Removed => had(&before),
-            NodeState::Modified => had(&before) && !had(&after),
+            NodeState::Modified => dropped,
             _ => false,
         };
         if fired {
@@ -808,13 +1416,33 @@ struct GuardRemoved;
 
 const IF_CONSEQUENCE_QUERY: &str = "(if_statement consequence: (_) @cons)";
 
+/// JS/TS early-exit keywords marking a guard clause. Other families bring their
+/// own list via the pack (`guard_exit_keywords`).
+const JS_GUARD_EXITS: &[&str] = &["return", "throw", "break", "continue"];
+
+/// The if-consequence query for a family: JS/TS const for `JsTs`, else the
+/// pack's `@cons` query. `None` => the rule is silent for the family.
+fn if_consequence_query(lang: Lang) -> Option<&'static str> {
+    match lang.family() {
+        Family::JsTs => Some(IF_CONSEQUENCE_QUERY),
+        f => lang::pack(f).if_consequence,
+    }
+}
+
+fn guard_exit_keywords(lang: Lang) -> &'static [&'static str] {
+    match lang.family() {
+        Family::JsTs => JS_GUARD_EXITS,
+        f => lang::pack(f).guard_exit_keywords,
+    }
+}
+
 /// Callee names inside `if` consequences, with multiplicity. Nested guards can
 /// count a call more than once (outer and inner consequence both capture it),
 /// so callers compare with `>=` — erring toward "still guarded", never toward
 /// a false flag.
 fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
     let consequences =
-        crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")?;
+        crate::structural::capture_texts(src, lang, if_consequence_query(lang)?, "cons")?;
     let mut guarded = Vec::new();
     for cons in &consequences {
         if let Some(names) = callee_list(cons, lang) {
@@ -825,12 +1453,12 @@ fn guarded_callee_list(src: &str, lang: Lang) -> Option<Vec<String>> {
 }
 
 /// An `if` consequence that is purely an early exit (`return`/`throw`/`break`/
-/// `continue`), i.e. a guard clause. Hoisting a wrapping `if` into an inverted
-/// guard clause is the most common guard refactor and must not read as a
-/// removed guard.
-fn is_guard_clause(consequence: &str) -> bool {
+/// `continue`, per the family's `guard_exit_keywords`), i.e. a guard clause.
+/// Hoisting a wrapping `if` into an inverted guard clause is the most common
+/// guard refactor and must not read as a removed guard.
+fn is_guard_clause(consequence: &str, exits: &[&str]) -> bool {
     let body = consequence.trim().trim_start_matches('{').trim();
-    ["return", "throw", "break", "continue"].iter().any(|kw| {
+    exits.iter().any(|kw| {
         // Whole keyword, not an identifier prefix (`returnStatus`, `throwError`).
         body.strip_prefix(kw).is_some_and(|rest| {
             rest.chars()
@@ -841,14 +1469,21 @@ fn is_guard_clause(consequence: &str) -> bool {
 }
 
 fn guard_clause_count(src: &str, lang: Lang) -> usize {
-    crate::structural::capture_texts(src, lang, IF_CONSEQUENCE_QUERY, "cons")
-        .map(|cs| cs.iter().filter(|c| is_guard_clause(c)).count())
+    let Some(q) = if_consequence_query(lang) else {
+        return 0;
+    };
+    let exits = guard_exit_keywords(lang);
+    crate::structural::capture_texts(src, lang, q, "cons")
+        .map(|cs| cs.iter().filter(|c| is_guard_clause(c, exits)).count())
         .unwrap_or(0)
 }
 
 impl Rule for GuardRemoved {
     fn id(&self) -> &'static str {
         "guard-removed"
+    }
+    fn families(&self) -> &'static [Family] {
+        ALL_FAMILIES
     }
     fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
         if node.state != NodeState::Modified {
@@ -888,39 +1523,56 @@ impl Rule for GuardRemoved {
     }
 }
 
-/// Differential: a `try { … }` that wrapped calls before the change is gone
-/// while the calls remain.
+/// Differential: error handling that wrapped surviving calls before the change
+/// is gone after it. The exact notion of "error handling" is per-family:
+/// try/catch for most languages, or a `?`/`match`-on-`Result` becoming an
+/// unhandled `.unwrap()`/`.expect(...)` for Rust. Go is covered by the guard
+/// rules instead, so the rule does not run there.
 struct ErrorHandlingRemoved;
 
+/// The JS/TS try construct. Other try-block families bring their own `@try`
+/// query via the pack (`try_block`).
 const TRY_QUERY: &str = "(try_statement) @try";
 
-impl Rule for ErrorHandlingRemoved {
-    fn id(&self) -> &'static str {
-        "removed-try-catch"
+fn try_query(lang: Lang) -> Option<&'static str> {
+    match lang.family() {
+        Family::JsTs => Some(TRY_QUERY),
+        f => lang::pack(f).try_block,
     }
-    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
-        if node.state != NodeState::Modified {
+}
+
+impl ErrorHandlingRemoved {
+    /// TryBlock strategy: a try/catch-equivalent that wrapped calls is gone while
+    /// the calls survive. `allow_promise_catch` enables the JS-only refactor
+    /// suppression (try/catch → `.catch(…)`).
+    fn check_try_block(
+        &self,
+        ctx: &RuleCtx,
+        before: &str,
+        after: &str,
+        allow_promise_catch: bool,
+    ) -> Option<Finding> {
+        if !before.contains("try") && !before.contains("do") {
+            // Cheap pre-filter: every try-block family's construct keyword is
+            // `try` (or Swift's `do`); none means nothing could have been wrapped.
             return None;
         }
-        let before = joined(&node.before);
-        if !before.contains("try") {
-            return None;
-        }
-        let after = joined(&node.after);
-        let tries_before =
-            crate::structural::capture_texts(&before, ctx.lang, TRY_QUERY, "try")?;
+        let q = try_query(ctx.lang)?;
+        let tries_before = crate::structural::capture_texts(before, ctx.lang, q, "try")?;
         if tries_before.is_empty() {
             return None;
         }
-        let tries_after = crate::structural::capture_texts(&after, ctx.lang, TRY_QUERY, "try")?;
+        let tries_after = crate::structural::capture_texts(after, ctx.lang, q, "try")?;
         if !tries_after.is_empty() {
             return None;
         }
-        // try/catch refactored to a promise `.catch(…)` chain still handles
-        // errors — not a removal.
-        if let Some(after_callees) = callee_names(&after, ctx.lang) {
-            if after_callees.contains("catch") {
-                return None;
+        // JS only: try/catch refactored to a promise `.catch(…)` chain still
+        // handles errors — not a removal.
+        if allow_promise_catch {
+            if let Some(after_callees) = callee_names(after, ctx.lang) {
+                if after_callees.contains("catch") {
+                    return None;
+                }
             }
         }
         // The calls that were inside the try must still exist after.
@@ -930,15 +1582,74 @@ impl Rule for ErrorHandlingRemoved {
                 wrapped.extend(names);
             }
         }
-        let all_after = callee_names(&after, ctx.lang)?;
+        let all_after = callee_names(after, ctx.lang)?;
         let survivor = wrapped.iter().find(|c| all_after.contains(*c))?;
         finding(
             Severity::Low,
             "Error handling removed",
             format!(
-                "The try/catch around `{survivor}(…)` was removed — failures here are now unhandled."
+                "The error handling around `{survivor}(…)` was removed — failures here are now unhandled."
             ),
         )
+    }
+
+    /// UnwrapTransition strategy (Rust): the before handled a fallible result
+    /// (a `handled_marker` such as `?` or `match`) and the after replaced it
+    /// with an unhandled unwrap (an `unwrap_marker` such as `.unwrap(` /
+    /// `.expect(`). Markers come from the family pack; empty => silent.
+    fn check_unwrap_transition(&self, ctx: &RuleCtx, before: &str, after: &str) -> Option<Finding> {
+        let pack = lang::pack(ctx.lang.family());
+        if pack.unwrap_markers.is_empty() || pack.handled_markers.is_empty() {
+            return None;
+        }
+        let before_handled = any_marker(before, pack.handled_markers);
+        let after_handled = any_marker(after, pack.handled_markers);
+        let before_unwrapped = any_marker(before, pack.unwrap_markers);
+        let after_unwrapped = any_marker(after, pack.unwrap_markers);
+        // The error handling that existed before must be gone, and a new
+        // unhandled unwrap must have taken its place.
+        if before_handled && !after_handled && after_unwrapped && !before_unwrapped {
+            return finding(
+                Severity::Low,
+                "Error handling removed",
+                "Error handling was replaced with an unwrap that panics on failure — restore the fallible-result handling.",
+            );
+        }
+        None
+    }
+}
+
+impl Rule for ErrorHandlingRemoved {
+    fn id(&self) -> &'static str {
+        "removed-try-catch"
+    }
+    fn families(&self) -> &'static [Family] {
+        ALL_EXCEPT_GO
+    }
+    fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<Finding> {
+        if node.state != NodeState::Modified {
+            return None;
+        }
+        let before = joined(&node.before);
+        let after = joined(&node.after);
+        match ctx.lang.family() {
+            // JS/TS keeps its exact historical behavior, including the
+            // promise-.catch refactor suppression.
+            Family::JsTs => self.check_try_block(ctx, &before, &after, true),
+            // Other try-block families: same logic, family `@try` query, no
+            // promise-.catch suppression (not a JS concept).
+            f => match lang::pack(f).error_handling_strategy {
+                ErrorHandlingStrategy::TryBlock => {
+                    self.check_try_block(ctx, &before, &after, false)
+                }
+                ErrorHandlingStrategy::UnwrapTransition => {
+                    self.check_unwrap_transition(ctx, &before, &after)
+                }
+                // Go is covered by the guard rules; None never reaches here
+                // because the family isn't in ALL_EXCEPT_GO.
+                ErrorHandlingStrategy::CoveredByGuards | ErrorHandlingStrategy::None => None,
+            },
+        }
     }
 }
 
@@ -1176,6 +1887,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         }
     }
@@ -1183,6 +1895,7 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: true,
+            is_build_script: false,
             lang: Lang::Ts,
         }
     }
@@ -1590,6 +2303,44 @@ mod tests {
                 &ctx(),
             )
             .is_some());
+    }
+
+    #[test]
+    fn removed_sanitize_fires_when_only_a_different_sanitizer_call_survives() {
+        // ISSUE 4 regression: `sanitizeHtml` is genuinely removed; a *different*
+        // sanitizer-prefixed CALL (`validateSchema(...)`) survives in the after.
+        // A surviving call must NOT suppress the removal — only a surviving
+        // sanitizer DEFINITION (a validator the protection moved into) should.
+        let f = RemovedSanitize.check(
+            &node(
+                "ExpressionStatement",
+                NodeState::Modified,
+                &["sanitizeHtml(input); validateSchema(input);"],
+                &["validateSchema(input);"],
+            ),
+            &ctx(),
+        );
+        assert!(
+            f.is_some(),
+            "a removed sanitizer must still flag when only a different sanitizer CALL survives"
+        );
+    }
+
+    #[test]
+    fn removed_sanitize_stays_silent_when_a_validator_definition_survives() {
+        // ISSUE 4: the Alamofire container case. The node is an `extension`
+        // whose own name (`DataRequest`) is NOT sanitizer-prefixed, so the
+        // self-named-validator guard does not apply. The inner `func validate`
+        // DEFINITION survives the signature churn (gaining `@Sendable`), so the
+        // sanitization moved/re-shaped — not removed. Must stay silent.
+        let before = "extension DataRequest {\n  public func validate(_ statusCode: Int) -> Self {\n    return self\n  }\n}";
+        let after = "extension DataRequest {\n  @Sendable public func validate(_ statusCode: Int) -> Self {\n    return self\n  }\n}";
+        let mut n = node("ExportDeclaration", NodeState::Modified, &[before], &[after]);
+        n.name = "DataRequest".into();
+        assert!(
+            RemovedSanitize.check(&n, &lang_ctx(Lang::Swift)).is_none(),
+            "a surviving validator DEFINITION must keep signature churn silent"
+        );
     }
 
     // ---- Red-team round 1: confirmed findings become regression tests ----
@@ -2070,6 +2821,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps,
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
 
@@ -2109,6 +2861,7 @@ mod tests {
         let no_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
         let mut import = node(
@@ -2139,6 +2892,7 @@ mod tests {
         let with_deps = RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang: Lang::Ts,
         };
         let mut import = node(
@@ -2318,16 +3072,65 @@ mod tests {
         RuleCtx {
             deps: HashSet::new(),
             is_test_file: false,
+            is_build_script: false,
             lang,
         }
     }
 
     #[test]
-    fn non_js_families_only_run_the_neutral_allowlist() {
+    fn eval_rule_matches_each_family_marker_for_bare_eval_text() {
         let reg = RuleRegistry::new();
-        // An `eval(...)` call is a JS-specific rule. In a non-JS family it must
-        // NOT flag — the eval rule is gated out, and no foreign-grammar query is
-        // ever compiled.
+        // The bare JS-shaped `eval(userInput);` snippet is meaningful only where a
+        // family's `eval_call` marker actually matches it. Rust/Go/Swift are not in
+        // EVAL_FAMILIES (structurally not applicable) and stay silent. Python's
+        // marker is `\b(eval|exec|compile)\s*\(`, so `eval(` legitimately fires.
+        // Java/C#/Kotlin markers are call-form-specific (ScriptEngineManager /
+        // getEngineByName / CSharpScript), so bare `eval(` text must NOT fire for
+        // them — structural-or-nothing keeps the JS text from leaking across.
+        let silent = [
+            Lang::Rust,   // not in EVAL_FAMILIES
+            Lang::Go,     // not in EVAL_FAMILIES
+            Lang::Swift,  // not in EVAL_FAMILIES
+            Lang::Java,   // marker requires ScriptEngineManager(/getEngineByName(
+            Lang::CSharp, // marker requires CSharpScript.*
+            Lang::Kotlin, // marker requires getEngineByName(
+        ];
+        for lang in silent {
+            let f = reg.check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &lang_ctx(lang),
+            );
+            assert!(
+                f.is_none(),
+                "bare JS eval text must not fire for {:?}",
+                lang
+            );
+        }
+        // Python's eval/exec/compile marker matches `eval(` by design.
+        let py = reg.check(
+            &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+            &lang_ctx(Lang::Python),
+        );
+        assert_eq!(
+            py.map(|(id, _)| id),
+            Some("eval-call"),
+            "Python eval/exec/compile marker must fire on `eval(`"
+        );
+        // Sanity: the same node DOES flag for the JS/TS family.
+        assert!(reg
+            .check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn default_closed_rule_never_fires_outside_jsts_even_with_matching_text() {
+        // FnConstructor opts into no family (default-closed = JS/TS only). Even
+        // with text its JS query would match, it must never fire for another
+        // family — the families() filter excludes it before check() runs.
+        let reg = RuleRegistry::new();
         for lang in [
             Lang::Rust,
             Lang::Go,
@@ -2338,22 +3141,73 @@ mod tests {
             Lang::Swift,
         ] {
             let f = reg.check(
-                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const f = new Function(\"return 1\");"],
+                ),
                 &lang_ctx(lang),
             );
             assert!(
                 f.is_none(),
-                "JS-specific eval rule must not fire for {:?}",
+                "default-closed fn-constructor must not fire for {:?}",
                 lang
             );
         }
-        // Sanity: the same node DOES flag for the JS/TS family.
+        // It DOES fire for JS/TS.
         assert!(reg
             .check(
-                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["const f = new Function(\"return 1\");"],
+                ),
                 &ctx(),
             )
             .is_some());
+    }
+
+    #[test]
+    fn none_pack_field_means_rule_silence_for_an_opted_in_family() {
+        // The contract: a `None` pack field makes its consuming rule silent for an
+        // opted-in family, even when text the *other* family's marker would catch
+        // is present. We prove it two honest ways now that the packs are filled.
+
+        // (1) Direct, at the lang layer: the EMPTY pack leaves subprocess_import
+        // None, so no import marker can ever fire from it.
+        assert!(
+            lang::FamilyPack::EMPTY.subprocess_import.is_none(),
+            "EMPTY pack must leave subprocess_import None — the contract's base case"
+        );
+
+        // (2) End-to-end through ChildProcess for a family that deliberately fills
+        // only ONE of the two subprocess fields: Java sets subprocess_call but
+        // leaves subprocess_import = None (it has no import-shaped subprocess
+        // signal worth a query). An import-shaped Java snippet that does NOT match
+        // Java's call marker therefore exercises only the None field — and must
+        // stay silent. If a future edit accidentally gave Java a subprocess_import
+        // marker, this would flip and catch it.
+        assert!(
+            lang::pack(Family::Java).subprocess_import.is_none(),
+            "precondition: Java deliberately leaves subprocess_import None (call-only)"
+        );
+        let reg = RuleRegistry::new();
+        let java_import = reg.check(
+            &node(
+                "ImportDeclaration",
+                NodeState::Added,
+                &[],
+                &["import java.lang.ProcessBuilder;"],
+            ),
+            &lang_ctx(Lang::Java),
+        );
+        assert!(
+            java_import.is_none(),
+            "Java's None subprocess_import must keep ChildProcess silent on an \
+             import-shaped snippet (no subprocess_call match)"
+        );
     }
 
     #[test]
@@ -2405,11 +3259,14 @@ mod tests {
 
     #[test]
     fn cross_language_nodes_never_panic_or_compile_foreign_queries() {
-        // Drive realistic snippets from each core-four language through the full
-        // registry. The gate means no JS tree-sitter query is ever compiled
-        // against these grammars — in a debug build a foreign-grammar query
-        // would trip structural.rs's debug_assert, so this passing in
-        // `cargo test` (a debug build) proves the gate holds.
+        // Drive realistic snippets from each non-JS language through the full
+        // registry. At the foundation stage every non-JS pack field is empty, so
+        // each opted-in rule resolves a `None` query/marker and returns silently
+        // (structural-or-nothing) — no JS tree-sitter query is ever compiled
+        // against these grammars. In a debug build a foreign-grammar query would
+        // trip structural.rs's debug_assert, so this passing in `cargo test`
+        // (a debug build) proves no such compilation happens. (before == after
+        // also means the differential rules have nothing to compare.)
         let reg = RuleRegistry::new();
         let snippets: &[(Lang, &str)] = &[
             (Lang::Rust, "if condition { sanitize(x); verify(t); }"),

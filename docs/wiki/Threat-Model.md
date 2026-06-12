@@ -4,7 +4,7 @@ What Diff Drift defends against, what it trusts, and what is explicitly out of s
 
 ## What Diff Drift Is
 
-A local Windows desktop app (Tauri 2: Rust backend + WebView2 frontend) and a read-only CLI. It opens a git repository you choose, parses supported changed source files and `package.json`, and renders structural drift with heuristic security flags. Security heuristics are strongest for JS/TS and package drift, with language-neutral secret detection across the newer structural language families. Nothing leaves the machine — see [Privacy and Data Flow](Privacy-and-Data-Flow.md).
+A local Windows desktop app (Tauri 2: Rust backend + WebView2 frontend) and a read-only CLI. It opens a git repository you choose, parses supported changed source files plus dependency manifests (`package.json`, `Cargo.toml`, `go.mod`, `requirements.txt`, `pom.xml`, `.csproj`), and renders structural drift with heuristic security flags. The security heuristics run across all supported source languages where the rule's concept exists; the [Rule Reference](Rule-Reference.md#language-coverage) records the per-rule coverage. Nothing leaves the machine — see [Privacy and Data Flow](Privacy-and-Data-Flow.md).
 
 ## Assets
 
