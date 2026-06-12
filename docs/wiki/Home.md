@@ -18,7 +18,7 @@ This wiki is the handbook. The README stays short on purpose.
 - [Privacy and Data Flow](Privacy-and-Data-Flow.md): what is read, what is written, what leaves the machine (nothing).
 - [Release and Platform Support](Release-and-Platform-Support.md): Windows, macOS status, release runbook, signing, winget.
 - [Troubleshooting](Troubleshooting.md): common setup and app behavior issues.
-- [Changelog](../../CHANGELOG.md) and [Security Policy](../../SECURITY.md).
+- [Changelog](https://github.com/Statusnone420/Diff-Drift/blob/main/CHANGELOG.md) and [Security Policy](https://github.com/Statusnone420/Diff-Drift/blob/main/SECURITY.md).
 - [GitHub Discussions](https://github.com/Statusnone420/Diff-Drift/discussions): questions, ideas, and support.
 
 ## Current Status
