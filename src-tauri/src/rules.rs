@@ -25,6 +25,10 @@ pub struct Finding {
     pub severity: Severity,
     pub r#type: &'static str,
     pub desc: String,
+    /// The specific line that triggered the flag, when a rule can point at one
+    /// (e.g. the line holding a hardcoded secret). Surfaced in the report so a
+    /// truncated node body never hides the evidence.
+    pub evidence: Option<String>,
 }
 
 fn finding(severity: Severity, r#type: &'static str, desc: impl Into<String>) -> Option<Finding> {
@@ -32,6 +36,21 @@ fn finding(severity: Severity, r#type: &'static str, desc: impl Into<String>) ->
         severity,
         r#type,
         desc: desc.into(),
+        evidence: None,
+    })
+}
+
+fn finding_with_evidence(
+    severity: Severity,
+    r#type: &'static str,
+    desc: impl Into<String>,
+    evidence: impl Into<String>,
+) -> Option<Finding> {
+    Some(Finding {
+        severity,
+        r#type,
+        desc: desc.into(),
+        evidence: Some(evidence.into()),
     })
 }
 
@@ -152,20 +171,24 @@ impl Rule for HardcodedSecret {
             LazyLock::new(|| Regex::new(r"\bsk-[A-Za-z0-9]{16,}").unwrap());
         static PEM: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----").unwrap());
-        let after = joined(&node.after);
-        let what = if AWS.is_match(&after) {
-            "an AWS access key"
-        } else if OPENAI.is_match(&after) {
-            "an API key"
-        } else if PEM.is_match(&after) {
-            "a private key"
-        } else {
-            return None;
-        };
-        finding(
+        // Match per line so the report can point at the exact offending line —
+        // these markers never span a line break.
+        let (what, line) = node.after.iter().flatten().find_map(|l| {
+            if AWS.is_match(l) {
+                Some(("an AWS access key", l))
+            } else if OPENAI.is_match(l) {
+                Some(("an API key", l))
+            } else if PEM.is_match(l) {
+                Some(("a private key", l))
+            } else {
+                None
+            }
+        })?;
+        finding_with_evidence(
             Severity::High,
             "Hardcoded secret",
             format!("{what} is hardcoded in source — move it to an environment variable or secret store."),
+            line.trim(),
         )
     }
 }

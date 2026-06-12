@@ -24,6 +24,8 @@ export interface Flag {
   severity: Severity;
   type: string;
   desc: string;
+  /** The specific line that triggered the flag, when a rule can point at one. */
+  evidence?: string;
   fileId: string;
   filePath: string;
   nodePath: string;

@@ -272,6 +272,7 @@ pub fn analyze_package_json(
             severity,
             r#type: label.into(),
             desc,
+            evidence: None,
             file_id: file_id.clone(),
             file_path: "package.json".into(),
             node_path: format!(
