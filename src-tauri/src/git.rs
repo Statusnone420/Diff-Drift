@@ -409,9 +409,20 @@ mod tests {
     fn is_analyzable_filters_to_parsable_sources() {
         assert!(is_analyzable("auth/validateToken.ts"));
         assert!(is_analyzable("src/App.tsx"));
+        // Core-four structural-drift languages are analyzable too.
+        assert!(is_analyzable("src/lib.rs"));
+        assert!(is_analyzable("cmd/main.go"));
+        assert!(is_analyzable("app/handler.py"));
+        assert!(is_analyzable("src/Main.java"));
+        // Stretch structural-drift languages are analyzable too.
+        assert!(is_analyzable("src/Service.cs"));
+        assert!(is_analyzable("app/Main.kt"));
+        assert!(is_analyzable("build.gradle.kts"));
+        assert!(is_analyzable("Sources/App.swift"));
         assert!(!is_analyzable("types.d.ts"), ".d.ts excluded");
         assert!(!is_analyzable("notes.md"), "non-source files excluded");
         assert!(!is_analyzable("package.json"));
+        assert!(!is_analyzable("style.css"));
     }
 
     #[test]

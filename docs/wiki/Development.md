@@ -92,7 +92,7 @@ npm run eval:score-agent
 
 Blind-agent scoring writes `.eval/results/agents/latest.json`, `.eval/results/agents/latest.md`, and `.eval/results/agents/latest.html`. This scorecard is advisory, not a blocker: use it to see whether reviewers reach the right decisions, cite the right evidence, and where the report or rubric is confusing. Engine eval remains the CI gate; blind-agent scorecards are local product-quality telemetry with no network calls. Working outputs under `.eval/` stay uncommitted; the one exception is published benchmark snapshots in `eval/benchmarks/<version>/` (answers + scorecard), which exist so anyone can rescore the headline number from a fresh clone: `npm run eval:score-agent -- eval/benchmarks/v4/answers`. The scorecard reports decision accuracy, severity-weighted recall, localization, precision, and per-rule recall, lists every evaluator, and shows an "independent external validation pending" banner until a non-project human evaluator has contributed. The rubric, aliases, and accepted decisions are frozen before answers are generated; scorer changes start a new benchmark version instead of rewriting older scores. See [Eval Methodology](Eval-Methodology.md) for the contract and [A/B Study Design](AB-Study-Design.md) for the planned packet-vs-raw-diff study.
 
-![Diff Drift blind-agent benchmark scorecard](../assets/diff-drift-blind-agent-scorecard.png)
+![Diff Drift blind-agent benchmark scorecard](https://raw.githubusercontent.com/Statusnone420/Diff-Drift/main/docs/assets/diff-drift-blind-agent-scorecard.png)
 
 Use `--case <case-id>` with `eval:engine` or `eval:packets` to narrow a run while developing a fixture. Use `--keep` to preserve the generated temp repo path printed by the script for debugging.
 

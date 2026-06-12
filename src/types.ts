@@ -77,4 +77,10 @@ export interface SessionData {
   session: Session;
   flags: Flag[];
   files: FileEntry[];
+  /**
+   * Repo-relative paths of changed files that are not analyzed as AST or
+   * dependency drift (unsupported type, not package.json), sorted alphabetically.
+   * Empty when every changed file was analyzed.
+   */
+  otherFiles: string[];
 }

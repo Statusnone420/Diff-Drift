@@ -10,7 +10,7 @@ The working tree matches the selected baseline, or the current changes were reve
 
 ## Changed Files But No Analyzed Files
 
-Diff Drift analyzes changed TypeScript, TSX, JavaScript, JSX, and root `package.json` dependency/script drift. Other changed files can still count as git drift, but they will not appear as AST nodes or dependency nodes.
+Diff Drift analyzes changed TypeScript, TSX, JavaScript, JSX, Rust, Go, Python, Java, C#, Kotlin, Swift, and root `package.json` dependency/script drift. Other changed files still count as git drift and appear by path as "Other changed files", but they will not appear as AST nodes or dependency nodes.
 
 ## A File Shows "Skipped — file too large to analyze"
 

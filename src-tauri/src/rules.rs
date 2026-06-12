@@ -74,12 +74,38 @@ impl RuleRegistry {
     }
 
     /// First matching rule's id + its finding.
+    ///
+    /// SAFETY GATE: every security rule except `hardcoded-secret` is written
+    /// against JS/TS grammar node kinds — its tree-sitter queries (eval, CORS,
+    /// TLS, regex, try/catch, …) and its kind-string checks
+    /// (`VariableDeclaration`/`ImportDeclaration`) only make sense for the JS/TS
+    /// family. For any other language family we run ONLY the neutral allowlist,
+    /// so a JS query is never compiled against a Rust/Go/Python/Java grammar
+    /// (no structural.rs debug_assert panic, no coincidental cross-grammar
+    /// match, no JS-regex fallback firing on foreign syntax). The core-four
+    /// languages still get full structural drift + review progress; they just
+    /// don't get JS-specific security rules. `hardcoded-secret` is genuinely
+    /// language-neutral (plain AWS/OpenAI/PEM regex over the node's after-text),
+    /// so it runs everywhere.
     pub fn check(&self, node: &AstNode, ctx: &RuleCtx) -> Option<(&'static str, Finding)> {
+        if ctx.lang.family() != crate::parse::Family::JsTs {
+            return self
+                .rules
+                .iter()
+                .filter(|r| NEUTRAL_RULES.contains(&r.id()))
+                .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)));
+        }
         self.rules
             .iter()
             .find_map(|r| r.check(node, ctx).map(|f| (r.id(), f)))
     }
 }
+
+/// Rules that are language-neutral enough to run for every family. Only the
+/// hardcoded-secret check qualifies today: it is pure text regex over the node's
+/// after-content with markers (AWS / OpenAI / PEM) that are identical in any
+/// language, and it carries no JS grammar or kind-string assumptions.
+const NEUTRAL_RULES: &[&str] = &["hardcoded-secret"];
 
 impl Default for RuleRegistry {
     fn default() -> Self {
@@ -1021,7 +1047,11 @@ fn permissive_regex(s: &str) -> Option<String> {
 }
 
 pub fn is_test_path(path: &str) -> bool {
-    let p = path.replace('\\', "/").to_lowercase();
+    let slashed = path.replace('\\', "/");
+    // Original-case filename for CamelCase test-class detection (`FooTest.cs`).
+    let orig_file = slashed.rsplit('/').next().unwrap_or(&slashed);
+    let p = slashed.to_lowercase();
+    let file = p.rsplit('/').next().unwrap_or(&p);
     p.contains(".test.")
         || p.contains(".spec.")
         || p.contains("__tests__")
@@ -1033,6 +1063,42 @@ pub fn is_test_path(path: &str) -> bool {
         || p.contains("/test/")
         || p.contains("/tests/")
         || p.contains("/fixtures/")
+        // Go: `foo_test.go`. Rust: `tests/` is handled by the `/test`/`tests`
+        // segment checks above. Python: `test_foo.py` and `foo_test.py`.
+        || file.ends_with("_test.go")
+        || (file.starts_with("test_") && file.ends_with(".py"))
+        || file.ends_with("_test.py")
+        // CamelCase test-class conventions: `FooTest`/`FooTests` (Java/C#/Kotlin)
+        // and `FooTests` (Swift XCTest). The CamelCase boundary (`...Test`, not
+        // `...test`) keeps `Latest.cs`, `Audit.java`, and `Manifest.kt` — which
+        // merely contain "test" as a lowercase substring — from misreading.
+        || has_test_class_suffix(orig_file, ".java")
+        || has_test_class_suffix(orig_file, ".cs")
+        || has_test_class_suffix(orig_file, ".kt")
+        || has_test_class_suffix(orig_file, ".swift")
+        // Python conftest convention.
+        || file == "conftest.py"
+}
+
+/// True when `file` is a CamelCase test class for the given extension —
+/// `<Base>Test<ext>` or `<Base>Tests<ext>` where the `T` in `Test`/`Tests` is a
+/// real CamelCase boundary. `file` must be the ORIGINAL (non-lowercased) name:
+/// `ServiceTest.cs` matches, `Latest.cs` (lowercase `t`) does not. The extension
+/// match itself is case-insensitive.
+fn has_test_class_suffix(file: &str, ext: &str) -> bool {
+    let lower = file.to_ascii_lowercase();
+    let Some(ext_len) = lower.strip_suffix(ext).map(|s| s.len()) else {
+        return false;
+    };
+    let stem = &file[..ext_len]; // original case, extension removed
+    for marker in ["Tests", "Test"] {
+        if let Some(base) = stem.strip_suffix(marker) {
+            if !base.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -2100,6 +2166,54 @@ mod tests {
     }
 
     #[test]
+    fn test_path_detection_includes_core_four_conventions() {
+        for path in [
+            "pkg/server_test.go",          // Go
+            "tests/integration_test.go",
+            "app/test_handler.py",         // Python `test_*`
+            "app/handler_test.py",         // Python `*_test`
+            "conftest.py",
+            "src/test/java/com/FooTest.java", // Java (segment + suffix)
+            "ServiceTests.java",
+        ] {
+            assert!(
+                is_test_path(path),
+                "`{path}` should be classified as test-like"
+            );
+        }
+        // Non-test sources of each language stay non-test.
+        assert!(!is_test_path("src/lib.rs"));
+        assert!(!is_test_path("cmd/server.go"));
+        assert!(!is_test_path("app/handler.py"));
+        assert!(!is_test_path("src/main/java/com/Service.java"));
+        // `Audit.java` ends in "it.java" only as a substring — must NOT match.
+        assert!(!is_test_path("src/Audit.java"));
+    }
+
+    #[test]
+    fn test_path_detection_includes_stretch_conventions() {
+        for path in [
+            "src/ServiceTest.cs",   // C# xUnit/NUnit
+            "tests/HandlerTests.cs",
+            "app/ProcessorTest.kt", // Kotlin
+            "app/ProcessorTests.kt",
+            "ServiceTests.swift",   // Swift XCTest
+        ] {
+            assert!(
+                is_test_path(path),
+                "`{path}` should be classified as test-like"
+            );
+        }
+        // Non-test sources of each stretch language stay non-test.
+        assert!(!is_test_path("src/Service.cs"));
+        assert!(!is_test_path("app/Processor.kt"));
+        assert!(!is_test_path("Sources/App/main.swift"));
+        // A file merely ending in a substring (not the suffix) must NOT match.
+        assert!(!is_test_path("src/Latest.cs"));
+        assert!(!is_test_path("src/Manifest.kt"));
+    }
+
+    #[test]
     fn registry_dispatches() {
         let reg = RuleRegistry::new();
         let f = reg.check(
@@ -2120,5 +2234,124 @@ mod tests {
                 &ctx(),
             )
             .is_some());
+    }
+
+    // ---- Cross-language rule safety (structural-drift languages) ----
+
+    fn lang_ctx(lang: Lang) -> RuleCtx {
+        RuleCtx {
+            deps: HashSet::new(),
+            is_test_file: false,
+            lang,
+        }
+    }
+
+    #[test]
+    fn non_js_families_only_run_the_neutral_allowlist() {
+        let reg = RuleRegistry::new();
+        // An `eval(...)` call is a JS-specific rule. In a non-JS family it must
+        // NOT flag — the eval rule is gated out, and no foreign-grammar query is
+        // ever compiled.
+        for lang in [
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
+        ] {
+            let f = reg.check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &lang_ctx(lang),
+            );
+            assert!(
+                f.is_none(),
+                "JS-specific eval rule must not fire for {:?}",
+                lang
+            );
+        }
+        // Sanity: the same node DOES flag for the JS/TS family.
+        assert!(reg
+            .check(
+                &node("ExpressionStatement", NodeState::Added, &[], &["eval(userInput);"]),
+                &ctx(),
+            )
+            .is_some());
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_cross_language() {
+        let reg = RuleRegistry::new();
+        // A fake AWS key pasted into a Python file flags through the registry —
+        // the secret marker is language-neutral and runs for every family.
+        let py = reg.check(
+            &node(
+                "VariableDeclaration",
+                NodeState::Added,
+                &[],
+                &["KEY = \"AKIA0123456789ABCDEF\""],
+            ),
+            &lang_ctx(Lang::Python),
+        );
+        assert_eq!(py.map(|(id, _)| id), Some("hardcoded-secret"));
+
+        // And in a Rust file (PEM marker).
+        let rs = reg.check(
+            &node(
+                "VariableDeclaration",
+                NodeState::Added,
+                &[],
+                &["const KEY: &str = \"-----BEGIN RSA PRIVATE KEY-----\";"],
+            ),
+            &lang_ctx(Lang::Rust),
+        );
+        assert_eq!(rs.map(|(id, _)| id), Some("hardcoded-secret"));
+
+        // And in each stretch language (OpenAI marker).
+        for lang in [Lang::CSharp, Lang::Kotlin, Lang::Swift] {
+            let f = reg.check(
+                &node(
+                    "VariableDeclaration",
+                    NodeState::Added,
+                    &[],
+                    &["let key = \"sk-abcdefghij0123456789\""],
+                ),
+                &lang_ctx(lang),
+            );
+            assert_eq!(
+                f.map(|(id, _)| id),
+                Some("hardcoded-secret"),
+                "secret must flag for {lang:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cross_language_nodes_never_panic_or_compile_foreign_queries() {
+        // Drive realistic snippets from each core-four language through the full
+        // registry. The gate means no JS tree-sitter query is ever compiled
+        // against these grammars — in a debug build a foreign-grammar query
+        // would trip structural.rs's debug_assert, so this passing in
+        // `cargo test` (a debug build) proves the gate holds.
+        let reg = RuleRegistry::new();
+        let snippets: &[(Lang, &str)] = &[
+            (Lang::Rust, "if condition { sanitize(x); verify(t); }"),
+            (Lang::Go, "if cond { eval(x); return verify(t) }"),
+            (Lang::Python, "if cond:\n    sanitize(x)\n    return decode(t)"),
+            (Lang::Java, "if (cond) { sanitize(x); return decode(t); }"),
+            (Lang::CSharp, "if (cond) { sanitize(x); return decode(t); }"),
+            (Lang::Kotlin, "if (cond) { sanitize(x); return decode(t) }"),
+            (Lang::Swift, "if cond { sanitize(x); return decode(t) }"),
+        ];
+        for (lang, src) in snippets {
+            // Modified state exercises the differential rules too (guard-removed,
+            // verify-to-decode, removed-sanitize) — all of which are gated off.
+            let f = reg.check(
+                &node("FunctionDeclaration", NodeState::Modified, &[src], &[src]),
+                &lang_ctx(*lang),
+            );
+            assert!(f.is_none(), "no rule should fire for {:?}: {src}", lang);
+        }
     }
 }

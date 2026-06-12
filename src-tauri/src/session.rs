@@ -1,7 +1,7 @@
 //! Session analysis orchestration. `analyze_file` is the incremental unit (one
 //! changed path → one `FileResult`); `analyze_all` is the full initial scan;
 //! `assemble` builds the `SessionData` the frontend renders from the cached results.
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::diff::{assign_ids, diff_nodes};
@@ -33,6 +33,12 @@ pub struct Meta {
     pub changed_files: u32,
     pub baseline_spec: String,
     pub baseline_label: String,
+    /// Repo-relative paths of changed files that are not source-AST candidates.
+    /// `assemble` removes paths that actually produced an analyzed result, such
+    /// as package.json dependency/script drift.
+    pub other_files: Vec<String>,
+    /// Content identity for each candidate in `other_files`, keyed by path.
+    pub other_file_markers: BTreeMap<String, String>,
 }
 
 /// The resolved "before" side of the drift. `sha: None` means plain HEAD (the
@@ -217,8 +223,7 @@ fn analyze_file_in(
     if before_oid.is_none() && after_size.is_none() {
         return None; // absent on both sides
     }
-    let before_size =
-        before_oid.and_then(|oid| repo.and_then(|r| git::blob_size_in(r, oid)));
+    let before_size = before_oid.and_then(|oid| repo.and_then(|r| git::blob_size_in(r, oid)));
 
     let largest = before_size.unwrap_or(0).max(after_size.unwrap_or(0)) as usize;
     if largest > MAX_PARSE_BYTES {
@@ -241,7 +246,8 @@ fn analyze_file_in(
         // `Display` (its canonical SHA), NOT `{:?}` — git2's `Debug` shape is
         // not a stability contract, and a future change to it would silently
         // alter every stored fingerprint and mass-revoke approvals.
-        let oid_id = |oid: Option<git2::Oid>| oid.map_or_else(|| "none".to_string(), |o| o.to_string());
+        let oid_id =
+            |oid: Option<git2::Oid>| oid.map_or_else(|| "none".to_string(), |o| o.to_string());
         let skip_marker = format!("{}|{}", oid_id(before_oid), oid_id(after_oid));
         let (dir, name) = split_path(rel);
         return Some(FileResult {
@@ -445,7 +451,9 @@ pub fn assemble(
     let risk_count = flags.iter().filter(|f| !f.dismissed).count() as u32;
     let file_count = files.iter().filter(|f| f.risks > 0).count() as u32;
     let skipped_files = files.iter().filter(|f| f.skipped).count() as u32;
-    let approved = state.approved_fingerprint.as_deref() == Some(fingerprint(results).as_str());
+    let other_files = visible_other_files(results, meta);
+    let approved =
+        state.approved_fingerprint.as_deref() == Some(fingerprint_for_meta(results, meta).as_str());
     let session = Session {
         project: meta.project.clone(),
         branch: meta.branch.clone(),
@@ -471,14 +479,15 @@ pub fn assemble(
         session,
         flags,
         files,
+        other_files,
     }
 }
 
 /// Canonical fingerprint of the current drift: every flag id plus a content hash
-/// per file, sorted. Approving a session stores this string; ANY change to the
-/// drift (new flag, edited node body, file added/reverted) changes it, which
-/// auto-revokes the approval.
-pub fn fingerprint(results: &HashMap<String, FileResult>) -> String {
+/// per analyzed file and visible other-file marker, sorted. Approving a session
+/// stores this string; ANY change to the drift (new flag, edited node body, file
+/// added/reverted) changes it, which auto-revokes the approval.
+pub fn fingerprint(results: &HashMap<String, FileResult>, other_file_markers: &[String]) -> String {
     let mut flag_ids: Vec<&str> = results
         .values()
         .flat_map(|r| r.flags.iter().map(|f| f.id.as_str()))
@@ -494,7 +503,36 @@ pub fn fingerprint(results: &HashMap<String, FileResult>) -> String {
         })
         .collect();
     file_parts.sort_unstable();
-    format!("{}|{}", flag_ids.join(";"), file_parts.join(";"))
+    let mut other_parts = other_file_markers.to_vec();
+    other_parts.sort_unstable();
+    format!(
+        "{}|{}|{}",
+        flag_ids.join(";"),
+        file_parts.join(";"),
+        other_parts.join(";")
+    )
+}
+
+pub fn fingerprint_for_meta(results: &HashMap<String, FileResult>, meta: &Meta) -> String {
+    let other_files = visible_other_files(results, meta);
+    let other_file_markers = visible_other_file_markers(&other_files, meta);
+    fingerprint(results, &other_file_markers)
+}
+
+fn visible_other_files(results: &HashMap<String, FileResult>, meta: &Meta) -> Vec<String> {
+    meta.other_files
+        .iter()
+        .filter(|p| !results.contains_key(p.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn visible_other_file_markers(other_files: &[String], meta: &Meta) -> Vec<String> {
+    other_files
+        .iter()
+        .filter_map(|p| meta.other_file_markers.get(p))
+        .cloned()
+        .collect()
 }
 
 /// Deterministic hash of a file's diffed node tree (structure + before/after text).
@@ -638,14 +676,51 @@ pub fn read_deps(root: &Path) -> HashSet<String> {
 }
 
 pub fn meta(root: &Path, baseline: &Baseline) -> Meta {
+    let all_changed = changed_paths(root, baseline);
+    let changed_files = all_changed.len() as u32;
+    let repo = git::open(root);
+    let mut other_files: Vec<String> = all_changed
+        .into_iter()
+        .filter(|p| !git::is_analyzable(p))
+        .collect();
+    other_files.sort_unstable();
+    let other_file_markers = other_files
+        .iter()
+        .map(|p| {
+            (
+                p.clone(),
+                other_file_marker(root, repo.as_ref(), baseline, p),
+            )
+        })
+        .collect();
     Meta {
         project: repo_name(root),
         branch: git::current_branch(root),
         repo_path: root.display().to_string(),
-        changed_files: changed_paths(root, baseline).len() as u32,
+        changed_files,
         baseline_spec: baseline.spec.clone(),
         baseline_label: baseline.label.clone(),
+        other_files,
+        other_file_markers,
     }
+}
+
+fn other_file_marker(
+    root: &Path,
+    repo: Option<&Repository>,
+    baseline: &Baseline,
+    rel: &str,
+) -> String {
+    let rev = baseline.sha.as_deref().unwrap_or("HEAD");
+    let before_oid = repo.and_then(|r| git::blob_oid_at_in(r, rev, rel));
+    let abs = root.join(rel);
+    let after_size = std::fs::metadata(&abs)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len());
+    let after_oid = worktree_blob_oid(&abs, after_size);
+    let oid_id = |oid: Option<git2::Oid>| oid.map_or_else(|| "none".to_string(), |o| o.to_string());
+    format!("{rel}={}|{}", oid_id(before_oid), oid_id(after_oid))
 }
 
 fn sev_rank(s: Severity) -> u8 {
@@ -769,11 +844,19 @@ mod tests {
         assert!(res.entry.skipped, "marked skipped");
         // The fingerprint marker is stable hex oids (Display), not git2's
         // unstable Debug shape — no "Some(...)" wrapper.
-        let marker = res.skip_marker.as_deref().expect("skipped file carries a marker");
-        assert!(!marker.contains("Some(") && !marker.contains("None"), "marker is bare oids: {marker}");
+        let marker = res
+            .skip_marker
+            .as_deref()
+            .expect("skipped file carries a marker");
+        assert!(
+            !marker.contains("Some(") && !marker.contains("None"),
+            "marker is bare oids: {marker}"
+        );
         assert!(marker.contains('|'), "marker joins before|after: {marker}");
         assert!(
-            res.entry.summary.starts_with("Skipped — file too large to analyze"),
+            res.entry
+                .summary
+                .starts_with("Skipped — file too large to analyze"),
             "summary explains the skip: {}",
             res.entry.summary
         );
@@ -809,7 +892,9 @@ mod tests {
         let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
             .expect("oversized baseline side surfaces as drift");
         assert!(
-            res.entry.summary.starts_with("Skipped — file too large to analyze"),
+            res.entry
+                .summary
+                .starts_with("Skipped — file too large to analyze"),
             "skipped, not parsed: {}",
             res.entry.summary
         );
@@ -819,7 +904,10 @@ mod tests {
         std::fs::remove_file(root.join("huge.ts")).expect("delete worktree side");
         let res = analyze_file(&root, "huge.ts", &HashSet::new(), &Baseline::default())
             .expect("deleted oversized file still surfaces");
-        assert!(res.entry.summary.starts_with("Skipped — file too large to analyze"));
+        assert!(res
+            .entry
+            .summary
+            .starts_with("Skipped — file too large to analyze"));
     }
 
     #[test]
@@ -835,14 +923,14 @@ mod tests {
             results.get("huge.ts").is_some_and(|r| r.entry.skipped),
             "precondition: the oversized file is in the drift as skipped"
         );
-        let approved_fp = fingerprint(&results);
+        let approved_fp = fingerprint(&results, &[]);
 
         // The user marks the drift reviewed, then the agent rewrites the
         // oversized file. The approval must not survive content it never saw.
         std::fs::write(root.join("huge.ts"), "const truncated = 2; // changed\n").unwrap();
         let results = analyze_all(&root, &Baseline::default());
         assert_ne!(
-            fingerprint(&results),
+            fingerprint(&results, &[]),
             approved_fp,
             "a skipped file's change must change the drift fingerprint"
         );
@@ -853,7 +941,10 @@ mod tests {
             ..Default::default()
         };
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
-        assert!(!data.session.approved, "approval is revoked by skipped-file drift");
+        assert!(
+            !data.session.approved,
+            "approval is revoked by skipped-file drift"
+        );
     }
 
     #[test]
@@ -866,7 +957,7 @@ mod tests {
         let path = root.join("huge.ts");
         std::fs::write(&path, "const truncated = 1;\n").unwrap();
         let pinned_mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
-        let approved_fp = fingerprint(&analyze_all(&root, &Baseline::default()));
+        let approved_fp = fingerprint(&analyze_all(&root, &Baseline::default()), &[]);
 
         // A timestamp-preserving rewrite: same byte length AND same mtime, only
         // the content differs (e.g. a restore tool, or a coarse-resolution
@@ -880,7 +971,7 @@ mod tests {
             .set_modified(pinned_mtime)
             .unwrap();
         assert_ne!(
-            fingerprint(&analyze_all(&root, &Baseline::default())),
+            fingerprint(&analyze_all(&root, &Baseline::default()), &[]),
             approved_fp,
             "a same-size, same-mtime content edit to a skipped file must change the fingerprint"
         );
@@ -908,7 +999,10 @@ mod tests {
         // A same-length, different-content rewrite changes the oid.
         std::fs::write(&path, b"const guarded_value = 2;\n").unwrap();
         let second = worktree_blob_oid(&path, size).expect("re-hashes");
-        assert_ne!(first, second, "same size, different content → different oid");
+        assert_ne!(
+            first, second,
+            "same size, different content → different oid"
+        );
 
         // A missing file has no identity.
         std::fs::remove_file(&path).unwrap();
@@ -938,8 +1032,8 @@ mod tests {
         );
         // Fingerprint must stay deterministic at this scale (sorted internals).
         assert_eq!(
-            fingerprint(&results),
-            fingerprint(&analyze_all(&root, &Baseline::default()))
+            fingerprint(&results, &[]),
+            fingerprint(&analyze_all(&root, &Baseline::default()), &[])
         );
         // Debug-build guardrail: a 100-file sweep is interactive work, not a batch
         // job. Generous bound so slow CI runners don't flake.
@@ -1185,6 +1279,8 @@ mod tests {
             changed_files: 3,
             baseline_spec: "head".into(),
             baseline_label: "HEAD".into(),
+            other_files: vec![],
+            other_file_markers: BTreeMap::new(),
         };
         let data = assemble(&HashMap::new(), &meta, &RepoState::default());
         assert_eq!(data.session.changed_files, 3);
@@ -1205,6 +1301,8 @@ mod tests {
             changed_files: 0,
             baseline_spec: "head".into(),
             baseline_label: "HEAD".into(),
+            other_files: vec![],
+            other_file_markers: BTreeMap::new(),
         };
 
         let data = assemble(&results, &meta, &RepoState::default());
@@ -1585,7 +1683,7 @@ function validateToken(token: string): boolean {
         let results = analyze_all(&root, &Baseline::default());
 
         let state = RepoState {
-            approved_fingerprint: Some(fingerprint(&results)),
+            approved_fingerprint: Some(fingerprint(&results, &[])),
             approved_at: Some("12:30".into()),
             ..Default::default()
         };
@@ -1605,8 +1703,8 @@ function validateToken(token: string): boolean {
             .expect("still drifted");
         changed.insert("utils/logger.ts".into(), updated);
         assert_ne!(
-            fingerprint(&changed),
-            fingerprint(&results),
+            fingerprint(&changed, &[]),
+            fingerprint(&results, &[]),
             "fingerprint tracks content"
         );
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
@@ -1621,7 +1719,7 @@ function validateToken(token: string): boolean {
         let results = analyze_all(&root, &Baseline::default());
 
         let state = RepoState {
-            approved_fingerprint: Some(fingerprint(&results)),
+            approved_fingerprint: Some(fingerprint(&results, &[])),
             approved_at: Some("12:30".into()),
             ..Default::default()
         };
@@ -1645,8 +1743,8 @@ export default router;
         changed.insert("routes/session.ts".into(), updated);
 
         assert_ne!(
-            fingerprint(&changed),
-            fingerprint(&results),
+            fingerprint(&changed, &[]),
+            fingerprint(&results, &[]),
             "signature-only drift changes the approval fingerprint"
         );
         let data = assemble(&changed, &meta(&root, &Baseline::default()), &state);
@@ -1655,5 +1753,370 @@ export default router;
             "approval revoked by signature-only drift"
         );
         assert!(data.session.approved_at.is_none());
+    }
+
+    // ---- Core-four languages flow through the session layer like TS ----
+
+    /// Names of every changed node (any non-Unchanged state) a drift produced,
+    /// recursing into body children — a body-only edit (the common case) shows
+    /// as changed children under an Unchanged parent card, exactly as JS does.
+    fn changed_node_names(res: &FileResult) -> Vec<String> {
+        fn walk(nodes: &[crate::model::AstNode], out: &mut Vec<String>) {
+            for n in nodes {
+                if n.state != crate::model::NodeState::Unchanged {
+                    out.push(n.name.clone());
+                }
+                if let Some(children) = &n.children {
+                    walk(children, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&res.entry.nodes, &mut out);
+        out
+    }
+
+    #[test]
+    fn rust_drift_flows_through_session() {
+        // A guard is neutralised and a validate call dropped. We don't expect any
+        // security flag (those are JS-only) — just sensible structural drift and
+        // the correct language label.
+        let before = "fn process(input: &str) -> bool {\n    if !valid(input) {\n        return false;\n    }\n    sanitize(input);\n    true\n}\n";
+        let after = "fn process(input: &str) -> bool {\n    true\n}\n";
+        let fixture = test_fixture::single_file_drift("src/lib.rs", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "src/lib.rs", &HashSet::new(), &Baseline::default())
+            .expect("rust file drifts");
+        assert_eq!(res.entry.lang, "Rust");
+        assert!(res.flags.is_empty(), "no JS-specific flags for Rust");
+        // The `process` body shrank — its body statements (the guard, the
+        // sanitize call) show as removed children. Drift must be non-empty.
+        let names = changed_node_names(&res);
+        assert!(
+            !names.is_empty(),
+            "the body edit must produce changed nodes: {names:?}"
+        );
+        // The function node itself is present in the skeleton.
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn go_drift_flows_through_session() {
+        let before =
+            "package main\n\nfunc Handle(req string) string {\n    return process(req)\n}\n";
+        let after = "package main\n\nfunc Handle(req string) string {\n    return req\n}\n\nfunc Extra() int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("main.go", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "main.go", &HashSet::new(), &Baseline::default())
+            .expect("go file drifts");
+        assert_eq!(res.entry.lang, "Go");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        // `Handle` body changed; `Extra` was added.
+        assert!(names.iter().any(|n| n == "Extra"), "Extra added: {names:?}");
+    }
+
+    #[test]
+    fn python_drift_flows_through_session() {
+        let before = "def process(data):\n    clean = sanitize(data)\n    return store(clean)\n";
+        let after = "def process(data):\n    return store(data)\n";
+        let fixture = test_fixture::single_file_drift("app.py", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "app.py", &HashSet::new(), &Baseline::default())
+            .expect("python file drifts");
+        assert_eq!(res.entry.lang, "Python");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(
+            !names.is_empty(),
+            "the body edit must produce changed nodes: {names:?}"
+        );
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn python_decorator_only_drift_is_visible() {
+        let before = "def view(request):\n    return \"ok\"\n";
+        let after = "@login_required\ndef view(request):\n    return \"ok\"\n";
+        let fixture = test_fixture::single_file_drift("app.py", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "app.py", &HashSet::new(), &Baseline::default())
+            .expect("decorator-only python drift");
+        let func = res
+            .entry
+            .nodes
+            .iter()
+            .find(|n| n.kind == "FunctionDeclaration" && n.name == "view")
+            .expect("view function node");
+        assert_eq!(func.state, NodeState::Modified);
+        assert!(
+            func.after
+                .as_ref()
+                .is_some_and(|lines| lines.iter().any(|line| line == "@login_required")),
+            "decorator should be included in modified after lines: {func:?}"
+        );
+    }
+
+    #[test]
+    fn java_drift_flows_through_session() {
+        let before = "class Service {\n    String handle(String in) {\n        return process(in);\n    }\n}\n";
+        let after = "class Service {\n    String handle(String in) {\n        return in;\n    }\n\n    void extra() {}\n}\n";
+        let fixture = test_fixture::single_file_drift("Service.java", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Service.java", &HashSet::new(), &Baseline::default())
+            .expect("java file drifts");
+        assert_eq!(res.entry.lang, "Java");
+        assert!(res.flags.is_empty());
+        // A member (`extra`) was added and `handle`'s body changed — both show
+        // as changed children under the Service class card.
+        let names = changed_node_names(&res);
+        assert!(
+            names.iter().any(|n| n == "extra"),
+            "added member surfaces: {names:?}"
+        );
+        assert!(res.entry.nodes.iter().any(|n| n.name == "Service"));
+    }
+
+    #[test]
+    fn java_overloads_match_by_signature() {
+        let before = "class Service {\n  String parse(String input) {\n    return input.trim();\n  }\n\n  String parse(byte[] input) {\n    return new String(input);\n  }\n}\n";
+        let after = "class Service {\n  String parse(byte[] input) {\n    return new String(input).trim();\n  }\n}\n";
+        let fixture = test_fixture::single_file_drift("Service.java", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Service.java", &HashSet::new(), &Baseline::default())
+            .expect("java overload drift");
+        let class = res
+            .entry
+            .nodes
+            .iter()
+            .find(|n| n.kind == "ClassDeclaration" && n.name == "Service")
+            .expect("class node");
+        let methods = class.children.as_ref().expect("class children");
+        assert!(
+            methods.iter().any(|n| {
+                n.state == NodeState::Removed && n.signature.as_deref() == Some("(String input)")
+            }),
+            "String overload should be removed, not matched to byte[]: {methods:?}"
+        );
+        let bytes = methods
+            .iter()
+            .find(|n| n.signature.as_deref() == Some("(byte[] input)"))
+            .expect("byte[] overload remains matched");
+        assert_ne!(
+            bytes.state,
+            NodeState::Added,
+            "byte[] overload must not be re-added"
+        );
+        let children = bytes.children.as_ref().expect("byte[] body diff");
+        assert!(
+            children.iter().any(|n| {
+                n.state == NodeState::Removed
+                    && n.before.as_ref().is_some_and(|lines| {
+                        lines.iter().any(|line| line.contains("new String(input);"))
+                    })
+            }),
+            "byte[] old return should be removed under the matched overload: {bytes:?}"
+        );
+        assert!(
+            children.iter().any(|n| {
+                n.state == NodeState::Added
+                    && n.after
+                        .as_ref()
+                        .is_some_and(|lines| lines.iter().any(|line| line.contains(".trim()")))
+            }),
+            "byte[] new return should be added under the matched overload: {bytes:?}"
+        );
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_in_a_python_file_through_session() {
+        // The one rule that runs cross-language: a fake AWS key added to a .py
+        // file must surface a flag through the full session pipeline.
+        let before = "def config():\n    return {}\n";
+        let after = "def config():\n    return {\"key\": \"AKIA0123456789ABCDEF\"}\n";
+        let fixture = test_fixture::single_file_drift("settings.py", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "settings.py", &HashSet::new(), &Baseline::default())
+            .expect("python file drifts");
+        assert_eq!(res.entry.lang, "Python");
+        assert_eq!(res.flags.len(), 1, "the AWS key flags");
+        assert_eq!(res.flags[0].r#type, "Hardcoded secret");
+    }
+
+    // ---- Stretch languages (C#, Kotlin, Swift) flow through the session ----
+
+    #[test]
+    fn csharp_drift_flows_through_session() {
+        // A guard is neutralised and a sanitize call dropped. No security flag
+        // (those stay JS-only) — just structural drift and the right label.
+        let before = "class Service {\n    bool Process(string input) {\n        if (!Valid(input)) {\n            return false;\n        }\n        Sanitize(input);\n        return true;\n    }\n}\n";
+        let after = "class Service {\n    bool Process(string input) {\n        return true;\n    }\n\n    void Extra() {}\n}\n";
+        let fixture = test_fixture::single_file_drift("Service.cs", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Service.cs", &HashSet::new(), &Baseline::default())
+            .expect("c# file drifts");
+        assert_eq!(res.entry.lang, "C#");
+        assert!(res.flags.is_empty(), "no JS-specific flags for C#");
+        // `Extra` was added as a class member; `Process` body shrank.
+        let names = changed_node_names(&res);
+        assert!(
+            names.iter().any(|n| n == "Extra"),
+            "added member: {names:?}"
+        );
+        assert!(res.entry.nodes.iter().any(|n| n.name == "Service"));
+    }
+
+    #[test]
+    fn kotlin_drift_flows_through_session() {
+        let before = "fun process(input: String): Boolean {\n    val clean = sanitize(input)\n    return store(clean)\n}\n";
+        let after = "fun process(input: String): Boolean {\n    return store(input)\n}\n\nfun extra(): Int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("App.kt", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "App.kt", &HashSet::new(), &Baseline::default())
+            .expect("kotlin file drifts");
+        assert_eq!(res.entry.lang, "Kotlin");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn swift_drift_flows_through_session() {
+        let before = "func process(data: String) -> String {\n    let clean = sanitize(data)\n    return store(clean)\n}\n";
+        let after = "func process(data: String) -> String {\n    return store(data)\n}\n\nfunc extra() -> Int {\n    return 1\n}\n";
+        let fixture = test_fixture::single_file_drift("App.swift", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "App.swift", &HashSet::new(), &Baseline::default())
+            .expect("swift file drifts");
+        assert_eq!(res.entry.lang, "Swift");
+        assert!(res.flags.is_empty());
+        let names = changed_node_names(&res);
+        assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
+        assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
+    }
+
+    #[test]
+    fn hardcoded_secret_flags_in_a_swift_file_through_session() {
+        // The one cross-language rule fires for the stretch languages too.
+        let before = "func config() -> String {\n    return \"\"\n}\n";
+        let after = "func config() -> String {\n    return \"AKIA0123456789ABCDEF\"\n}\n";
+        let fixture = test_fixture::single_file_drift("Config.swift", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let res = analyze_file(&root, "Config.swift", &HashSet::new(), &Baseline::default())
+            .expect("swift file drifts");
+        assert_eq!(res.entry.lang, "Swift");
+        assert_eq!(res.flags.len(), 1, "the AWS key flags");
+        assert_eq!(res.flags[0].r#type, "Hardcoded secret");
+    }
+
+    #[test]
+    fn other_files_lists_non_analyzable_changed_paths() {
+        // .md and .toml files are not parsed as AST or dependency drift —
+        // they must appear in `other_files` and NOT in `files`.
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).expect("git repo");
+
+        // Add two non-analyzable files to the worktree (new untracked files
+        // count as changed — present in worktree, absent in HEAD).
+        std::fs::write(root.join("README.md"), "# payments-api\n").unwrap();
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        std::fs::write(root.join("config/settings.toml"), "[server]\nport = 8080\n").unwrap();
+
+        let data = assemble(
+            &analyze_all(&root, &Baseline::default()),
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        // Both non-analyzable files appear in other_files, sorted.
+        assert!(
+            data.other_files.contains(&"README.md".to_string()),
+            "README.md in other_files: {:?}",
+            data.other_files
+        );
+        assert!(
+            data.other_files
+                .contains(&"config/settings.toml".to_string()),
+            "config/settings.toml in other_files: {:?}",
+            data.other_files
+        );
+        // They do NOT appear in the analyzed files list.
+        assert!(
+            !data.files.iter().any(|f| f.name == "README.md"),
+            "README.md must not be in analyzed files"
+        );
+        assert!(
+            !data.files.iter().any(|f| f.name == "settings.toml"),
+            "settings.toml must not be in analyzed files"
+        );
+        // The analyzed .ts files are NOT in other_files.
+        assert!(
+            !data.other_files.iter().any(|p| p.ends_with(".ts")),
+            "TypeScript files must not appear in other_files: {:?}",
+            data.other_files
+        );
+        // other_files is sorted alphabetically.
+        let mut sorted = data.other_files.clone();
+        sorted.sort();
+        assert_eq!(data.other_files, sorted, "other_files must be sorted");
+    }
+
+    #[test]
+    fn package_json_without_dependency_or_script_drift_is_other_file() {
+        let before =
+            "{\n  \"name\": \"demo\",\n  \"version\": \"0.1.0\",\n  \"dependencies\": { \"left-pad\": \"1.3.0\" }\n}\n";
+        let after =
+            "{\n  \"name\": \"demo-renamed\",\n  \"version\": \"0.1.1\",\n  \"dependencies\": { \"left-pad\": \"1.3.0\" }\n}\n";
+        let fixture = test_fixture::single_file_drift("package.json", before, after);
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let results = analyze_all(&root, &Baseline::default());
+        assert!(
+            !results.contains_key("package.json"),
+            "non-dependency package drift should not become a dependency-diff file"
+        );
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+        assert_eq!(data.other_files, vec!["package.json"]);
+        assert!(
+            !data.files.iter().any(|f| f.name == "package.json"),
+            "package.json should not be listed as analyzed without dependency/script drift"
+        );
+    }
+
+    #[test]
+    fn other_file_content_changes_revoke_approval() {
+        let fixture = test_fixture::single_file_drift("README.md", "old\n", "new\n");
+        let root = git::repo_root(&fixture.root).expect("git repo");
+        let results = analyze_all(&root, &Baseline::default());
+        let first_meta = meta(&root, &Baseline::default());
+        let approved_fp = fingerprint_for_meta(&results, &first_meta);
+        let state = RepoState {
+            approved_fingerprint: Some(approved_fp.clone()),
+            approved_at: Some("12:30".into()),
+            ..Default::default()
+        };
+        let data = assemble(&results, &first_meta, &state);
+        assert!(
+            data.session.approved,
+            "precondition: current README drift is approved"
+        );
+
+        std::fs::write(root.join("README.md"), "newer\n").unwrap();
+        let next_results = analyze_all(&root, &Baseline::default());
+        let next_meta = meta(&root, &Baseline::default());
+        assert_ne!(
+            fingerprint_for_meta(&next_results, &next_meta),
+            approved_fp,
+            "other-file content identity must shape approval"
+        );
+        let data = assemble(&next_results, &next_meta, &state);
+        assert!(
+            !data.session.approved,
+            "approval must revoke when only an unsupported file changes"
+        );
     }
 }

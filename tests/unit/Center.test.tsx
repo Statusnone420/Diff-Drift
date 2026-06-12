@@ -34,7 +34,7 @@ describe("Center empty states", () => {
     renderCenter(2, "the last commit (HEAD)");
     expect(screen.getByText("No analyzable drift detected")).toBeInTheDocument();
     expect(screen.getByTestId("center-clean-sub")).toHaveTextContent(
-      "2 changed files found, but none are TypeScript, TSX, JavaScript, JSX, or package.json files Diff Drift can inspect.",
+      "2 changed files found, but none are source files Diff Drift can inspect (TS, TSX, JS, JSX, Rust, Go, Python, Java, C#, Kotlin, Swift, or package.json).",
     );
   });
 

@@ -11,8 +11,15 @@ use crate::model::{AstNode, NodeState};
 use crate::parse::Parsed;
 
 pub fn diff_nodes(before: &[Parsed], after: &[Parsed]) -> Vec<AstNode> {
-    let bkeys: Vec<_> = before.iter().map(|p| p.key()).collect();
-    let akeys: Vec<_> = after.iter().map(|p| p.key()).collect();
+    let duplicate_bases = duplicate_base_keys(before, after);
+    let bkeys: Vec<_> = before
+        .iter()
+        .map(|p| p.key(duplicate_bases.contains(&(p.kind.clone(), p.name.clone()))))
+        .collect();
+    let akeys: Vec<_> = after
+        .iter()
+        .map(|p| p.key(duplicate_bases.contains(&(p.kind.clone(), p.name.clone()))))
+        .collect();
     let matches = lcs_matches(&bkeys, &akeys);
 
     let mut out = Vec::new();
@@ -46,6 +53,25 @@ pub fn diff_nodes(before: &[Parsed], after: &[Parsed]) -> Vec<AstNode> {
     out
 }
 
+fn duplicate_base_keys(
+    before: &[Parsed],
+    after: &[Parsed],
+) -> std::collections::HashSet<(String, String)> {
+    fn duplicates_in(nodes: &[Parsed]) -> std::collections::HashSet<(String, String)> {
+        let mut counts: HashMap<(String, String), usize> = HashMap::new();
+        for p in nodes {
+            *counts.entry((p.kind.clone(), p.name.clone())).or_insert(0) += 1;
+        }
+        counts
+            .into_iter()
+            .filter_map(|(key, count)| (count > 1).then_some(key))
+            .collect()
+    }
+    let mut out = duplicates_in(before);
+    out.extend(duplicates_in(after));
+    out
+}
+
 fn matched(b: &Parsed, a: &Parsed) -> AstNode {
     let has_children = !b.children.is_empty() || !a.children.is_empty();
     let lines_changed = normalize(&b.lines) != normalize(&a.lines);
@@ -55,20 +81,36 @@ fn matched(b: &Parsed, a: &Parsed) -> AstNode {
         // still renders as one focused modified card.
         let children = diff_nodes(&b.children, &a.children);
         let any_changed = children.iter().any(|c| c.state != NodeState::Unchanged);
-        let signature_changed = b.signature != a.signature && (b.signature.is_some() || a.signature.is_some());
+        let signature_changed =
+            b.signature != a.signature && (b.signature.is_some() || a.signature.is_some());
+        let container_changed = signature_changed || (lines_changed && !any_changed);
         node(
             a,
-            if signature_changed {
+            if container_changed {
                 NodeState::Modified
             } else {
                 NodeState::Unchanged
             },
-            if signature_changed { Some(b.lines.clone()) } else { None },
-            if signature_changed { Some(a.lines.clone()) } else { None },
+            if container_changed {
+                Some(b.lines.clone())
+            } else {
+                None
+            },
+            if container_changed {
+                Some(a.lines.clone())
+            } else {
+                None
+            },
             if any_changed { Some(children) } else { None },
         )
     } else if lines_changed {
-        node(a, NodeState::Modified, Some(b.lines.clone()), Some(a.lines.clone()), None)
+        node(
+            a,
+            NodeState::Modified,
+            Some(b.lines.clone()),
+            Some(a.lines.clone()),
+            None,
+        )
     } else {
         node(a, NodeState::Unchanged, None, None, None)
     }
@@ -142,11 +184,18 @@ fn slug(name: &str) -> String {
 
 /// Collapse all whitespace so two blocks that differ only in formatting compare equal.
 fn normalize(lines: &[String]) -> String {
-    lines.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
+    lines
+        .join("\n")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Longest common subsequence of the key sequences → matched (before_i, after_j) pairs.
-fn lcs_matches(a: &[(String, String)], b: &[(String, String)]) -> Vec<(usize, usize)> {
+fn lcs_matches(
+    a: &[(String, String, String)],
+    b: &[(String, String, String)],
+) -> Vec<(usize, usize)> {
     let (n, m) = (a.len(), b.len());
     let mut dp = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
@@ -215,8 +264,14 @@ mod tests {
             ]
         );
         let edited = &out[2];
-        assert_eq!(edited.before.as_deref(), Some(&["const edited = 3;".to_string()][..]));
-        assert_eq!(edited.after.as_deref(), Some(&["const edited = 99;".to_string()][..]));
+        assert_eq!(
+            edited.before.as_deref(),
+            Some(&["const edited = 3;".to_string()][..])
+        );
+        assert_eq!(
+            edited.after.as_deref(),
+            Some(&["const edited = 99;".to_string()][..])
+        );
         let gone = &out[1];
         assert!(gone.before.is_some() && gone.after.is_none());
         let fresh = &out[3];
@@ -225,7 +280,11 @@ mod tests {
 
     #[test]
     fn whitespace_only_difference_is_unchanged() {
-        let before = vec![p("VariableDeclaration", "x", &["const x = {", "  a: 1,", "};"])];
+        let before = vec![p(
+            "VariableDeclaration",
+            "x",
+            &["const x = {", "  a: 1,", "};"],
+        )];
         let after = vec![p("VariableDeclaration", "x", &["const x = {  a: 1, };"])];
         let out = diff_nodes(&before, &after);
         assert_eq!(out[0].state, NodeState::Unchanged);
@@ -272,21 +331,61 @@ mod tests {
         assert_eq!(out[0].state, NodeState::Modified);
         assert_eq!(
             out[0].before.as_deref(),
-            Some(&[
-                "function run() {".to_string(),
-                "  return 1;".to_string(),
-                "}".to_string()
-            ][..])
+            Some(
+                &[
+                    "function run() {".to_string(),
+                    "  return 1;".to_string(),
+                    "}".to_string()
+                ][..]
+            )
         );
         assert_eq!(
             out[0].after.as_deref(),
-            Some(&[
-                "function run(param: any) {".to_string(),
-                "  return 1;".to_string(),
-                "}".to_string()
-            ][..])
+            Some(
+                &[
+                    "function run(param: any) {".to_string(),
+                    "  return 1;".to_string(),
+                    "}".to_string()
+                ][..]
+            )
         );
-        assert!(out[0].children.is_none(), "unchanged body stays visually calm");
+        assert!(
+            out[0].children.is_none(),
+            "unchanged body stays visually calm"
+        );
+    }
+
+    #[test]
+    fn duplicate_names_match_by_signature_when_available() {
+        let mut string_before = p(
+            "FunctionDeclaration",
+            "parse",
+            &["String parse(String input) { return input.trim(); }"],
+        );
+        string_before.signature = Some("(String input)".into());
+        let mut bytes_before = p(
+            "FunctionDeclaration",
+            "parse",
+            &["String parse(byte[] input) { return new String(input); }"],
+        );
+        bytes_before.signature = Some("(byte[] input)".into());
+        let mut bytes_after = p(
+            "FunctionDeclaration",
+            "parse",
+            &["String parse(byte[] input) { return new String(input).trim(); }"],
+        );
+        bytes_after.signature = Some("(byte[] input)".into());
+
+        let out = diff_nodes(&[string_before, bytes_before], &[bytes_after]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].state, NodeState::Removed);
+        assert_eq!(out[0].signature.as_deref(), Some("(String input)"));
+        assert_eq!(out[1].state, NodeState::Modified);
+        assert_eq!(out[1].signature.as_deref(), Some("(byte[] input)"));
+        assert!(out[1]
+            .before
+            .as_ref()
+            .is_some_and(|lines| { lines[0].contains("new String(input);") }));
     }
 
     #[test]
@@ -300,7 +399,10 @@ mod tests {
             ],
         );
         assign_ids(&mut nodes, "file", "");
-        assert_eq!(nodes[0].id, "file::VariableDeclaration:unique", "unique name → no index");
+        assert_eq!(
+            nodes[0].id, "file::VariableDeclaration:unique",
+            "unique name → no index"
+        );
         assert_eq!(nodes[1].id, "file::ExpressionStatement:doIt__#0");
         assert_eq!(nodes[2].id, "file::ExpressionStatement:doIt__#1");
     }

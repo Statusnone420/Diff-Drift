@@ -1,6 +1,6 @@
 # Rule Reference
 
-Diff Drift rules run over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. They favor useful review prompts over complete static analysis.
+Diff Drift rules favor useful review prompts over complete static analysis. Most security heuristics run over changed TS/TSX/JS/JSX AST nodes and package.json dependency drift. Newer structural languages (Rust, Go, Python, Java, C#, Kotlin, Swift) get AST drift and review progress; only language-neutral hardcoded secret detection runs across those language families today.
 
 Most code rules match **structurally**: the changed node's before/after source is re-parsed with the file's tree-sitter grammar and matched against a compiled query, so a pattern inside a string literal or comment never triggers a flag and reformatting cannot evade one. A `match type` column below records how each rule matches. Rules marked **differential** compare the node's before and after versions — a question only a diff-aware tool can ask — and a few intentionally stay text-based where that is the correct tool (secret markers, env-var assignments). When a structural parse fails, a rule falls back to its text pattern rather than going silent.
 

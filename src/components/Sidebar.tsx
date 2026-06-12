@@ -5,6 +5,7 @@ import { Ico } from "../lib/icons";
 interface SidebarProps {
   session: Session;
   files: FileEntry[];
+  otherFiles: string[];
   selectedId: string | null;
   onSelect: (fileId: string) => void;
   watchingSince: string | null;
@@ -14,13 +15,12 @@ interface SidebarProps {
 export function Sidebar({
   session,
   files,
+  otherFiles,
   selectedId,
   onSelect,
   watchingSince,
   justUpdated,
 }: SidebarProps) {
-  const otherChangedFiles = Math.max(session.changedFiles - files.length, 0);
-
   return (
     <div className="col sidebar">
       <div className="col-scroll">
@@ -59,17 +59,11 @@ export function Sidebar({
 
         <div
           className="sb-section-label"
-          title="TypeScript, TSX, JavaScript, and JSX files are parsed as AST drift; package.json gets a dependency and script diff"
+          title="TypeScript, TSX, JavaScript, JSX, Rust, Go, Python, Java, C#, Kotlin, and Swift files are parsed as AST drift; package.json gets a dependency and script diff"
         >
           <span>Analyzed files</span>
           <span className="count">{files.length}</span>
         </div>
-        {otherChangedFiles > 0 && (
-          <div className="sb-scope-note">
-            {otherChangedFiles} other changed file{otherChangedFiles === 1 ? "" : "s"} not shown
-            here: unsupported type or no analyzable package/script drift.
-          </div>
-        )}
         <div className="file-list">
           {files.map((f) => (
             <button
@@ -96,6 +90,33 @@ export function Sidebar({
             </button>
           ))}
         </div>
+        {otherFiles.length > 0 && (
+          <>
+            <div
+              className="sb-section-label"
+              title="These paths changed but were not analyzed — unsupported file type or no analyzable package/script drift"
+            >
+              <span>Other changed files</span>
+              <span className="count">{otherFiles.length}</span>
+            </div>
+            <div className="other-file-list" data-testid="other-file-list">
+              {otherFiles.map((p) => {
+                const slash = p.lastIndexOf("/");
+                const name = slash >= 0 ? p.slice(slash + 1) : p;
+                const dir = slash >= 0 ? p.slice(0, slash + 1) : "";
+                return (
+                  <div key={p} className="other-file-row" title={p}>
+                    <span className="file-ic">{Ico.file}</span>
+                    <span className="file-main">
+                      <span className="file-name">{name}</span>
+                      {dir && <span className="file-dir">{dir}</span>}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
       <div className={"sb-foot" + (justUpdated ? " updated" : "")}>
         <span className="gd" />

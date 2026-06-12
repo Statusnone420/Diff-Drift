@@ -16,10 +16,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
     out.push_str(&format!("- **Repository:** `{}`\n", s.repo_path));
     out.push_str(&format!("- **Generated:** {generated_at}\n"));
     let skipped_note = if s.skipped_files > 0 {
-        format!(
-            " · {} skipped (too large to analyze)",
-            s.skipped_files
-        )
+        format!(" · {} skipped (too large to analyze)", s.skipped_files)
     } else {
         String::new()
     };
@@ -70,7 +67,7 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
 
     out.push_str("## Analyzed files\n\n");
     out.push_str(
-        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).\n\n",
+        "Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX/Rust/Go/Python/Java/C#/Kotlin/Swift as AST nodes, package.json as a dependency diff).\n\n",
     );
     if data.files.is_empty() {
         out.push_str("No analyzable drift.\n");
@@ -86,6 +83,16 @@ pub fn render_markdown(data: &SessionData, generated_at: &str) -> String {
             ));
         }
     }
+
+    if !data.other_files.is_empty() {
+        out.push('\n');
+        out.push_str("## Other changed files\n\n");
+        out.push_str("These paths changed but were not analyzed — unsupported file type or no analyzable package/script drift.\n\n");
+        for path in &data.other_files {
+            out.push_str(&format!("- `{path}`\n"));
+        }
+    }
+
     out
 }
 
@@ -169,7 +176,7 @@ mod tests {
         let results = analyze_all(&root, &Baseline::default());
         let mut state = state.clone();
         if state.approved_fingerprint.as_deref() == Some("CURRENT") {
-            state.approved_fingerprint = Some(fingerprint(&results));
+            state.approved_fingerprint = Some(fingerprint(&results, &[]));
         }
         assemble(&results, &meta(&root, &Baseline::default()), &state)
     }
@@ -198,7 +205,7 @@ mod tests {
         );
         assert!(md.contains("## Analyzed files"));
         assert!(
-            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX as AST nodes, package.json as a dependency diff).")
+            md.contains("Total drift includes every git-changed file; this section lists only the files Diff Drift analyzed (TS/TSX/JS/JSX/Rust/Go/Python/Java/C#/Kotlin/Swift as AST nodes, package.json as a dependency diff).")
         );
         assert!(md.contains("`routes/session.ts` — Formatting only"));
         assert!(
@@ -251,7 +258,7 @@ mod tests {
         let hash = flag_node_hash(&results, &base.flags[0]).expect("flagged node exists");
         state.dismissed.insert(base.flags[0].id.clone(), hash);
         state.approved_at = Some("12:30".into());
-        state.approved_fingerprint = Some(fingerprint(&results));
+        state.approved_fingerprint = Some(fingerprint(&results, &[]));
         let data = assemble(&results, &meta(&root, &Baseline::default()), &state);
         let md = render_markdown(&data, "now");
         assert!(md.contains("- **Review:** reviewed at 12:30"));
@@ -261,10 +268,48 @@ mod tests {
     }
 
     #[test]
+    fn markdown_report_lists_other_changed_files() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        std::fs::write(root.join("README.md"), "# payments-api\n").unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+
+        let md = render_markdown(&data, "2026-06-10 09:00");
+        assert!(
+            md.contains("## Other changed files"),
+            "section present: {md}"
+        );
+        assert!(
+            md.contains("These paths changed but were not analyzed"),
+            "intro line: {md}"
+        );
+        assert!(md.contains("`README.md`"), "README.md listed: {md}");
+        assert!(md.contains("`Cargo.toml`"), "Cargo.toml listed: {md}");
+
+        // No other files → no section.
+        let clean = render_markdown(&fixture_data(&RepoState::default()), "2026-06-10 09:00");
+        assert!(
+            !clean.contains("## Other changed files"),
+            "absent when nothing outside the analyzed set"
+        );
+    }
+
+    #[test]
     fn json_report_is_valid_and_complete() {
         let json = render_json(&fixture_data(&RepoState::default()));
         let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(v["schemaVersion"], crate::model::SCHEMA_VERSION);
+        assert!(
+            v["otherFiles"].is_array(),
+            "otherFiles present in JSON export"
+        );
         assert_eq!(v["session"]["riskCount"], 6);
         assert_eq!(v["flags"].as_array().unwrap().len(), 6);
         assert_eq!(v["session"]["approved"], false);

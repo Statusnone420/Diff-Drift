@@ -326,6 +326,7 @@ export default function App() {
         <Sidebar
           session={session}
           files={files}
+          otherFiles={data.otherFiles}
           selectedId={file?.id ?? null}
           onSelect={selectFile}
           watchingSince={watchingSince}

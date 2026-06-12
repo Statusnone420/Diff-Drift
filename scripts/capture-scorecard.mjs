@@ -11,7 +11,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
-const htmlArg = process.argv[2] ?? "eval/benchmarks/v4/scorecard.html";
+const htmlArg = process.argv[2] ?? "eval/benchmarks/v4/panel/panel-scorecard.html";
 const outArg = process.argv[3] ?? "docs/assets/diff-drift-blind-agent-scorecard.png";
 
 const htmlPath = resolve(process.cwd(), htmlArg);
@@ -25,11 +25,15 @@ try {
   });
   await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "networkidle" });
 
+  // Make the page background transparent so the <main> border-radius produces
+  // transparent corners rather than white-filled ones in the PNG.
+  await page.addStyleTag({ content: "html, body { background: transparent !important; }" });
+
   // Frame the centered dashboard container rather than the full viewport so the
   // PNG has no dead margin regardless of how tall the case table grows.
   const main = page.locator("main");
   await main.waitFor({ state: "visible" });
-  await main.screenshot({ path: outPath });
+  await main.screenshot({ path: outPath, omitBackground: true });
 
   console.log(`SCORECARD ${htmlArg} -> ${outArg}`);
 } finally {

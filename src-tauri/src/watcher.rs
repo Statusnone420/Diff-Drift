@@ -209,7 +209,7 @@ pub fn set_approved(
         g.results = results;
     }
     let meta = clear_clean_results(&mut g);
-    state.approved_fingerprint = Some(session::fingerprint(&g.results));
+    state.approved_fingerprint = Some(session::fingerprint_for_meta(&g.results, &meta));
     state.approved_at = approved_at;
     // Reviewing the whole drift reviews every node in it — and rebuilding the
     // map from the current drift prunes entries for nodes that no longer exist.
@@ -320,15 +320,13 @@ fn process_change(
             .rels
             .into_iter()
             .map(|rel| {
-                let git_invisible = repo
-                    .as_ref()
-                    .is_some_and(|repo| {
-                        let in_selected_baseline = baseline
-                            .sha
-                            .as_deref()
-                            .is_some_and(|sha| git::blob_oid_at_in(repo, sha, &rel).is_some());
-                        !in_selected_baseline && git::is_ignored_untracked(repo, &rel)
-                    });
+                let git_invisible = repo.as_ref().is_some_and(|repo| {
+                    let in_selected_baseline = baseline
+                        .sha
+                        .as_deref()
+                        .is_some_and(|sha| git::blob_oid_at_in(repo, sha, &rel).is_some());
+                    !in_selected_baseline && git::is_ignored_untracked(repo, &rel)
+                });
                 let res = if git_invisible {
                     None
                 } else {
@@ -435,6 +433,8 @@ fn classify_paths_with_git_dirs(
             continue;
         } else if analyzable {
             change.rels.push(rel);
+        } else {
+            change.full_scan = true;
         }
     }
     change.rels.sort();
@@ -469,9 +469,8 @@ fn is_generated_path(p: &Path) -> bool {
 }
 
 fn has_component(p: &Path, names: &[&str]) -> bool {
-    p.components().any(|c| {
-        matches!(c, Component::Normal(s) if names.contains(&s.to_string_lossy().as_ref()))
-    })
+    p.components()
+        .any(|c| matches!(c, Component::Normal(s) if names.contains(&s.to_string_lossy().as_ref())))
 }
 
 fn is_temp_file(p: &Path) -> bool {
@@ -562,13 +561,14 @@ mod tests {
             assert!(change.full_scan, "{name} should force a full scan");
             assert!(change.rels.is_empty());
         }
-        // Only the ROOT lockfile feeds the dependency diff — nested ones don't.
+        // Nested lockfiles do not feed dependency diff, but they are still
+        // user-visible unsupported drift, so they refresh `other_files`.
         let change = classify_paths(
             &root(),
             Some(&git_dir()),
             vec![root().join("packages").join("app").join("yarn.lock")],
         );
-        assert!(!change.full_scan);
+        assert!(change.full_scan);
         assert!(change.rels.is_empty());
     }
 
@@ -612,6 +612,15 @@ mod tests {
         );
         assert!(!change.full_scan);
         assert_eq!(change.rels, vec!["dist/bundle.js"]);
+    }
+
+    #[test]
+    fn non_analyzable_paths_force_full_scan_for_other_files() {
+        for rel in ["README.md", "config/settings.toml"] {
+            let change = classify_paths(&root(), Some(&git_dir()), vec![root().join(rel)]);
+            assert!(change.full_scan, "{rel} should refresh other_files");
+            assert!(change.rels.is_empty());
+        }
     }
 
     fn shared_for(root: &Path) -> (Shared, PathBuf) {
@@ -742,6 +751,39 @@ mod tests {
             .flags
             .iter()
             .any(|f| { f.file_path == "package.json" && f.r#type == "New dependency" }));
+
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn real_debouncer_refreshes_other_files_for_unsupported_paths() {
+        let fixture = crate::test_fixture::payments_api();
+        let root = crate::git::repo_root(&fixture.root).unwrap();
+        let (shared, state_file) = shared_for(&root);
+        let git_dirs = git_metadata_dirs(&root);
+        let (tx, rx) = mpsc::channel();
+        let mut debouncer = spawn_debouncer(
+            shared.clone(),
+            root.clone(),
+            git_dirs,
+            Duration::from_millis(150),
+            move |data| {
+                let _ = tx.send(data);
+            },
+        )
+        .expect("debouncer starts");
+        debouncer
+            .watch(&root, RecursiveMode::Recursive)
+            .expect("watch root");
+        std::thread::sleep(Duration::from_millis(50));
+
+        std::fs::write(root.join("README.md"), "# payments-api\n").unwrap();
+
+        let data = recv_matching(&rx, "README other-file update", |data| {
+            data.other_files.iter().any(|p| p == "README.md")
+        });
+        assert!(data.other_files.iter().any(|p| p == "README.md"));
 
         drop(debouncer);
         let _ = std::fs::remove_dir_all(state_file.parent().unwrap());
@@ -968,7 +1010,9 @@ mod tests {
         let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
             .expect("untracked non-ignored source should update incrementally");
         assert!(
-            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            data.files
+                .iter()
+                .any(|f| format!("{}{}", f.dir, f.name) == rel),
             "new source files are core drift and must still appear"
         );
         assert!(
@@ -1018,7 +1062,9 @@ mod tests {
         let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
             .expect("tracked ignored source should update incrementally");
         assert!(
-            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            data.files
+                .iter()
+                .any(|f| format!("{}{}", f.dir, f.name) == rel),
             "incremental saves must keep tracked ignored files visible"
         );
         {
@@ -1069,7 +1115,9 @@ mod tests {
         let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
             .expect("baseline-only ignored deletion should update incrementally");
         assert!(
-            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            data.files
+                .iter()
+                .any(|f| format!("{}{}", f.dir, f.name) == rel),
             "incremental updates must keep baseline-only ignored deletions visible"
         );
         {
@@ -1110,7 +1158,9 @@ mod tests {
         let data = process_change(&shared, &root, &git_metadata_dirs(&root), vec![path])
             .expect("new source should update incrementally");
         assert!(
-            data.files.iter().any(|f| format!("{}{}", f.dir, f.name) == rel),
+            data.files
+                .iter()
+                .any(|f| format!("{}{}", f.dir, f.name) == rel),
             "the new edit should still render"
         );
         assert!(

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4ec46a?style=for-the-badge"></a>
-  <img alt="Version 0.3.2" src="https://img.shields.io/badge/version-0.3.2-e7a83e?style=for-the-badge">
+  <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-e7a83e?style=for-the-badge">
   <img alt="Windows 11" src="https://img.shields.io/badge/platform-Windows%2011-6f8bc4?style=for-the-badge">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24c8db?style=for-the-badge">
   <img alt="Rust core" src="https://img.shields.io/badge/Rust-core-f2604c?style=for-the-badge">
@@ -51,7 +51,7 @@ The exit code is the highest active severity (`0` none, `1` low, `2` medium, `3`
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: Statusnone420/Diff-Drift@v0.3.2
+- uses: Statusnone420/Diff-Drift@v0.4.0
   with: { baseline: merge-base, fail-on: medium }
 ```
 
@@ -80,9 +80,9 @@ Answer it in [**I tried Diff Drift**](https://github.com/Statusnone420/Diff-Drif
 
 ## Evaluation
 
-A deterministic engine benchmark gates CI: 20 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
+A deterministic engine benchmark gates CI: 27 fixture cases through the real binary with exact expected flags and exit codes (`npm run eval:engine`).
 
-The blind-agent panel below is advisory: each model plays a blind reviewer over the same benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. Across the current panel it lands **91–99 / 100** — Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91 — three blind models, independent external validation pending. No case is missed by every model, so the gaps are reviewer variance, not detection failures. The models are rulers; Diff Drift is what's measured — read the spread, not a pooled average. The rubric, the panel, and version history are in [Eval Methodology](docs/wiki/Eval-Methodology.md).
+The blind-agent panel is advisory, model-only, and based on a small synthetic suite — treat any headline number accordingly. Each model plays a blind reviewer over benchmark v4 packets and scores how reliably it reaches the right trust decision from Diff Drift's output. The current panel lands **91–99 / 100** across three models (Claude Opus 4.8 and Sonnet 4.6 at 99, Haiku 4.5 at 91); independent external validation pending. Details, version history, and the rubric are in [BENCHMARKING.md](BENCHMARKING.md) and [Eval Methodology](docs/wiki/Eval-Methodology.md).
 
 <p align="center">
   <img src="docs/assets/diff-drift-blind-agent-scorecard.png" alt="Diff Drift blind-agent multi-model panel: Claude Opus 4.8 and Sonnet 4.6 score 99/100, Haiku 4.5 91/100 over 20 cases (benchmark v4); model-only evaluators, independent external validation pending" width="920">
@@ -93,13 +93,13 @@ To predict your own triage burden, run `npm run eval:fp-replay` on your repos; t
 ## Status
 
 - Supported platform: Windows 11. macOS: experimental and unsigned.
-- Current version: `0.3.2` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+- Current version: `0.4.0` ([changelog](CHANGELOG.md)). License: [MIT](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Docs
 
 - [User Guide](docs/wiki/User-Guide.md) · [Concepts](docs/wiki/Concepts.md) · [Rule Reference](docs/wiki/Rule-Reference.md) · [FAQ](docs/wiki/FAQ.md)
 - [Threat Model](docs/wiki/Threat-Model.md) · [Privacy and Data Flow](docs/wiki/Privacy-and-Data-Flow.md)
-- [Eval Methodology](docs/wiki/Eval-Methodology.md) · [A/B Study Design](docs/wiki/AB-Study-Design.md)
+- [Benchmarking](BENCHMARKING.md) · [Eval Methodology](docs/wiki/Eval-Methodology.md) · [A/B Study Design](docs/wiki/AB-Study-Design.md)
 - [Architecture](docs/wiki/Architecture.md) · [Development](docs/wiki/Development.md) · [Release and Platform Support](docs/wiki/Release-and-Platform-Support.md) · [Troubleshooting](docs/wiki/Troubleshooting.md)
 - [Demo script](docs/demo/demo-script.md) · [Feedback triage](docs/feedback/feedback-triage.md)
 

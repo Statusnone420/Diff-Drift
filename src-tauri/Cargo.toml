@@ -1,6 +1,6 @@
 [package]
 name = "diff-drift"
-version = "0.3.2"
+version = "0.4.0"
 description = "Diff Drift — AST-level security inspector for the code drift AI coding agents leave behind"
 edition = "2021"
 # Two bins below; keep `cargo run -- check` meaning the app/GUI binary.
@@ -46,6 +46,18 @@ serde_json = "1"
 tree-sitter = "0.26.9"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-javascript = "0.25.0"
+# Core-four grammars for structural drift. Versions pinned so each grammar's
+# language ABI loads under tree-sitter 0.26.x (all route through
+# tree-sitter-language; `cargo tree` shows a single tree-sitter core, no dup).
+tree-sitter-rust = "0.24.2"
+tree-sitter-go = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-java = "0.23.5"
+# Stretch grammars (C#, Kotlin, Swift) — same single-core constraint: each routes
+# through tree-sitter-language so `cargo tree` shows one tree-sitter core.
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-swift = "0.7.3"
 git2 = "0.21.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
