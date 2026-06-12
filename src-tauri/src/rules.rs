@@ -475,11 +475,18 @@ impl Rule for ChildProcess {
         //
         // CALL markers (`subprocess.run(`, `Process.Start`, `exec.Command(`,
         // `Command::new(`) are CODE, so they run against the fully code-only text
-        // — a call named in a string OR comment is ignored. IMPORT markers can be
-        // string-valued module specifiers (Go's `import "os/exec"`), so they run
-        // against the comments-only text (strings kept) — which still drops an
-        // import token named in a `// …` comment. Parse failure on either side
-        // => silent.
+        // — a call named in a string OR comment is ignored.
+        //
+        // IMPORT markers split by whether the family's import path is a string.
+        // Go's is (`import "os/exec"`), so Go's marker runs against the
+        // comments-only text (strings kept) to see the quoted specifier — which
+        // still drops an import token named in a `// …` comment. The
+        // keyword-import families (Rust `use std::process::Command`, Python
+        // `import subprocess`, Kotlin `import …`) have code-valued imports, so
+        // their marker runs against the fully code-only text, giving it the same
+        // string immunity the CALL markers have. The per-family
+        // `subprocess_import_in_strings` flag selects the tier below. Parse
+        // failure on either side => silent.
         let pack = lang::pack(ctx.lang.family());
         let after_code = code_only(&node.after, ctx.lang)?;
         let before_code = code_only(&node.before, ctx.lang)?;
@@ -492,7 +499,18 @@ impl Rule for ChildProcess {
             };
             re.is_match(after) && !re.is_match(before)
         };
-        if newly(pack.subprocess_import, &after_nc, &before_nc)
+        // The import marker reads string-kept text ONLY for families whose
+        // import paths are string-valued (Go's `import "os/exec"`). For
+        // keyword-based imports (Rust/Python/Kotlin) the marker is code, so it
+        // reads the fully code-masked text — the same token inside a string
+        // literal (a doc example, a detector's own marker definition, a test
+        // fixture string) is masked out and never fires.
+        let (import_after, import_before) = if pack.subprocess_import_in_strings {
+            (&after_nc, &before_nc)
+        } else {
+            (&after_code, &before_code)
+        };
+        if newly(pack.subprocess_import, import_after, import_before)
             || newly(pack.subprocess_call, &after_code, &before_code)
         {
             return finding(
@@ -681,14 +699,28 @@ impl Rule for BroadenedCors {
             return None;
         }
         // Non-JsTs: marker-driven (per-framework permissive-origin markers).
-        // Empty field => silent. The permissive-origin value is often a string
-        // literal (`"*"`), so blank COMMENTS only — strings must survive for the
-        // marker to match — which still drops a marker named in a `// …` comment.
-        // Parse failure => silent.
-        let marker = lang::pack(ctx.lang.family()).cors_permissive?;
+        // Empty field => silent. The permissive-origin value is usually a quoted
+        // wildcard (`"*"`), so by default blank COMMENTS only — strings must
+        // survive for the marker to match — which still drops a marker named in a
+        // `// …` comment. A family whose marker is pure code (Rust's `Any` type /
+        // `permissive()` constructors, never a string) opts out via
+        // `cors_permissive_in_strings: false` and reads fully code-masked text,
+        // so the same call named inside a string literal never fires. Parse
+        // failure => silent.
+        let pack = lang::pack(ctx.lang.family());
+        let marker = pack.cors_permissive?;
         let re = compiled_marker(marker)?;
-        let after = code_minus_comments(&node.after, ctx.lang)?;
-        let before = code_minus_comments(&node.before, ctx.lang)?;
+        let (after, before) = if pack.cors_permissive_in_strings {
+            (
+                code_minus_comments(&node.after, ctx.lang)?,
+                code_minus_comments(&node.before, ctx.lang)?,
+            )
+        } else {
+            (
+                code_only(&node.after, ctx.lang)?,
+                code_only(&node.before, ctx.lang)?,
+            )
+        };
         // Every non-JsTs permissive-origin marker is ambiguous enough that a
         // custom struct/builder can expose the same field or method name: Go's
         // `AllowAllOrigins` on a `ProxyConfig`, C#'s `AllowAnyOrigin()` on a
@@ -843,12 +875,25 @@ impl Rule for SameSiteWeakened {
         else {
             return None;
         };
-        // The SameSite value is a string literal (`"None"`/`"Strict"`/`"Lax"`),
-        // so blank COMMENTS only — strings must survive for the markers to match.
-        // Require cookie context so a `sameSite`-shaped attribute on an unrelated
+        // For most families the SameSite value is a string literal
+        // (`"None"`/`"Strict"`/`"Lax"`), so blank COMMENTS only — strings must
+        // survive for the markers to match. A family whose markers are pure code
+        // (Rust's `SameSite::None` enum path, never a string) opts out via
+        // `cookie_samesite_in_strings: false` and reads fully code-masked text,
+        // so the same call written inside a string literal never fires. Require
+        // cookie context so a `sameSite`-shaped attribute on an unrelated
         // builder doesn't read as a cookie downgrade. Parse failure => silent.
-        let before = code_minus_comments(&node.before, ctx.lang)?;
-        let after = code_minus_comments(&node.after, ctx.lang)?;
+        let (before, after) = if pack.cookie_samesite_in_strings {
+            (
+                code_minus_comments(&node.before, ctx.lang)?,
+                code_minus_comments(&node.after, ctx.lang)?,
+            )
+        } else {
+            (
+                code_only(&node.before, ctx.lang)?,
+                code_only(&node.after, ctx.lang)?,
+            )
+        };
         if has_cookie_context(&before) && strong.is_match(&before) && weak.is_match(&after) {
             return finding(
                 Severity::High,
@@ -1810,6 +1855,10 @@ pub fn is_test_path(path: &str) -> bool {
     let file = p.rsplit('/').next().unwrap_or(&p);
     p.contains(".test.")
         || p.contains(".spec.")
+        // `*.case.<ext>` fixture convention (e.g. the eval harness's
+        // `foo.case.mjs`): a dotted `.case.` segment in the FILENAME, not the
+        // path. A bare path segment like `cases/` stays excluded — too broad.
+        || file.contains(".case.")
         || p.contains("__tests__")
         || p.contains("__mocks__")
         || p.contains(".stories.")
@@ -3041,6 +3090,31 @@ mod tests {
         // A file merely ending in a substring (not the suffix) must NOT match.
         assert!(!is_test_path("src/Latest.cs"));
         assert!(!is_test_path("src/Manifest.kt"));
+    }
+
+    #[test]
+    fn test_path_detection_includes_case_fixture_convention() {
+        // `*.case.<ext>` is a fixture/test-case naming convention (the eval
+        // harness uses `foo.case.mjs`). The planted-snippet text inside such a
+        // fixture is test material, not repo drift.
+        for path in [
+            "eval/cases/java-child-process.case.mjs",
+            "fixtures/foo.case.js",
+            "x/y/scenario.case.ts",
+            "deep/a.case.mjs",
+        ] {
+            assert!(
+                is_test_path(path),
+                "`{path}` (.case. filename) should be classified as test-like"
+            );
+        }
+        // The convention is the dotted `.case.` segment in the FILENAME — a bare
+        // `cases/` path segment alone is too broad and must NOT match.
+        assert!(!is_test_path("src/cases/handler.ts"));
+        assert!(!is_test_path("app/usecases/login.ts"));
+        // A file merely containing "case" as a substring must NOT match.
+        assert!(!is_test_path("src/lowercase.ts"));
+        assert!(!is_test_path("src/casemap.rs"));
     }
 
     #[test]

@@ -39,9 +39,12 @@
   align-items: center;
   justify-content: space-between;
   user-select: none;
-  background: linear-gradient(180deg, var(--mica-1), var(--mica-2));
+  /* The window body is fully opaque (--bg) and nothing scrolls behind the title
+     bar, so backdrop-filter only composited a static background every frame.
+     These colors are the mica tokens pre-flattened over --bg (#0b0c0f) — pixel-
+     identical to the old blurred result, with zero per-frame compositor cost. */
+  background: linear-gradient(180deg, #202229, #13151a);
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(30px) saturate(1.3);
 }
 .tb-left {
   display: flex;
@@ -454,22 +457,52 @@
   color: #79d98c;
 }
 .live-dot {
+  position: relative;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--live);
-  box-shadow: 0 0 0 0 rgba(78, 196, 106, 0.6);
-  animation: pulseDot 2s infinite;
 }
-@keyframes pulseDot {
+/* Expanding ring, rendered on the compositor: transform/opacity only (no
+   per-frame repaint of box-shadow). Visually matches the old 0→5px ring fade. */
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: rgba(78, 196, 106, 0.55);
+  transform: scale(0.375);
+  opacity: 1;
+  animation: liveDotPulse 2s infinite;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+@keyframes liveDotPulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(78, 196, 106, 0.55);
+    transform: scale(0.375);
+    opacity: 1;
   }
   70% {
-    box-shadow: 0 0 0 5px rgba(78, 196, 106, 0);
+    transform: scale(1);
+    opacity: 0;
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(78, 196, 106, 0);
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* Stop the only infinite decorative animation when the window is away (App.tsx
+   toggles body.app-idle on blur/hide) or the user prefers reduced motion. Scoped
+   to the live-dot ring so one-shot entrance/transition animations are untouched.
+   Pausing leaves the dot itself visible — no perceptible design change. */
+body.app-idle .live-dot::after {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot::after {
+    animation: none;
+    opacity: 0;
   }
 }
 
@@ -564,6 +597,9 @@
   border: 1px solid transparent;
   color: var(--text-faint);
   cursor: default;
+  /* Same off-screen skip as .file-row; these are static rows ~33px tall. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 33px;
 }
 .other-file-row .file-name {
   color: var(--text-faint);
@@ -589,6 +625,10 @@
   border: 1px solid transparent;
   transition: background 0.1s, border-color 0.1s;
   position: relative;
+  /* Skip layout/paint for rows scrolled out of view (100+ files possible).
+     Stable ~50px height keeps the scrollbar honest. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 50px;
 }
 .file-row:hover {
   background: var(--bg-hover);
@@ -1427,7 +1467,19 @@
 }
 .sb-foot.updated .gd {
   box-shadow: 0 0 0 0 rgba(78, 196, 106, 0.6);
-  animation: pulseDot 1.2s ease-out;
+  animation: pulseRing 1.2s ease-out;
+}
+/* one-shot ring after a live re-scan (fires once, not idle cost) */
+@keyframes pulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(78, 196, 106, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 5px rgba(78, 196, 106, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(78, 196, 106, 0);
+  }
 }
 
 /* clean working tree (center) */

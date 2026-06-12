@@ -15,7 +15,7 @@ on:
       version:
         description: "Release tag to download the CLI from"
         required: false
-        default: "v0.4.2"
+        default: "v0.5.1"
 
 permissions:
   contents: read
@@ -35,7 +35,7 @@ jobs:
         with:
           baseline: HEAD~1
           fail-on: none
-          version: ${{ inputs.version || 'v0.4.2' }}
+          version: ${{ inputs.version || 'v0.5.1' }}
 
       - name: Check outputs
         shell: pwsh

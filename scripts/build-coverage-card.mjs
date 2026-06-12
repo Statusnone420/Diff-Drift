@@ -196,7 +196,7 @@ ${covRows}
 
     <section>
       <h2>Quiet — flags on benign real-repo ranges</h2>
-      <p class="panel-sub">${replay.targets.length} OSS repos, last 25 routine upstream commits each (${totFiles} changed files). Every flag here is a false positive for that repo's owner.</p>
+      <p class="panel-sub">${replay.targets.length} OSS repos, last 25 routine upstream commits each (${totFiles} changed files). Every flag grades Diff Drift's noise, not these projects — the ranges were already reviewed and merged upstream.</p>
 ${quietRows}
       <div class="legend">
         <span><i class="amber"></i>security-rule flags (${totCode})</span>

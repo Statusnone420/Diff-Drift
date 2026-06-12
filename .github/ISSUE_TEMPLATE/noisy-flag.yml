@@ -42,4 +42,4 @@ body:
     id: version
     attributes:
       label: Diff Drift version
-      placeholder: "0.5.0"
+      placeholder: "0.5.1"

@@ -2,6 +2,14 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [0.5.1] — 2026-06-12
+
+### Fixed
+
+- Markers that are pure code in one language no longer match inside that language's string literals. Whether a marker keeps string visibility is now declared per family from a language fact: Go's `import "os/exec"` is a string and keeps it; Rust's `use std::process::Command`, its `CorsLayer::permissive()`/`.allow_origin(Any)` CORS markers, and its `.same_site(SameSite::…)` cookie markers are code and now blank strings like every other code-form marker. This removes false positives on files that quote those tokens in fixtures or documentation — found by running Diff Drift on its own repository.
+- Files named with the `*.case.<ext>` fixture convention (such as the eval harness's `foo.case.mjs`) are treated as test-like, so the deliberately vulnerable snippets planted inside them no longer raise flags. A bare `cases/` path segment does not match.
+- The app no longer does compositor work while idle. The Live-pill pulse animates transform and opacity instead of box-shadow, pauses when the window is blurred or hidden, and respects `prefers-reduced-motion`; the titlebar's backdrop blur over a static background is replaced with a flat equivalent; long sidebar file lists skip offscreen layout via `content-visibility`. Idle renderer CPU drops from roughly 2% toward zero with no visible change.
+
 ## [0.5.0] — 2026-06-12
 
 ### Added

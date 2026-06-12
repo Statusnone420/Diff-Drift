@@ -57,6 +57,11 @@ pub static PACK: FamilyPack = FamilyPack {
     // import (`use std::process::Command`) fires via subprocess_import. So a bare
     // `reader.output()?` on an arbitrary value never trips the rule.
     subprocess_import: Some(r"std::process::Command"),
+    // Rust import paths are code, never strings (`use std::process::Command`),
+    // so the import marker runs against fully code-masked text. The same token
+    // inside a string literal — this pack's own marker definition above, or a
+    // test fixture string — is masked out and never fires the rule.
+    subprocess_import_in_strings: false,
     subprocess_call: Some(r"Command::new\s*\(|Command[\s\S]*?\.(spawn|output|status)\s*\("),
 
     // TlsRejectFalse: reqwest/native-tls danger toggles set to true.
@@ -77,6 +82,11 @@ pub static PACK: FamilyPack = FamilyPack {
     cors_permissive: Some(
         r"CorsLayer::(very_permissive|permissive)\s*\(\)|Cors::permissive\s*\(\)|\.allow_origin\s*\(\s*Any\s*\)",
     ),
+    // Rust's permissive-origin signal is pure code (the `Any` type and the
+    // `permissive()` constructors), never a quoted wildcard, so the marker runs
+    // against fully code-masked text. The same call named inside a string
+    // literal — a test fixture or a doc example — is masked out and never fires.
+    cors_permissive_in_strings: false,
 
     // Cookie builders (cookie crate / actix). Differential: matched in before,
     // not in after => removed/weakened.
@@ -85,6 +95,10 @@ pub static PACK: FamilyPack = FamilyPack {
     // SameSite strong (Strict/Lax) in before, weakened to None in after.
     cookie_samesite: Some(r"\.same_site\s*\(\s*SameSite::(Strict|Lax)\s*\)"),
     cookie_samesite_weak: Some(r"\.same_site\s*\(\s*SameSite::None\s*\)"),
+    // Rust's SameSite markers are enum paths (`SameSite::None`), never quoted
+    // values, so they read fully code-masked text: the same call written inside
+    // a string literal — a test fixture or a doc example — never fires.
+    cookie_samesite_in_strings: false,
 };
 
 #[cfg(test)]
@@ -416,6 +430,52 @@ mod tests {
         assert!(fired(&string, &ctx()).is_none(), "marker in string");
     }
 
+    #[test]
+    fn child_process_ignores_import_marker_in_string() {
+        // The `subprocess_import` marker (`std::process::Command`) named only
+        // inside a STRING LITERAL must not fire. Rust import paths are code, not
+        // strings, so the import marker now reads fully code-masked text — the
+        // same immunity the call marker already had. This is the rust.rs
+        // self-flag class: the pack's own `subprocess_import` definition and
+        // test fixture strings both contain the literal `std::process::Command`.
+        let in_string = modified(
+            "VariableDeclaration",
+            &["let pat = \"\";"],
+            &["let pat = \"std::process::Command\";"],
+        );
+        assert!(
+            fired(&in_string, &ctx()).is_none(),
+            "import marker inside a string literal must not flag"
+        );
+        // Belt-and-suspenders: a path string that also mentions the call marker
+        // (mirrors a test fixture asserting on the rule's own input) stays silent.
+        let fixture_string = modified(
+            "VariableDeclaration",
+            &["let before = \"let x = 1;\";"],
+            &["let after = \"use std::process::Command; Command::new(\\\"sh\\\");\";"],
+        );
+        assert!(
+            fired(&fixture_string, &ctx()).is_none(),
+            "subprocess tokens entirely inside a string literal must not flag"
+        );
+    }
+
+    #[test]
+    fn child_process_fires_on_real_use_import() {
+        // The honest other half: a genuine `use std::process::Command;` added as
+        // CODE (no call yet) must still fire through the import marker.
+        let node = modified(
+            "FunctionDeclaration",
+            &["let x = compute();"],
+            &["use std::process::Command;", "let x = compute();"],
+        );
+        assert_eq!(
+            fired(&node, &ctx()),
+            Some("child-process"),
+            "a real `use std::process::Command;` import must still flag"
+        );
+    }
+
     // ---------------- tls-disable ----------------
 
     #[test]
@@ -491,6 +551,44 @@ mod tests {
             &["let layer = CorsLayer::new().allow_origin(Any);"],
         );
         assert_eq!(fired(&cors, &ctx()), Some("broadened-cors"));
+    }
+
+    #[test]
+    fn cors_ignores_permissive_marker_in_string() {
+        // The Rust CORS marker is pure code (the `Any` type / `permissive()`
+        // constructors), never a quoted wildcard, so a permissive-CORS call
+        // named only inside a STRING LITERAL must not fire — this is the rust.rs
+        // self-flag class (the rule's own marker definition and test fixture
+        // strings both contain `CorsLayer::permissive()`).
+        let in_string = modified(
+            "VariableDeclaration",
+            &["let doc = \"\";"],
+            &["let doc = \"let cors = CorsLayer::permissive(); // any origin\";"],
+        );
+        assert!(
+            fired(&in_string, &ctx()).is_none(),
+            "CorsLayer::permissive() inside a string literal must not flag"
+        );
+        let any_in_string = modified(
+            "VariableDeclaration",
+            &["let doc = \"\";"],
+            &["let doc = \"CorsLayer::new().allow_origin(Any)\";"],
+        );
+        assert!(
+            fired(&any_in_string, &ctx()).is_none(),
+            ".allow_origin(Any) inside a string literal must not flag"
+        );
+        // Sanity: the same construct as real code still fires.
+        let real = modified(
+            "FunctionDeclaration",
+            &["let cors = CorsLayer::new().allow_origin(trusted);"],
+            &["let cors = CorsLayer::permissive();"],
+        );
+        assert_eq!(
+            fired(&real, &ctx()),
+            Some("broadened-cors"),
+            "a real CorsLayer::permissive() must still flag"
+        );
     }
 
     #[test]
@@ -640,6 +738,29 @@ mod tests {
             ],
         );
         assert_eq!(fired(&node, &ctx()), Some("samesite-weakened"));
+    }
+
+    #[test]
+    fn samesite_weakened_ignores_markers_in_fixture_strings() {
+        // Both markers live inside string literals (a test fixture quoting the
+        // builder calls), with cookie context present. Rust's SameSite markers
+        // are code-valued (`cookie_samesite_in_strings: false`), so string
+        // occurrences are masked out and the differential never fires — this is
+        // exactly the self-referential shape of this file's own tests module.
+        let node = modified(
+            "FunctionDeclaration",
+            &[
+                "let fixture = \"Cookie::build .same_site(SameSite::Strict)\";",
+                "check(fixture);",
+            ],
+            &[
+                "let fixture = \"Cookie::build .same_site(SameSite::Strict)\";",
+                "let weak = \"Cookie::build .same_site(SameSite::None)\";",
+                "check(fixture);",
+                "check(weak);",
+            ],
+        );
+        assert!(fired(&node, &ctx()).is_none());
     }
 
     #[test]

@@ -23,7 +23,7 @@ This wiki is the handbook. The README stays short on purpose.
 
 ## Current Status
 
-- Version: `0.5.0`.
+- Version: `0.5.1`.
 - Supported platform: Windows 11.
 - macOS: experimental and unsigned.
 - Analysis scope: changed `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`, `.rs`, `.go`, `.py`/`.pyi`, `.java`, `.cs`, `.kt`/`.kts`, and `.swift` files plus dependency drift for `package.json` and the Cargo, Go, PyPI, Maven, and NuGet manifests, against a selectable baseline. Heuristic security flags run across all supported source languages where the rule's concept exists; the [Rule Reference](Rule-Reference.md#language-coverage) records the per-rule coverage and known limits.
