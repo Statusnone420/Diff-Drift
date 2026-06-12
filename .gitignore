@@ -39,3 +39,7 @@ dist-ssr
 *.sln
 *.sw?
 /docs/internal
+
+# Dated internal working notes — kept local, not published to the public wiki
+/docs/wiki/NSIS-Dogfood-2026-06-10.md
+/docs/wiki/Self-Review-2026-06-11.md

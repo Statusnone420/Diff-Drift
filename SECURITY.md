@@ -4,7 +4,7 @@
 
 Report vulnerabilities privately via [GitHub Security Advisories](https://github.com/Statusnone420/Diff-Drift/security/advisories/new) — please don't open a public issue for an unpatched bug. Include the version, reproduction steps, and ideally a proof-of-concept repo, since the main attack surface is the repository content Diff Drift parses.
 
-This is a single-maintainer project: reports are handled best-effort, with an honest assessment and a fix or documented mitigation for confirmed issues. Only the latest 0.2.x release is supported — there is no auto-update, so check [Releases](https://github.com/Statusnone420/Diff-Drift/releases).
+This is a single-maintainer project: reports are handled best-effort, with an honest assessment and a fix or documented mitigation for confirmed issues. Only the latest 0.4.x release is supported — there is no auto-update, so check [Releases](https://github.com/Statusnone420/Diff-Drift/releases).
 
 ## Scope
 
