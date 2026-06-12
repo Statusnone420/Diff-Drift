@@ -121,6 +121,9 @@ fn render_flag(out: &mut String, f: &Flag, files: &[FileEntry]) {
     out.push_str(&format!("#### {} — `{}`\n\n", f.r#type, f.file_path));
     out.push_str(&format!("- **Node:** {}\n", f.node_path));
     out.push_str(&format!("- **Detail:** {}\n", f.desc));
+    if let Some(ev) = f.evidence.as_deref() {
+        out.push_str(&format!("- **Match:** `{ev}`\n"));
+    }
     if let Some(node) = files
         .iter()
         .find(|file| file.id == f.file_id)
@@ -342,6 +345,35 @@ mod tests {
         push_diff_side(&mut small, &lines[..3], '-');
         assert_eq!(small.lines().filter(|l| l.starts_with("- ")).count(), 3);
         assert!(!small.contains("truncated"));
+    }
+
+    #[test]
+    fn report_surfaces_secret_evidence_past_the_diff_cap() {
+        let fixture = test_fixture::payments_api();
+        let root = git::repo_root(&fixture.root).unwrap();
+        // A large added declaration with the secret well past the per-side diff
+        // cap, so the truncated diff body alone could never show it.
+        let mut body = String::from("export const config = {\n");
+        for i in 0..100 {
+            body.push_str(&format!("  pad{i}: {i},\n"));
+        }
+        body.push_str("  apiKey: \"AKIAIOSFODNN7EXAMPLE\",\n");
+        body.push_str("};\n");
+        std::fs::write(root.join("config.ts"), body).unwrap();
+
+        let results = analyze_all(&root, &Baseline::default());
+        let data = assemble(
+            &results,
+            &meta(&root, &Baseline::default()),
+            &RepoState::default(),
+        );
+        let md = render_markdown(&data, "2026-06-11 12:00");
+
+        assert!(md.contains("Hardcoded secret"), "secret is flagged: {md}");
+        assert!(
+            md.contains("AKIAIOSFODNN7EXAMPLE"),
+            "the matched secret line is surfaced even though the node body is truncated:\n{md}"
+        );
     }
 
     #[test]

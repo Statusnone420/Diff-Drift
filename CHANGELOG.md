@@ -2,6 +2,12 @@
 
 All notable changes to Diff Drift are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/) with 0.x meaning the API and data contract may still change between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- Risk-flag reports now show the exact line that triggered a flag. A hardcoded-secret flag on a large node used to render only the head of the body, so the secret could be truncated out of the export; the report and `diff-drift check --md` now include a **Match:** line with the offending source line wherever it sits in the node.
+
 ## [0.4.1] — 2026-06-11
 
 ### Fixed

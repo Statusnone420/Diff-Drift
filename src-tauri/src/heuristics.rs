@@ -22,6 +22,7 @@ pub fn scan_file(
                 severity: f.severity,
                 r#type: f.r#type.to_string(),
                 desc: f.desc,
+                evidence: f.evidence,
                 file_id: file_id.to_string(),
                 file_path: file_path.to_string(),
                 node_path: match parent {

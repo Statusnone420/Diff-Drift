@@ -48,6 +48,10 @@ pub struct Flag {
     pub severity: Severity,
     pub r#type: String,
     pub desc: String,
+    /// The specific line that triggered the flag, when a rule can point at one.
+    /// Surfaced in the report so a truncated node body never hides the evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
     pub file_id: String,
     pub file_path: String,
     pub node_path: String,
