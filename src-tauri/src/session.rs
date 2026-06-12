@@ -377,7 +377,79 @@ pub fn analyze_all(root: &Path, baseline: &Baseline) -> HashMap<String, FileResu
             map.insert("package.json".into(), res);
         }
     }
+    analyze_manifests(root, repo.as_ref(), baseline, &changed, &mut map);
     map
+}
+
+/// Route changed non-JS dependency manifests (Cargo, Go, Python, Maven, NuGet)
+/// into `deps_diff`. Kept beside the package.json block so the manifest set is
+/// detected in one place; siblings own the AST/rule paths.
+fn analyze_manifests(
+    root: &Path,
+    repo: Option<&Repository>,
+    baseline: &Baseline,
+    changed: &[String],
+    map: &mut HashMap<String, FileResult>,
+) {
+    use crate::deps_diff;
+    let content = |rel: &str| {
+        (
+            before_content_in(repo, baseline, rel),
+            git::worktree_content(root, rel),
+        )
+    };
+
+    if changed.iter().any(|p| p == deps_diff::CARGO_MANIFEST) {
+        let (before, after) = content(deps_diff::CARGO_MANIFEST);
+        let lock = deps_diff::vouched_names(root, deps_diff::CARGO_LOCK);
+        if let Some(res) =
+            deps_diff::analyze_cargo_toml(before.as_deref(), after.as_deref(), lock.as_ref())
+        {
+            map.insert(deps_diff::CARGO_MANIFEST.into(), res);
+        }
+    }
+    if changed.iter().any(|p| p == deps_diff::GO_MANIFEST) {
+        let (before, after) = content(deps_diff::GO_MANIFEST);
+        let lock = deps_diff::vouched_names(root, deps_diff::GO_LOCK);
+        if let Some(res) =
+            deps_diff::analyze_go_mod(before.as_deref(), after.as_deref(), lock.as_ref())
+        {
+            map.insert(deps_diff::GO_MANIFEST.into(), res);
+        }
+    }
+    if changed.iter().any(|p| p == deps_diff::REQUIREMENTS_TXT) {
+        let (before, after) = content(deps_diff::REQUIREMENTS_TXT);
+        if let Some(res) =
+            deps_diff::analyze_requirements_txt(before.as_deref(), after.as_deref())
+        {
+            map.insert(deps_diff::REQUIREMENTS_TXT.into(), res);
+        }
+    }
+    if changed.iter().any(|p| p == deps_diff::PYPROJECT_TOML) {
+        let (before, after) = content(deps_diff::PYPROJECT_TOML);
+        let lock = deps_diff::vouched_names(root, deps_diff::POETRY_LOCK);
+        if let Some(res) =
+            deps_diff::analyze_pyproject_toml(before.as_deref(), after.as_deref(), lock.as_ref())
+        {
+            map.insert(deps_diff::PYPROJECT_TOML.into(), res);
+        }
+    }
+    if changed.iter().any(|p| p == "pom.xml") {
+        let (before, after) = content("pom.xml");
+        if let Some(res) = deps_diff::analyze_pom_xml(before.as_deref(), after.as_deref()) {
+            map.insert("pom.xml".into(), res);
+        }
+    }
+    // NuGet projects live at arbitrary paths and a repo can hold several.
+    for rel in changed.iter().filter(|p| p.ends_with(".csproj")) {
+        let (before, after) = content(rel);
+        let lock = deps_diff::nuget_lock(root);
+        if let Some(res) =
+            deps_diff::analyze_csproj(rel, before.as_deref(), after.as_deref(), lock.as_ref())
+        {
+            map.insert(rel.clone(), res);
+        }
+    }
 }
 
 /// Build the `SessionData` from the cached per-file results, applying the user's
@@ -1788,7 +1860,11 @@ export default router;
         let res = analyze_file(&root, "src/lib.rs", &HashSet::new(), &Baseline::default())
             .expect("rust file drifts");
         assert_eq!(res.entry.lang, "Rust");
-        assert!(res.flags.is_empty(), "no JS-specific flags for Rust");
+        // The dropped `sanitize(input)` call raises one Low "Removed sanitization"
+        // flag — end-to-end proof the structural-parity path reaches session.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         // The `process` body shrank — its body statements (the guard, the
         // sanitize call) show as removed children. Drift must be non-empty.
         let names = changed_node_names(&res);
@@ -1825,7 +1901,11 @@ export default router;
         let res = analyze_file(&root, "app.py", &HashSet::new(), &Baseline::default())
             .expect("python file drifts");
         assert_eq!(res.entry.lang, "Python");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(data)` raises one Low "Removed sanitization" flag —
+        // structural parity reaching session end-to-end.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(
             !names.is_empty(),
@@ -1975,7 +2055,10 @@ export default router;
         let res = analyze_file(&root, "App.kt", &HashSet::new(), &Baseline::default())
             .expect("kotlin file drifts");
         assert_eq!(res.entry.lang, "Kotlin");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(input)` raises one Low "Removed sanitization" flag.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
         assert!(res.entry.nodes.iter().any(|n| n.name == "process"));
@@ -1990,7 +2073,10 @@ export default router;
         let res = analyze_file(&root, "App.swift", &HashSet::new(), &Baseline::default())
             .expect("swift file drifts");
         assert_eq!(res.entry.lang, "Swift");
-        assert!(res.flags.is_empty());
+        // Dropping `sanitize(data)` raises one Low "Removed sanitization" flag.
+        assert_eq!(res.flags.len(), 1, "removed sanitize flags once: {:?}", res.flags);
+        assert_eq!(res.flags[0].r#type, "Removed sanitization");
+        assert!(matches!(res.flags[0].severity, Severity::Low));
         let names = changed_node_names(&res);
         assert!(names.iter().any(|n| n == "extra"), "extra added: {names:?}");
         assert!(res.entry.nodes.iter().any(|n| n.name == "process"));

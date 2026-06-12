@@ -59,6 +59,10 @@ tree-sitter-c-sharp = "0.23.5"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-swift = "0.7.3"
 git2 = "0.21.0"
+# Manifest parsing for Cargo.toml / pyproject.toml dependency drift.
+toml = "0.8"
+# Maven pom.xml / NuGet .csproj dependency drift (XML manifests).
+quick-xml = "0.36"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 regex = "1.12.4"

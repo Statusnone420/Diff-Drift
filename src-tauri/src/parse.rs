@@ -46,10 +46,13 @@ pub enum Lang {
     Swift,
 }
 
-/// Language family. Security rules are written against JS/TS grammar node kinds,
-/// so they only run for `JsTs`; every other language gets structural drift
-/// (skeletons, function children, before→after diff) plus the genuinely
-/// language-neutral hardcoded-secret check, but no JS-specific security rules.
+/// Language family — the single switch the rule layer gates on. Each security
+/// rule declares (via `Rule::families`) which families it runs for; a rule
+/// consults `lang::pack(family)` for the family-specific tree-sitter queries and
+/// marker tables it needs. JS/TS keeps its full text-regex behavior; other
+/// families run structurally-or-not-at-all (an empty pack field => the rule is
+/// silent for that family). Every family still gets structural drift (skeletons,
+/// function children, before→after diff) regardless of which rules opt in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Family {
     JsTs,
@@ -61,6 +64,20 @@ pub enum Family {
     Kotlin,
     Swift,
 }
+
+/// Every `Family` variant, in declaration order. A rule that runs for all
+/// languages returns this from `Rule::families`. Keep in sync with the `Family`
+/// enum — the `all_families_lists_every_variant` test guards the count.
+pub const ALL_FAMILIES: &[Family] = &[
+    Family::JsTs,
+    Family::Rust,
+    Family::Go,
+    Family::Python,
+    Family::Java,
+    Family::CSharp,
+    Family::Kotlin,
+    Family::Swift,
+];
 
 impl Lang {
     /// Language for a repo-relative path, or `None` when the file isn't parsed
@@ -1546,6 +1563,43 @@ export default router;
         ] {
             assert_eq!(lang.label(), label);
             assert_eq!(lang.family(), fam);
+        }
+    }
+
+    #[test]
+    fn all_families_lists_every_variant() {
+        // ALL_FAMILIES must cover exactly the 8 Family variants, once each, in
+        // declaration order. If a variant is added to `Family`, this fails until
+        // ALL_FAMILIES is updated — the rule applicability matrix depends on it.
+        assert_eq!(ALL_FAMILIES.len(), 8);
+        assert_eq!(
+            ALL_FAMILIES,
+            &[
+                Family::JsTs,
+                Family::Rust,
+                Family::Go,
+                Family::Python,
+                Family::Java,
+                Family::CSharp,
+                Family::Kotlin,
+                Family::Swift,
+            ]
+        );
+        // Every Lang's family is present in ALL_FAMILIES.
+        for lang in [
+            Lang::Ts,
+            Lang::Tsx,
+            Lang::Js,
+            Lang::Jsx,
+            Lang::Rust,
+            Lang::Go,
+            Lang::Python,
+            Lang::Java,
+            Lang::CSharp,
+            Lang::Kotlin,
+            Lang::Swift,
+        ] {
+            assert!(ALL_FAMILIES.contains(&lang.family()));
         }
     }
 

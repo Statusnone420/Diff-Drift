@@ -3,6 +3,7 @@ mod deps_diff;
 pub mod diff;
 mod git;
 mod heuristics;
+pub mod lang;
 pub mod model;
 pub mod parse;
 mod report;
