@@ -180,6 +180,25 @@ export default function App() {
 
   useEffect(() => onMaximizeChange(setMaximized), []);
 
+  // Idle-pause decorative animations when the window can't be seen (blurred or
+  // hidden). Toggles `body.app-idle`; CSS pauses the infinite "Live" pulse so the
+  // WebView2 renderer stops compositing frames while the user is away.
+  useEffect(() => {
+    const sync = () => {
+      const idle = document.visibilityState === "hidden" || !document.hasFocus();
+      document.body.classList.toggle("app-idle", idle);
+    };
+    sync();
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
+
   const selectFlag = useCallback(
     (flagId: string) => {
       const fl = flagsById[flagId];
