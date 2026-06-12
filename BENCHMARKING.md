@@ -4,11 +4,11 @@ Diff Drift has two separate measurements. This page summarises both, documents h
 
 ## Engine benchmark
 
-A deterministic CI gate: `npm run eval:engine` runs 27 fixture cases through the real binary and asserts exact expected flags, risk counts, and exit codes. The fixture cases are real temporary git repos built from in-memory helpers (no first-read penalty). A failing case is a regression.
+A deterministic CI gate: `npm run eval:engine` runs 117 fixture cases through the real binary and asserts exact expected flags, risk counts, and exit codes. The fixture cases are real temporary git repos built from in-memory helpers (no first-read penalty). A failing case is a regression.
 
-**Gate:** CI blocker. Current case count: 27.
+**Gate:** CI blocker. Current case count: 117.
 
-Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code execution, Child process execution, Disabled TLS verification, Broadened CORS, Weakened cookie flags, Loose regex pattern, Crypto downgrade, Undeclared import, Disabled guard, Removed sanitization, Permissive logging config, Dependency not in lockfile, New dependency, npm script changed, Dependency version changed, test-file hardcoded secret, structural differential cases (guard removed, regex anchors removed, try-catch removed, constant-falsy guard evasion, benign eval in string).
+Rules with at least one dedicated engine case: Hardcoded secret, Dynamic code execution, Child process execution, Disabled TLS verification, Broadened CORS, Weakened cookie flags, Loose regex pattern, Crypto downgrade, Undeclared import, Disabled guard, Removed sanitization, Permissive logging config, Dependency not in lockfile, New dependency, npm script changed, Dependency version changed, test-file hardcoded secret, structural differential cases (guard removed, regex anchors removed, try-catch removed, constant-falsy guard evasion, benign eval in string). Since v0.5.0 the suite also covers each rule across the Rust, Go, Python, Java, C#, Kotlin, and Swift families where the concept exists (per the [Rule Reference](docs/wiki/Rule-Reference.md) coverage matrix), a structural-drift noise case per family, and the Cargo, Go, PyPI, Maven, and NuGet dependency manifests.
 
 **Limitation:** every fixture is synthetic and small. There is no real-world corpus, so the engine benchmark makes no claim about recall or precision on production diffs. For that, use `npm run eval:fp-replay` on your own repos.
 
