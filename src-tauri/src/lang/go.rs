@@ -37,6 +37,9 @@ pub static PACK: FamilyPack = FamilyPack {
     // ---- high-severity markers (regex sources) ----
     // ChildProcess: importing os/exec, or calling exec.Command / exec.CommandContext.
     subprocess_import: Some(r#"["']os/exec["']"#),
+    // Go import paths ARE string literals (`import "os/exec"`), so the import
+    // marker must run against comments-only text (strings kept) to see them.
+    subprocess_import_in_strings: true,
     subprocess_call: Some(r"\bexec\.Command(Context)?\s*\("),
     // TlsRejectFalse: tls.Config{ InsecureSkipVerify: true }.
     tls_disable: Some(r"InsecureSkipVerify\s*:\s*true"),

@@ -172,6 +172,17 @@ pub struct FamilyPack {
     /// Regex source matching a subprocess-module *import* (e.g. Python
     /// `import subprocess`). Used by `ChildProcess`.
     pub subprocess_import: Option<&'static str>,
+    /// Whether `subprocess_import`'s marker can legitimately live inside a
+    /// string literal. `true` only for families whose import paths ARE strings
+    /// (Go: `import "os/exec"`) — there the marker runs against comments-only
+    /// text so the quoted module path survives. `false` for keyword-based
+    /// imports (Rust `use std::process::Command`, Python `import subprocess`,
+    /// Kotlin `import …`), where the marker is code and runs against the fully
+    /// code-masked text — so the same token appearing inside a string literal
+    /// (a doc example, a detector's own marker definition, a test fixture
+    /// string) never fires the rule. `ChildProcess` reads this to pick the
+    /// masking tier; ignored when `subprocess_import` is `None`.
+    pub subprocess_import_in_strings: bool,
     /// Regex source matching a subprocess *call* (e.g. `subprocess.run(`,
     /// `os.system(`). Used by `ChildProcess`.
     pub subprocess_call: Option<&'static str>,
@@ -192,6 +203,17 @@ pub struct FamilyPack {
     /// Regex source matching a permissive-CORS marker (origin opened to `*` /
     /// any). Used by `BroadenedCors`.
     pub cors_permissive: Option<&'static str>,
+    /// Whether `cors_permissive`'s marker can legitimately live inside a string
+    /// literal. `true` for families whose permissive-origin signal is a quoted
+    /// wildcard (`"*"` in Go/Java/Kotlin/Python/Swift CORS config), where the
+    /// marker must run against comments-only text so the string survives.
+    /// `false` for families whose marker is pure code (Rust's
+    /// `CorsLayer::permissive()` / `.allow_origin(Any)` — a type, not a string),
+    /// where the marker runs against fully code-masked text so the same call
+    /// named inside a string literal (a test fixture, a doc example) never fires.
+    /// `BroadenedCors` reads this to pick the masking tier; ignored when
+    /// `cors_permissive` is `None`.
+    pub cors_permissive_in_strings: bool,
     /// Regex source matching a cookie `HttpOnly`-enabled marker; the rule fires
     /// when this matched the before and not the after. Used by
     /// `CookieHttpOnlyRemoved`.
@@ -205,6 +227,17 @@ pub struct FamilyPack {
     /// Regex source matching a cookie `SameSite=None`/weak marker. Used by
     /// `SameSiteWeakened` (paired with `cookie_samesite`).
     pub cookie_samesite_weak: Option<&'static str>,
+    /// Whether the SameSite markers can legitimately live inside a string
+    /// literal. `true` for families whose SameSite value is quoted
+    /// (`samesite="None"` in Python, `SameSite=None` inside a Set-Cookie header
+    /// string in Java/C#), where the markers must run against comments-only text
+    /// so the string survives. `false` for families whose markers are pure code
+    /// (Rust's `.same_site(SameSite::None)` — an enum path, never a string),
+    /// where the markers run against fully code-masked text so the same call
+    /// written inside a string literal (a test fixture, a doc example) never
+    /// fires. `SameSiteWeakened` reads this to pick the masking tier; ignored
+    /// when either SameSite marker is `None`.
+    pub cookie_samesite_in_strings: bool,
 }
 
 impl FamilyPack {
@@ -222,16 +255,25 @@ impl FamilyPack {
         unwrap_markers: &[],
         handled_markers: &[],
         subprocess_import: None,
+        subprocess_import_in_strings: false,
         subprocess_call: None,
         tls_disable: None,
         env_tls_disable: None,
         eval_call: None,
         regex_compile: None,
         cors_permissive: None,
+        // Default: keep strings. Most families' permissive-origin signal is a
+        // quoted wildcard (`"*"`), so the marker must see string interiors. Only
+        // a family whose CORS marker is pure code (Rust) overrides to `false`.
+        cors_permissive_in_strings: true,
         cookie_httponly: None,
         cookie_secure: None,
         cookie_samesite: None,
         cookie_samesite_weak: None,
+        // Default: keep strings. Most families' SameSite value is quoted
+        // (`samesite="None"`, a Set-Cookie header string). Only a family whose
+        // SameSite markers are pure code (Rust) overrides to `false`.
+        cookie_samesite_in_strings: true,
     };
 }
 
@@ -296,7 +338,17 @@ mod tests {
         assert!(p.guard_exit_keywords.is_empty());
         assert_eq!(p.error_handling_strategy, ErrorHandlingStrategy::None);
         assert!(p.subprocess_import.is_none());
+        // Keyword-import default: the import marker is treated as code (string
+        // immunity). Only Go opts into string-kept matching for its `os/exec`
+        // module specifier.
+        assert!(!p.subprocess_import_in_strings);
         assert!(p.eval_call.is_none());
         assert!(p.cors_permissive.is_none());
+        // CORS default keeps strings — most families' wildcard origin is a
+        // quoted `"*"`. Only Rust (pure-code marker) opts out.
+        assert!(p.cors_permissive_in_strings);
+        // SameSite default keeps strings — most families' value is quoted
+        // (`samesite="None"`). Only Rust (enum-path markers) opts out.
+        assert!(p.cookie_samesite_in_strings);
     }
 }
